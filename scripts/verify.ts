@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtempDisposable, writeFile } from "node:fs/promises";
+import {
+	access,
+	mkdir,
+	mkdtempDisposable,
+	readFile,
+	writeFile,
+} from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,6 +83,23 @@ async function callToolResult(
 	return called;
 }
 
+async function callToolError(
+	client: McpClient,
+	chatId: string,
+	name: string,
+	arguments_: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	const called = record(
+		await client.request("tools/call", {
+			_meta: { ...requestMeta, "openai/session": chatId },
+			name,
+			arguments: arguments_,
+		}),
+	);
+	assert.equal(called.isError, true, JSON.stringify(called));
+	return called;
+}
+
 async function callTool(
 	client: McpClient,
 	chatId: string,
@@ -106,6 +130,24 @@ await Promise.all([
 	writeFile(join(secondCwd, "second.txt"), "second session\n"),
 ]);
 process.env.PI_CODING_AGENT_DIR = agentDir;
+
+const firstPayload = Buffer.from("first imported bytes\n");
+const secondPayload = Buffer.from("overwritten imported bytes\n");
+const fileServer = createHttpServer((request, response) => {
+	if (request.url === "/first") response.end(firstPayload);
+	else if (request.url === "/second") response.end(secondPayload);
+	else if (request.url === "/broken") {
+		response.write("partial bytes");
+		response.socket?.destroy();
+	} else {
+		response.writeHead(404).end();
+	}
+});
+fileServer.listen(0, "127.0.0.1");
+await once(fileServer, "listening");
+const fileAddress = fileServer.address();
+assert(fileAddress && typeof fileAddress !== "string");
+const fileBase = `http://127.0.0.1:${fileAddress.port}`;
 
 const {
 	createAgentSession,
@@ -248,6 +290,7 @@ assert.deepEqual(
 		"bash",
 		"edit",
 		"write",
+		"transfer",
 		"sessions",
 	],
 );
@@ -291,8 +334,57 @@ assert.match(
 const catalog = await callTool(broker.client, "chat-a", "tools");
 assert.deepEqual(
 	(catalog.tools as unknown[]).map((tool) => record(tool).name),
-	["read", "bash", "edit", "write", "echo", "hold", "waitCancel"],
+	["read", "bash", "edit", "write", "transfer", "echo", "hold", "waitCancel"],
 );
+
+const importedPath = join(firstCwd, "imported.bin");
+await callToolResult(broker.client, "chat-a", "transfer", {
+	paths: ["imported.bin"],
+	files: [
+		{
+			file_id: "verification-first",
+			download_url: `${fileBase}/first`,
+			file_name: "first.bin",
+			mime_type: "application/octet-stream",
+		},
+	],
+});
+assert.deepEqual(await readFile(importedPath), firstPayload);
+
+await callToolError(broker.client, "chat-a", "transfer", {
+	paths: ["imported.bin"],
+	files: [
+		{
+			file_id: "verification-second",
+			download_url: `${fileBase}/second`,
+		},
+	],
+});
+assert.deepEqual(await readFile(importedPath), firstPayload);
+
+await callToolResult(broker.client, "chat-a", "transfer", {
+	paths: [importedPath],
+	files: [
+		{
+			file_id: "verification-overwrite",
+			download_url: `${fileBase}/second`,
+		},
+	],
+	overwrite: true,
+});
+assert.deepEqual(await readFile(importedPath), secondPayload);
+
+const brokenPath = join(firstCwd, "broken.bin");
+await callToolError(broker.client, "chat-a", "transfer", {
+	paths: [brokenPath],
+	files: [
+		{
+			file_id: "verification-broken",
+			download_url: `${fileBase}/broken`,
+		},
+	],
+});
+await assert.rejects(access(brokenPath));
 const directRead = await callToolResult(broker.client, "chat-a", "read", {
 	path: "first.txt",
 });
@@ -429,5 +521,9 @@ assert.notEqual(duplicateCode, 0);
 await Promise.all([first.abort(), second.abort()]);
 await Promise.all([firstRun, secondRun]);
 await stopBroker(broker);
+const fileServerClosed = once(fileServer, "close");
+fileServer.close();
+fileServer.closeAllConnections();
+await fileServerClosed;
 first.dispose();
 second.dispose();

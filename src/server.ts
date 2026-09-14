@@ -170,6 +170,9 @@ export function createServer(broker: Broker): McpServer {
 					idempotentHint: tool.name === "read",
 					openWorldHint: tool.name === "bash",
 				},
+				...(tool.fileParams
+					? { _meta: { "openai/fileParams": tool.fileParams } }
+					: {}),
 			},
 			async (args, context) => {
 				const input = { ...args } as Record<string, unknown> & {

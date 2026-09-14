@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import type { SessionInput } from "./ipc.ts";
+import { transfer } from "./transfer.ts";
 
 export interface ToolInput {
 	name: string;
@@ -18,6 +19,7 @@ const definitions = [
 	createBashToolDefinition("."),
 	createEditToolDefinition("."),
 	createWriteToolDefinition("."),
+	transfer,
 ];
 
 export const directTools = definitions.map((definition) => ({
@@ -26,6 +28,7 @@ export const directTools = definitions.map((definition) => ({
 	inputSchema: fromJsonSchema<Record<string, unknown>>(
 		withSessionId(definition.parameters as unknown as Record<string, unknown>),
 	),
+	fileParams: definition.name === "transfer" ? ["files"] : undefined,
 }));
 
 export function toolResult(

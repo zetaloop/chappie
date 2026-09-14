@@ -19,12 +19,15 @@ export default async function chappi(pi: ExtensionAPI): Promise<void> {
 		}
 	}
 
-	const [{ createChappiProvider }, { LocalSession }] = await Promise.all([
-		import("./provider.ts"),
-		import("./session.ts"),
-	]);
+	const [{ createChappiProvider }, { LocalSession }, { transfer }] =
+		await Promise.all([
+			import("./provider.ts"),
+			import("./session.ts"),
+			import("./transfer.ts"),
+		]);
 	const session = new LocalSession(pi, getAgentDir());
 	session.install();
+	pi.registerTool(transfer);
 	pi.registerProvider(
 		createChappiProvider((output, context) => session.start(output, context)),
 	);
