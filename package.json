@@ -42,7 +42,8 @@
 		"zod": "^4.6.4"
 	},
 	"files": [
-		"src"
+		"src",
+		"docs"
 	],
 	"publishConfig": {
 		"access": "public"
