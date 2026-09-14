@@ -18,6 +18,7 @@ import type {
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { DeliveryRecord } from "./delivery.ts";
+import type { ResourceData } from "./resources.ts";
 
 export type SessionStatus = "idle" | "ready" | "executing";
 
@@ -37,6 +38,7 @@ export interface SessionInspection {
 
 export interface SessionInput {
 	id: string;
+	sessionId: string;
 	message: UserMessage;
 }
 
@@ -48,6 +50,7 @@ export type SessionResult =
 			toolResults: ToolResultMessage[];
 			inputs: SessionInput[];
 	  }
+	| { resource: ResourceData }
 	| { error: string };
 
 export type SessionMessage =
@@ -75,6 +78,7 @@ export type BrokerMessage =
 			calls: ToolCall[];
 	  }
 	| { type: "cancel"; id: number; sessionId: string }
+	| { type: "readResource"; id: number; sessionId: string; uri: string }
 	| { type: "ackInputs"; sessionId: string; ids: string[] };
 
 export function ipcEndpoint(agentDir: string): string {

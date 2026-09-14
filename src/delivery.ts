@@ -1,5 +1,9 @@
 import { readFile } from "node:fs/promises";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import {
+	contentWithImageReferences,
+	resourceDescriptors,
+} from "./resources.ts";
 
 export interface DeliveryRecord {
 	id: string;
@@ -65,7 +69,14 @@ export function deliveryContent(deliveries: ResolvedDelivery[]) {
 					isError: result.isError,
 				}),
 			},
-			...result.content,
+			...contentWithImageReferences(delivery.sessionId, result.content),
+			...resourceDescriptors(result.details).map((resource) => ({
+				type: "resource_link" as const,
+				uri: resource.uri,
+				name: resource.name,
+				mimeType: resource.mimeType,
+				size: resource.size,
+			})),
 		]),
 	]);
 }

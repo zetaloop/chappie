@@ -169,6 +169,9 @@ importers:
       '@modelcontextprotocol/server':
         specifier: ^2.0.0
         version: 2.0.0
+      mime:
+        specifier: ^4.1.0
+        version: 4.1.0
       zod:
         specifier: ^4.6.4
         version: 4.6.4
@@ -914,6 +917,11 @@ packages:
   marked@18.0.5:
     resolution: {integrity: sha512-S6GcvALHg6K4ohtu4E7x0a1AqhAjp6cV8KhLSyN9qVapnzJkusVBxZRcIU9AeYsbe6P1hKDusSbEOzGyyuce6w==}
     engines: {node: '>= 20'}
+    hasBin: true
+
+  mime@4.1.0:
+    resolution: {integrity: sha512-X5ju04+cAzsojXKes0B/S4tcYtFAJ6tTMuSPBEn9CPGlrWr8Fiw7qYeLT0XyH80HSoAoqWCaz+MWKh22P7G1cw==}
+    engines: {node: '>=16'}
     hasBin: true
 
   minimatch@10.2.5:
@@ -1797,6 +1805,8 @@ snapshots:
   lru-cache@11.5.2: {}
 
   marked@18.0.5: {}
+
+  mime@4.1.0: {}
 
   minimatch@10.2.5:
     dependencies:

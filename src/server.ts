@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { McpServer } from "@modelcontextprotocol/server";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
@@ -153,7 +153,7 @@ export function createServer(broker: Broker): McpServer {
 			return finishResult(
 				broker,
 				context,
-				toolResult(result.toolResults, result.inputs),
+				toolResult(result.toolResults, result.sessionId, result.inputs),
 			);
 		},
 	);
@@ -190,7 +190,7 @@ export function createServer(broker: Broker): McpServer {
 				return finishResult(
 					broker,
 					context,
-					toolResult(result.toolResults, result.inputs),
+					toolResult(result.toolResults, result.sessionId, result.inputs),
 				);
 			},
 		);
@@ -227,6 +227,29 @@ export function createServer(broker: Broker): McpServer {
 				inputs,
 			);
 			return chatId ? finishResult(broker, context, result) : result;
+		},
+	);
+
+	server.registerResource(
+		"Pi resource",
+		new ResourceTemplate("chappi://session/{sessionId}/{kind}/{id}/{name}", {
+			list: undefined,
+		}),
+		{ title: "Pi resource" },
+		async (uri, _variables, context) => {
+			const resource = await broker.readResource(
+				uri.href,
+				context.mcpReq.signal,
+			);
+			return {
+				contents: [
+					{
+						uri: resource.uri,
+						mimeType: resource.mimeType,
+						blob: resource.blob,
+					},
+				],
+			};
 		},
 	);
 

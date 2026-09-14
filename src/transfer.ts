@@ -10,6 +10,12 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { describeResource, registerFile } from "./resources.ts";
+
+interface TransferDetails {
+	files: ({ path: string; bytes: number } | { path: string; error: string })[];
+	resources: import("./resources.ts").ResourceDescriptor[];
+}
 
 export const transferFile = Type.Object({
 	file_id: Type.String(),
@@ -22,10 +28,10 @@ export const transfer = {
 	name: "transfer",
 	label: "transfer",
 	description:
-		"Copy ChatGPT files to paths in the current Pi session. Relative paths use the session working directory; absolute paths and ~/ are accepted.",
+		"Transfer files between ChatGPT and the current Pi session. Provide files to write them to paths; omit files to export existing paths or Chappi image references.",
 	parameters: Type.Object({
 		paths: Type.Array(Type.String(), { minItems: 1 }),
-		files: Type.Array(transferFile, { minItems: 1 }),
+		files: Type.Optional(Type.Array(transferFile, { minItems: 1 })),
 		overwrite: Type.Optional(
 			Type.Boolean({ description: "Overwrite existing target files" }),
 		),
@@ -34,13 +40,33 @@ export const transfer = {
 		_id: string,
 		args: {
 			paths: string[];
-			files: { download_url: string }[];
+			files?: { download_url: string }[];
 			overwrite?: boolean;
 		},
 		signal: AbortSignal | undefined,
 		_update: unknown,
 		context: ExtensionContext,
-	) {
+	): Promise<{
+		content: { type: "text"; text: string }[];
+		details: TransferDetails;
+	}> {
+		const sessionId = context.sessionManager.getSessionId();
+		if (!args.files) {
+			const resources = await Promise.all(
+				args.paths.map((requested) =>
+					requested.startsWith("chappi://")
+						? describeResource(sessionId, requested)
+						: registerFile(sessionId, localPath(requested, context.cwd)),
+				),
+			);
+			return {
+				content: [
+					{ type: "text" as const, text: JSON.stringify({ resources }) },
+				],
+				details: { files: [], resources },
+			};
+		}
+
 		if (args.files.length !== args.paths.length) {
 			throw new Error(
 				"files and paths must contain the same number of entries",
@@ -49,7 +75,7 @@ export const transfer = {
 		const files = await Promise.all(
 			args.paths.map(async (requested, index) => {
 				const path = localPath(requested, context.cwd);
-				const source = args.files[index];
+				const source = args.files?.[index];
 				if (!source)
 					throw new Error("files and paths must correspond by index");
 				try {
@@ -73,7 +99,7 @@ export const transfer = {
 		}
 		return {
 			content: [{ type: "text" as const, text: JSON.stringify({ files }) }],
-			details: { files },
+			details: { files, resources: [] },
 		};
 	},
 };

@@ -133,6 +133,10 @@ process.env.PI_CODING_AGENT_DIR = agentDir;
 
 const firstPayload = Buffer.from("first imported bytes\n");
 const secondPayload = Buffer.from("overwritten imported bytes\n");
+const imagePayload = Buffer.from(
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	"base64",
+);
 const fileServer = createHttpServer((request, response) => {
 	if (request.url === "/first") response.end(firstPayload);
 	else if (request.url === "/second") response.end(secondPayload);
@@ -177,6 +181,24 @@ const verificationTools: ExtensionFactory = (pi) => {
 		parameters: Type.Object({ value: Type.String() }),
 		async execute(_id, { value }) {
 			return { content: [{ type: "text", text: value }], details: {} };
+		},
+	});
+	pi.registerTool({
+		name: "image",
+		label: "Image",
+		description: "Return a verification image.",
+		parameters: Type.Object({}),
+		async execute() {
+			return {
+				content: [
+					{
+						type: "image" as const,
+						data: imagePayload.toString("base64"),
+						mimeType: "image/png",
+					},
+				],
+				details: {},
+			};
 		},
 	});
 	pi.registerTool({
@@ -258,6 +280,30 @@ function resultTexts(result: Record<string, unknown>): string[] {
 	});
 }
 
+function resourceLinks(
+	result: Record<string, unknown>,
+): Record<string, unknown>[] {
+	assert(Array.isArray(result.content));
+	return result.content
+		.map(record)
+		.filter((content) => content.type === "resource_link");
+}
+
+async function readResource(
+	client: McpClient,
+	uri: string,
+): Promise<Record<string, unknown>> {
+	const result = record(
+		await client.request("resources/read", {
+			_meta: requestMeta,
+			uri,
+		}),
+	);
+	assert(Array.isArray(result.contents));
+	assert.equal(result.contents.length, 1);
+	return record(result.contents[0]);
+}
+
 async function startProvider(
 	session: NativeSession,
 	text: string,
@@ -334,7 +380,17 @@ assert.match(
 const catalog = await callTool(broker.client, "chat-a", "tools");
 assert.deepEqual(
 	(catalog.tools as unknown[]).map((tool) => record(tool).name),
-	["read", "bash", "edit", "write", "transfer", "echo", "hold", "waitCancel"],
+	[
+		"read",
+		"bash",
+		"edit",
+		"write",
+		"transfer",
+		"echo",
+		"image",
+		"hold",
+		"waitCancel",
+	],
 );
 
 const importedPath = join(firstCwd, "imported.bin");
@@ -385,6 +441,48 @@ await callToolError(broker.client, "chat-a", "transfer", {
 	],
 });
 await assert.rejects(access(brokenPath));
+
+const exportedFile = await callToolResult(broker.client, "chat-a", "transfer", {
+	paths: [importedPath],
+});
+const [fileLink] = resourceLinks(exportedFile);
+assert(fileLink);
+assert.equal(fileLink.name, "imported.bin");
+const fileResource = await readResource(broker.client, String(fileLink.uri));
+assert.equal(fileResource.mimeType, "application/octet-stream");
+assert.deepEqual(
+	Buffer.from(String(fileResource.blob), "base64"),
+	secondPayload,
+);
+
+const imageResult = await callToolResult(broker.client, "chat-a", "call", {
+	calls: [{ name: "image", arguments: {} }],
+});
+const imageReference = resultTexts(imageResult)
+	.map((text) => {
+		try {
+			return record(JSON.parse(text)).piImage;
+		} catch {
+			return undefined;
+		}
+	})
+	.find((value): value is string => typeof value === "string");
+assert(imageReference);
+const exportedImage = await callToolResult(
+	broker.client,
+	"chat-a",
+	"transfer",
+	{ paths: [imageReference] },
+);
+const [imageLink] = resourceLinks(exportedImage);
+assert(imageLink);
+const imageResource = await readResource(broker.client, String(imageLink.uri));
+assert.equal(imageResource.mimeType, "image/png");
+assert.deepEqual(
+	Buffer.from(String(imageResource.blob), "base64"),
+	imagePayload,
+);
+
 const directRead = await callToolResult(broker.client, "chat-a", "read", {
 	path: "first.txt",
 });

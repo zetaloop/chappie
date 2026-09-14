@@ -7,6 +7,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import type { SessionInput } from "./ipc.ts";
+import {
+	contentWithImageReferences,
+	resourceDescriptors,
+} from "./resources.ts";
 import { transfer } from "./transfer.ts";
 
 export interface ToolInput {
@@ -33,6 +37,7 @@ export const directTools = definitions.map((definition) => ({
 
 export function toolResult(
 	toolResults: ToolResultMessage[],
+	sessionId: string,
 	inputs: SessionInput[] = [],
 ) {
 	return {
@@ -46,7 +51,14 @@ export function toolResult(
 						isError: result.isError,
 					}),
 				},
-				...result.content,
+				...contentWithImageReferences(sessionId, result.content),
+				...resourceDescriptors(result.details).map((resource) => ({
+					type: "resource_link" as const,
+					uri: resource.uri,
+					name: resource.name,
+					mimeType: resource.mimeType,
+					size: resource.size,
+				})),
 			]),
 			...inputContent(inputs),
 		],
@@ -55,14 +67,14 @@ export function toolResult(
 }
 
 export function inputContent(inputs: SessionInput[]) {
-	return inputs.flatMap(({ id, message }) => [
+	return inputs.flatMap(({ id, sessionId, message }) => [
 		{
 			type: "text" as const,
 			text: JSON.stringify({ piInput: id }),
 		},
 		...(typeof message.content === "string"
 			? [{ type: "text" as const, text: message.content }]
-			: message.content),
+			: contentWithImageReferences(sessionId, message.content)),
 	]);
 }
 

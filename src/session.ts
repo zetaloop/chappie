@@ -19,6 +19,7 @@ import {
 	type SessionStatus,
 } from "./ipc.ts";
 import type { ProviderOutput } from "./provider.ts";
+import { readSessionResource, rememberImages } from "./resources.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
 
@@ -232,6 +233,13 @@ export class LocalSession {
 					for (const id of message.ids) this.#pendingInputs.delete(id);
 				}
 				break;
+			case "readResource":
+				await this.#reply(message.id, message.sessionId, async () => ({
+					type: "result",
+					id: message.id,
+					resource: await readSessionResource(message.sessionId, message.uri),
+				}));
+				break;
 			case "cancel": {
 				const queued = this.#queue.findIndex(
 					(request) => request.id === message.id,
@@ -334,6 +342,8 @@ export class LocalSession {
 		this.#context = context;
 		const active = this.#active;
 		if (!active || message !== active.message) return;
+		const sessionId = context.sessionManager.getSessionId();
+		for (const result of toolResults) rememberImages(sessionId, result.content);
 		active.completed = true;
 		active.toolResults = toolResults;
 	}
@@ -404,11 +414,12 @@ export class LocalSession {
 				this.#seenInputs.has(entry.id)
 			)
 				continue;
+			const message = entry.message as UserMessage;
+			if (typeof message.content !== "string") {
+				rememberImages(sessionId, message.content);
+			}
 			this.#seenInputs.add(entry.id);
-			this.#pendingInputs.set(entry.id, {
-				id: entry.id,
-				message: entry.message as UserMessage,
-			});
+			this.#pendingInputs.set(entry.id, { id: entry.id, sessionId, message });
 		}
 	}
 
@@ -440,13 +451,15 @@ export class LocalSession {
 	async #reply(
 		id: number,
 		sessionId: string,
-		response: () => Parameters<IpcClient["send"]>[0],
+		response: () =>
+			| Parameters<IpcClient["send"]>[0]
+			| Promise<Parameters<IpcClient["send"]>[0]>,
 	): Promise<void> {
 		try {
 			if (sessionId !== this.#context?.sessionManager.getSessionId()) {
 				throw new Error("The requested Pi session is no longer active");
 			}
-			await this.#connection?.send(response());
+			await this.#connection?.send(await response());
 		} catch (error) {
 			await this.#sendError(
 				id,

@@ -21,6 +21,7 @@ import {
 	type SessionMessage,
 	type SessionResult,
 } from "./ipc.ts";
+import { type ResourceData, resourceSessionId } from "./resources.ts";
 import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
 
@@ -59,6 +60,7 @@ export interface ChatResult {
 }
 
 export interface CallResult {
+	sessionId: string;
 	toolResults: ToolResultMessage[];
 	inputs: SessionInput[];
 }
@@ -184,7 +186,11 @@ export class Broker {
 		);
 		if ("toolResults" in result) {
 			await this.#ackInputs(target, result.inputs);
-			return { toolResults: result.toolResults, inputs: result.inputs };
+			return {
+				sessionId: target,
+				toolResults: result.toolResults,
+				inputs: result.inputs,
+			};
 		}
 		throw new Error("Pi session returned no tool results");
 	}
@@ -200,6 +206,18 @@ export class Broker {
 		const { inputs } = await this.#inspect(target, signal);
 		await this.#ackInputs(target, inputs);
 		return inputs;
+	}
+
+	async readResource(uri: string, signal: AbortSignal): Promise<ResourceData> {
+		const sessionId = resourceSessionId(uri);
+		await this.#waitForSession(sessionId, signal);
+		const result = await this.#request(
+			sessionId,
+			(id) => ({ type: "readResource", id, sessionId, uri }),
+			signal,
+		);
+		if ("resource" in result) return result.resource;
+		throw new Error("Pi session returned no resource");
 	}
 
 	async deliveries(chatId: string): Promise<ResolvedDelivery[]> {
