@@ -52,6 +52,34 @@ export function createServer(broker: Broker): McpServer {
 	);
 
 	server.registerTool(
+		"chat",
+		{
+			title: "Reply in Pi",
+			description: "Send one complete assistant message to a Pi session.",
+			inputSchema: z.object({
+				text: z.string().min(1).describe("Assistant message to display in Pi"),
+				sessionId: z
+					.string()
+					.optional()
+					.describe("Pi session for this operation only"),
+			}),
+			annotations: {
+				openWorldHint: false,
+			},
+		},
+		async (args, context) => {
+			const chatId = requireChatId(context);
+			const message = await broker.chat(
+				chatId,
+				args.sessionId,
+				args.text,
+				context.mcpReq.signal,
+			);
+			return textResult({ message });
+		},
+	);
+
+	server.registerTool(
 		"sessions",
 		{
 			title: "Local sessions",

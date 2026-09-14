@@ -59,6 +59,41 @@ export class ProviderOutput {
 		this.stream.push({ type: "start", partial: this.message });
 	}
 
+	text(text: string): void {
+		if (this.#closed)
+			throw new Error("Chappi provider response is already complete");
+		this.begin();
+		const contentIndex = this.message.content.length;
+		const block = { type: "text" as const, text: "" };
+		this.message.content.push(block);
+		this.stream.push({
+			type: "text_start",
+			contentIndex,
+			partial: this.message,
+		});
+		block.text = text;
+		this.stream.push({
+			type: "text_delta",
+			contentIndex,
+			delta: text,
+			partial: this.message,
+		});
+		this.stream.push({
+			type: "text_end",
+			contentIndex,
+			content: text,
+			partial: this.message,
+		});
+	}
+
+	done(): void {
+		if (this.#closed) return;
+		this.begin();
+		this.message.stopReason = "stop";
+		this.stream.push({ type: "done", reason: "stop", message: this.message });
+		this.#finish();
+	}
+
 	fail(error: unknown, aborted = false): void {
 		if (this.#closed) return;
 		this.begin();

@@ -125,6 +125,16 @@ async function createNativeSession(cwd: string) {
 
 type NativeSession = Awaited<ReturnType<typeof createNativeSession>>;
 
+function assistantTexts(session: NativeSession): string[] {
+	return session.state.messages.flatMap((message) =>
+		message.role === "assistant"
+			? message.content.flatMap((content) =>
+					content.type === "text" ? [content.text] : [],
+				)
+			: [],
+	);
+}
+
 async function startProvider(
 	session: NativeSession,
 	text: string,
@@ -148,7 +158,7 @@ const listed = record(
 assert(Array.isArray(listed.tools));
 assert.deepEqual(
 	listed.tools.map((tool) => record(tool).name),
-	["init", "sessions"],
+	["init", "chat", "sessions"],
 );
 assert.deepEqual(await callTool(broker.client, "chat-a", "sessions"), {
 	binding: null,
@@ -178,6 +188,30 @@ assert.equal(
 const secondInit = await callTool(broker.client, "chat-b", "init");
 assert.equal(record(secondInit.session).id, secondId);
 assert.match(JSON.stringify(secondInit.input), /Connect the second session/);
+
+await callTool(broker.client, "chat-a", "chat", {
+	text: "First remote assistant reply.",
+});
+await firstRun;
+assert.deepEqual(assistantTexts(first).slice(-1), [
+	"First remote assistant reply.",
+]);
+await callTool(broker.client, "chat-a", "chat", {
+	text: "Second remote assistant reply.",
+});
+assert.deepEqual(assistantTexts(first).slice(-2), [
+	"First remote assistant reply.",
+	"Second remote assistant reply.",
+]);
+await callTool(broker.client, "chat-b", "chat", {
+	text: "Explicit one-shot reply.",
+	sessionId: firstId,
+});
+assert.equal(
+	(await callTool(broker.client, "chat-b", "sessions")).binding,
+	secondId,
+);
+assert.deepEqual(assistantTexts(first).slice(-1), ["Explicit one-shot reply."]);
 
 const selected = await callTool(broker.client, "chat-b", "sessions", {
 	sessionId: firstId,

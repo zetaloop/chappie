@@ -1,4 +1,8 @@
-import type { Context, UserMessage } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	Context,
+	UserMessage,
+} from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -12,21 +16,31 @@ import {
 } from "./ipc.ts";
 import type { ProviderOutput } from "./provider.ts";
 
+type ChatRequest = Extract<BrokerMessage, { type: "chat" }>;
+
 interface SyncRequest {
 	resolve(): void;
 	reject(error: Error): void;
+}
+
+interface ActiveChat {
+	request: ChatRequest;
+	message: AssistantMessage;
 }
 
 export class LocalSession {
 	readonly #pi: ExtensionAPI;
 	readonly #agentDir: string;
 	readonly #syncs = new Map<number, SyncRequest>();
+	readonly #queue: ChatRequest[] = [];
 	#context: ExtensionContext | undefined;
 	#connection: IpcClient | undefined;
 	#output: ProviderOutput | undefined;
 	#providerContext: Context | undefined;
+	#active: ActiveChat | undefined;
 	#status: SessionStatus = "idle";
 	#nextSyncId = 1;
+	#starting = false;
 
 	constructor(pi: ExtensionAPI, agentDir: string) {
 		this.#pi = pi;
@@ -42,6 +56,20 @@ export class LocalSession {
 			this.#context = context;
 			void this.#sync().catch(() => {});
 		});
+		this.#pi.on("context", (event) => ({
+			messages: event.messages.filter(
+				(message) =>
+					message.role !== "custom" || message.customType !== "chappi.request",
+			),
+		}));
+		this.#pi.on("turn_end", (event, context) =>
+			this.#turnEnd(event.message, context),
+		);
+		this.#pi.on("agent_settled", (_event, context) => {
+			this.#context = context;
+			this.#starting = false;
+			this.#dispatch();
+		});
 		this.#pi.on("session_shutdown", () => this.close());
 	}
 
@@ -55,6 +83,7 @@ export class LocalSession {
 			throw new Error("Chappi already has an active provider request");
 		}
 
+		this.#starting = false;
 		this.#output = output;
 		this.#providerContext = providerContext;
 		try {
@@ -64,10 +93,11 @@ export class LocalSession {
 			await this.#sync();
 			if (output.closed) return;
 			output.begin();
+			this.#dispatch();
 			await output.finished;
 		} finally {
 			if (this.#output === output) this.#output = undefined;
-			this.#status = "idle";
+			this.#status = this.#active ? "executing" : "idle";
 			void this.#sync().catch(() => {});
 		}
 	}
@@ -82,6 +112,9 @@ export class LocalSession {
 		this.#output?.fail(new Error("Chappi session ended"), true);
 		this.#output = undefined;
 		this.#providerContext = undefined;
+		this.#active = undefined;
+		this.#queue.length = 0;
+		this.#starting = false;
 		this.#connection?.close();
 		this.#connection = undefined;
 		this.#context = undefined;
@@ -104,6 +137,10 @@ export class LocalSession {
 				onClose: (error) => {
 					this.#rejectSyncs(error);
 					this.#output?.fail(error);
+					this.#active = undefined;
+					this.#queue.length = 0;
+					this.#starting = false;
+					this.#status = "idle";
 				},
 			});
 			this.#connection.start();
@@ -151,24 +188,24 @@ export class LocalSession {
 				this.#syncs.get(message.id)?.resolve();
 				break;
 			case "inspect":
-				try {
-					if (
-						message.sessionId !== this.#context?.sessionManager.getSessionId()
-					) {
-						throw new Error("The requested Pi session is no longer active");
-					}
-					await this.#connection?.send({
-						type: "result",
-						id: message.id,
-						inspection: this.#inspection(),
-					});
-				} catch (error) {
-					await this.#connection?.send({
-						type: "result",
-						id: message.id,
-						error: error instanceof Error ? error.message : String(error),
-					});
+				await this.#reply(message.id, message.sessionId, () => ({
+					type: "result",
+					id: message.id,
+					inspection: this.#inspection(),
+				}));
+				break;
+			case "chat":
+				if (
+					message.sessionId !== this.#context?.sessionManager.getSessionId()
+				) {
+					await this.#sendError(
+						message.id,
+						"The requested Pi session is no longer active",
+					);
+					break;
 				}
+				this.#queue.push(message);
+				this.#dispatch();
 				break;
 		}
 	}
@@ -188,6 +225,83 @@ export class LocalSession {
 				.filter((command) => command.source === "skill"),
 			...(input ? { input } : {}),
 		};
+	}
+
+	#dispatch(): void {
+		if (this.#active) return;
+		const request = this.#queue[0];
+		if (!request) return;
+		const output = this.#output;
+		if (!output || output.closed) {
+			this.#wake();
+			return;
+		}
+
+		this.#queue.shift();
+		this.#active = { request, message: output.message };
+		this.#status = "executing";
+		void this.#sync().catch(() => {});
+		output.text(request.text);
+		output.done();
+	}
+
+	#wake(): void {
+		if (
+			this.#starting ||
+			this.#output ||
+			this.#active ||
+			this.#queue.length === 0 ||
+			!this.#context?.isIdle()
+		)
+			return;
+		this.#starting = true;
+		this.#pi.sendMessage(
+			{
+				customType: "chappi.request",
+				content: "",
+				display: false,
+			},
+			{ triggerTurn: true },
+		);
+	}
+
+	async #turnEnd(message: unknown, context: ExtensionContext): Promise<void> {
+		this.#context = context;
+		const active = this.#active;
+		if (!active || message !== active.message) return;
+		this.#active = undefined;
+		this.#status = "idle";
+		try {
+			await this.#connection?.send({
+				type: "result",
+				id: active.request.id,
+				message: active.message,
+			});
+		} finally {
+			void this.#sync().catch(() => {});
+		}
+	}
+
+	async #reply(
+		id: number,
+		sessionId: string,
+		response: () => Parameters<IpcClient["send"]>[0],
+	): Promise<void> {
+		try {
+			if (sessionId !== this.#context?.sessionManager.getSessionId()) {
+				throw new Error("The requested Pi session is no longer active");
+			}
+			await this.#connection?.send(response());
+		} catch (error) {
+			await this.#sendError(
+				id,
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}
+
+	async #sendError(id: number, error: string): Promise<void> {
+		await this.#connection?.send({ type: "result", id, error });
 	}
 
 	#rejectSyncs(error: Error): void {

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	type BrokerMessage,
 	IpcServer,
@@ -7,6 +8,7 @@ import {
 	type SessionDescription,
 	type SessionInspection,
 	type SessionMessage,
+	type SessionResult,
 } from "./ipc.ts";
 import { State } from "./state.ts";
 
@@ -15,9 +17,9 @@ interface RegisteredSession {
 	peer: JsonLinePeer<SessionMessage, BrokerMessage>;
 }
 
-interface PendingInspection {
+interface PendingRequest {
 	peer: JsonLinePeer<SessionMessage, BrokerMessage>;
-	resolve(inspection: SessionInspection): void;
+	resolve(result: SessionResult): void;
 	reject(error: Error): void;
 	signal: AbortSignal;
 	onAbort(): void;
@@ -40,7 +42,7 @@ export class Broker {
 	readonly #state: State;
 	readonly #sessions = new Map<string, RegisteredSession>();
 	readonly #ready = new Set<string>();
-	readonly #pending = new Map<number, PendingInspection>();
+	readonly #pending = new Map<number, PendingRequest>();
 	readonly #waiters = new Set<ChangeWaiter>();
 	#nextRequestId = 1;
 
@@ -62,7 +64,7 @@ export class Broker {
 	async close(): Promise<void> {
 		const error = new Error("Chappi broker ended");
 		for (const [id, pending] of this.#pending) {
-			this.#finishInspection(id, pending);
+			this.#finishRequest(id, pending);
 			pending.reject(error);
 		}
 		for (const waiter of this.#waiters) {
@@ -92,10 +94,26 @@ export class Broker {
 		sessionId: string | undefined,
 		signal: AbortSignal,
 	): Promise<InitializedSession> {
-		const target = await this.#selectSession(chatId, sessionId, signal);
+		const target = await this.#selectSession(chatId, sessionId, signal, true);
 		const inspection = await this.#inspect(target, signal);
 		const globalAgents = await this.#readGlobalAgents();
 		return { ...inspection, ...(globalAgents ? { globalAgents } : {}) };
+	}
+
+	async chat(
+		chatId: string,
+		sessionId: string | undefined,
+		text: string,
+		signal: AbortSignal,
+	): Promise<AssistantMessage> {
+		const target = await this.#selectSession(chatId, sessionId, signal, false);
+		const result = await this.#request(
+			target,
+			(id) => ({ type: "chat", id, sessionId: target, text }),
+			signal,
+		);
+		if ("message" in result) return result.message;
+		throw new Error("Pi session returned no assistant message");
 	}
 
 	async #receive(
@@ -131,10 +149,11 @@ export class Broker {
 			case "result": {
 				const pending = this.#pending.get(message.id);
 				if (!pending || pending.peer !== peer) break;
-				this.#finishInspection(message.id, pending);
-				if (message.error) pending.reject(new Error(message.error));
-				else if (message.inspection) pending.resolve(message.inspection);
-				else pending.reject(new Error("Pi session returned no inspection"));
+				this.#finishRequest(message.id, pending);
+				if ("error" in message) pending.reject(new Error(message.error));
+				else if ("inspection" in message)
+					pending.resolve({ inspection: message.inspection });
+				else pending.resolve({ message: message.message });
 				break;
 			}
 		}
@@ -144,14 +163,20 @@ export class Broker {
 		chatId: string,
 		requestedId: string | undefined,
 		signal: AbortSignal,
+		bindRequested: boolean,
 	): Promise<string> {
-		const boundId = requestedId ?? this.#state.binding(chatId);
-		if (boundId) {
-			await this.#waitForSession(boundId, signal);
-			if (this.#state.binding(chatId) !== boundId) {
-				await this.#state.setBinding(chatId, boundId);
+		if (requestedId) {
+			await this.#waitForSession(requestedId, signal);
+			if (bindRequested && this.#state.binding(chatId) !== requestedId) {
+				await this.#state.setBinding(chatId, requestedId);
 				this.#notifyChange();
 			}
+			return requestedId;
+		}
+
+		const boundId = this.#state.binding(chatId);
+		if (boundId) {
+			await this.#waitForSession(boundId, signal);
 			return boundId;
 		}
 
@@ -178,30 +203,44 @@ export class Broker {
 		sessionId: string,
 		signal: AbortSignal,
 	): Promise<SessionInspection> {
+		const result = await this.#request(
+			sessionId,
+			(id) => ({ type: "inspect", id, sessionId }),
+			signal,
+		);
+		if ("inspection" in result) return result.inspection;
+		throw new Error("Pi session returned no inspection");
+	}
+
+	async #request(
+		sessionId: string,
+		message: (id: number) => BrokerMessage,
+		signal: AbortSignal,
+	): Promise<SessionResult> {
 		const session = this.#sessions.get(sessionId);
 		if (!session) throw new Error(`Pi session ${sessionId} is offline`);
+		if (signal.aborted) throw abortError(signal);
 		const id = this.#nextRequestId++;
-		const completion = Promise.withResolvers<SessionInspection>();
+		const completion = Promise.withResolvers<SessionResult>();
 		const onAbort = (): void => {
 			const pending = this.#pending.get(id);
 			if (!pending) return;
-			this.#finishInspection(id, pending);
+			this.#finishRequest(id, pending);
 			pending.reject(abortError(signal));
 		};
-		const pending: PendingInspection = {
+		const pending: PendingRequest = {
 			peer: session.peer,
 			resolve: completion.resolve,
 			reject: completion.reject,
 			signal,
 			onAbort,
 		};
-		if (signal.aborted) throw abortError(signal);
 		this.#pending.set(id, pending);
 		signal.addEventListener("abort", onAbort, { once: true });
 		try {
-			await session.peer.send({ type: "inspect", id, sessionId });
+			await session.peer.send(message(id));
 		} catch (error) {
-			this.#finishInspection(id, pending);
+			this.#finishRequest(id, pending);
 			throw error;
 		}
 		return completion.promise;
@@ -233,7 +272,7 @@ export class Broker {
 		}
 	}
 
-	#finishInspection(id: number, pending: PendingInspection): void {
+	#finishRequest(id: number, pending: PendingRequest): void {
 		this.#pending.delete(id);
 		pending.signal.removeEventListener("abort", pending.onAbort);
 	}
@@ -244,7 +283,7 @@ export class Broker {
 		}
 		for (const [id, pending] of this.#pending) {
 			if (pending.peer !== peer) continue;
-			this.#finishInspection(id, pending);
+			this.#finishRequest(id, pending);
 			pending.reject(new Error("Pi session disconnected"));
 		}
 	}

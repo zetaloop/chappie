@@ -7,7 +7,7 @@ import {
 	type Socket,
 } from "node:net";
 import { join, resolve } from "node:path";
-import type { UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
 import type {
 	SlashCommandInfo,
 	ToolInfo,
@@ -30,19 +30,20 @@ export interface SessionInspection {
 	input?: UserMessage;
 }
 
+export type SessionResult =
+	| { inspection: SessionInspection }
+	| { message: AssistantMessage }
+	| { error: string };
+
 export type SessionMessage =
 	| { type: "sync"; id: number; session: SessionDescription }
 	| { type: "unregister"; sessionId: string }
-	| {
-			type: "result";
-			id: number;
-			inspection?: SessionInspection;
-			error?: string;
-	  };
+	| ({ type: "result"; id: number } & SessionResult);
 
 export type BrokerMessage =
 	| { type: "synced"; id: number; sessionId: string }
-	| { type: "inspect"; id: number; sessionId: string };
+	| { type: "inspect"; id: number; sessionId: string }
+	| { type: "chat"; id: number; sessionId: string; text: string };
 
 export function ipcEndpoint(agentDir: string): string {
 	const directory = resolve(agentDir);
