@@ -12,7 +12,8 @@
 	"scripts": {
 		"verify": "pnpm check && node scripts/verify.ts",
 		"format": "biome check --write .",
-		"check": "biome check . && tsc"
+		"check": "biome check . && tsc",
+		"verify-package": "node scripts/verify-package.ts"
 	},
 	"keywords": [
 		"pi-package",
@@ -48,5 +49,15 @@
 		"@modelcontextprotocol/server": "^2.0.0",
 		"mime": "^4.1.0",
 		"zod": "^4.6.4"
+	},
+	"files": [
+		"src"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/zetaloop/chappi.git"
 	}
 }

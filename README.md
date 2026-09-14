@@ -97,8 +97,12 @@ Images produced by Pi remain native image content for model vision and also rece
 ```sh
 pnpm format
 pnpm check
-pnpm verify
-pnpm pack
 ```
 
-`pnpm verify` runs the packaged architecture with a real stdio broker and native Pi sessions. It covers session pairing, assistant replies, native tools, input delivery, cancellation recovery, broker reconnection, and bidirectional file resources.
+Release verification uses `pnpm verify` for the local broker and Pi SDK integration, and `pnpm verify-package` for loading the npm tarball through Pi.
+
+## Release
+
+A `vX.Y.Z` tag runs verification on Linux, macOS, and Windows, packages the npm archive, and creates a release draft. Manual release runs offer `dryrun` artifacts or a `draft` for the selected tagged commit.
+
+Publishing the draft runs `publish.yml`, which publishes to npm through Trusted Publishing using the `release` environment. The publish workflow also accepts a release tag for manual execution.

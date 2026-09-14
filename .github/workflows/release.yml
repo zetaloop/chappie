@@ -1,0 +1,66 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: What to do with the package
+        type: choice
+        options: [dryrun, draft]
+        default: dryrun
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@26
+      - uses: biomejs/setup-biome@v2
+      - run: pnpm verify
+      - run: pnpm verify-package
+      - run: pnpm pack
+        if: matrix.os == 'ubuntu-latest'
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: package
+          path: chappi-*.tgz
+          if-no-files-found: error
+          compression-level: 0
+
+  draft:
+    needs: verify
+    if: github.event_name == 'push' || inputs.mode == 'draft'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+      - name: Create release draft
+        run: |
+          tag=$(git tag --points-at HEAD --list 'v*' | head -1)
+          if [ -z "$tag" ]; then
+            echo "::notice::No version tag at HEAD; the package is available in this workflow run"
+            exit 0
+          fi
+          version=$(jq -r .version package.json)
+          test "$tag" = "v$version"
+          gh release create "$tag" chappi-*.tgz --verify-tag --draft --title "$tag" --generate-notes
