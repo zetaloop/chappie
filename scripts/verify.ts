@@ -5,6 +5,8 @@ import { mkdir, mkdtempDisposable, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { McpClient, requestMeta } from "./mcp.ts";
 
 function record(value: unknown): Record<string, unknown> {
@@ -57,7 +59,7 @@ async function stopBroker(broker: RunningBroker): Promise<void> {
 	assert.equal(code, 0, broker.stderr());
 }
 
-async function callTool(
+async function callToolResult(
 	client: McpClient,
 	chatId: string,
 	name: string,
@@ -71,6 +73,16 @@ async function callTool(
 		}),
 	);
 	assert.notEqual(called.isError, true, JSON.stringify(called));
+	return called;
+}
+
+async function callTool(
+	client: McpClient,
+	chatId: string,
+	name: string,
+	arguments_: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+	const called = await callToolResult(client, chatId, name, arguments_);
 	assert(Array.isArray(called.content));
 	const content = record(called.content[0]);
 	assert.equal(content.type, "text");
@@ -86,6 +98,10 @@ await writeFile(
 	join(agentDir, "AGENTS.md"),
 	"Use the Chappi verification workspace.\n",
 );
+await Promise.all([
+	writeFile(join(firstCwd, "first.txt"), "first session\n"),
+	writeFile(join(secondCwd, "second.txt"), "second session\n"),
+]);
 process.env.PI_CODING_AGENT_DIR = agentDir;
 
 const {
@@ -96,13 +112,38 @@ const {
 } = await import("@earendil-works/pi-coding-agent");
 const { default: chappi } = await import("../src/index.ts");
 
+const holdStarted = Promise.withResolvers<void>();
+const holdRelease = Promise.withResolvers<void>();
+const verificationTools: ExtensionFactory = (pi) => {
+	pi.registerTool({
+		name: "echo",
+		label: "Echo",
+		description: "Return the supplied value.",
+		parameters: Type.Object({ value: Type.String() }),
+		async execute(_id, { value }) {
+			return { content: [{ type: "text", text: value }], details: {} };
+		},
+	});
+	pi.registerTool({
+		name: "hold",
+		label: "Hold",
+		description: "Wait until the verification releases this tool.",
+		parameters: Type.Object({}),
+		async execute() {
+			holdStarted.resolve();
+			await holdRelease.promise;
+			return { content: [{ type: "text", text: "released" }], details: {} };
+		},
+	});
+};
+
 async function createNativeSession(cwd: string) {
 	const settings = SettingsManager.inMemory({ retry: { enabled: false } });
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir,
 		settingsManager: settings,
-		extensionFactories: [chappi],
+		extensionFactories: [chappi, verificationTools],
 	});
 	await loader.reload();
 	const { session } = await createAgentSession({
@@ -135,6 +176,14 @@ function assistantTexts(session: NativeSession): string[] {
 	);
 }
 
+function resultTexts(result: Record<string, unknown>): string[] {
+	assert(Array.isArray(result.content));
+	return result.content.flatMap((content) => {
+		const block = record(content);
+		return block.type === "text" ? [String(block.text)] : [];
+	});
+}
+
 async function startProvider(
 	session: NativeSession,
 	text: string,
@@ -158,7 +207,17 @@ const listed = record(
 assert(Array.isArray(listed.tools));
 assert.deepEqual(
 	listed.tools.map((tool) => record(tool).name),
-	["init", "chat", "sessions"],
+	[
+		"init",
+		"chat",
+		"tools",
+		"call",
+		"read",
+		"bash",
+		"edit",
+		"write",
+		"sessions",
+	],
 );
 assert.deepEqual(await callTool(broker.client, "chat-a", "sessions"), {
 	binding: null,
@@ -188,6 +247,35 @@ assert.equal(
 const secondInit = await callTool(broker.client, "chat-b", "init");
 assert.equal(record(secondInit.session).id, secondId);
 assert.match(JSON.stringify(secondInit.input), /Connect the second session/);
+
+const catalog = await callTool(broker.client, "chat-a", "tools");
+assert.deepEqual(
+	(catalog.tools as unknown[]).map((tool) => record(tool).name),
+	["read", "bash", "edit", "write", "echo", "hold"],
+);
+const directRead = await callToolResult(broker.client, "chat-a", "read", {
+	path: "first.txt",
+});
+assert.match(resultTexts(directRead).join("\n"), /first session/);
+const batch = await callToolResult(broker.client, "chat-a", "call", {
+	calls: [
+		{ name: "echo", arguments: { value: "batch echo" } },
+		{ name: "read", arguments: { path: "first.txt" } },
+	],
+});
+assert.match(resultTexts(batch).join("\n"), /batch echo/);
+assert.match(resultTexts(batch).join("\n"), /first session/);
+
+const held = callToolResult(broker.client, "chat-a", "call", {
+	calls: [{ name: "hold", arguments: {} }],
+});
+await holdStarted.promise;
+const independentRead = await callToolResult(broker.client, "chat-b", "read", {
+	path: "second.txt",
+});
+assert.match(resultTexts(independentRead).join("\n"), /second session/);
+holdRelease.resolve();
+assert.match(resultTexts(await held).join("\n"), /released/);
 
 await callTool(broker.client, "chat-a", "chat", {
 	text: "First remote assistant reply.",

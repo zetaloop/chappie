@@ -7,6 +7,7 @@ import {
 	createProvider,
 	type Model,
 	type StreamOptions,
+	type ToolCall,
 } from "@earendil-works/pi-ai";
 
 export class ProviderOutput {
@@ -86,11 +87,40 @@ export class ProviderOutput {
 		});
 	}
 
-	done(): void {
+	toolCalls(calls: ToolCall[]): void {
+		if (this.#closed)
+			throw new Error("Chappi provider response is already complete");
+		this.begin();
+		for (const call of calls) {
+			const contentIndex = this.message.content.length;
+			const block: ToolCall = { ...call, arguments: {} };
+			this.message.content.push(block);
+			this.stream.push({
+				type: "toolcall_start",
+				contentIndex,
+				partial: this.message,
+			});
+			block.arguments = call.arguments;
+			this.stream.push({
+				type: "toolcall_delta",
+				contentIndex,
+				delta: JSON.stringify(call.arguments),
+				partial: this.message,
+			});
+			this.stream.push({
+				type: "toolcall_end",
+				contentIndex,
+				toolCall: block,
+				partial: this.message,
+			});
+		}
+	}
+
+	done(reason: "stop" | "toolUse" = "stop"): void {
 		if (this.#closed) return;
 		this.begin();
-		this.message.stopReason = "stop";
-		this.stream.push({ type: "done", reason: "stop", message: this.message });
+		this.message.stopReason = reason;
+		this.stream.push({ type: "done", reason, message: this.message });
 		this.#finish();
 	}
 

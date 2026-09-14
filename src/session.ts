@@ -1,6 +1,7 @@
 import type {
 	AssistantMessage,
 	Context,
+	ToolResultMessage,
 	UserMessage,
 } from "@earendil-works/pi-ai";
 import type {
@@ -16,15 +17,15 @@ import {
 } from "./ipc.ts";
 import type { ProviderOutput } from "./provider.ts";
 
-type ChatRequest = Extract<BrokerMessage, { type: "chat" }>;
+type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
 
 interface SyncRequest {
 	resolve(): void;
 	reject(error: Error): void;
 }
 
-interface ActiveChat {
-	request: ChatRequest;
+interface ActiveRequest {
+	request: RemoteRequest;
 	message: AssistantMessage;
 }
 
@@ -32,12 +33,12 @@ export class LocalSession {
 	readonly #pi: ExtensionAPI;
 	readonly #agentDir: string;
 	readonly #syncs = new Map<number, SyncRequest>();
-	readonly #queue: ChatRequest[] = [];
+	readonly #queue: RemoteRequest[] = [];
 	#context: ExtensionContext | undefined;
 	#connection: IpcClient | undefined;
 	#output: ProviderOutput | undefined;
 	#providerContext: Context | undefined;
-	#active: ActiveChat | undefined;
+	#active: ActiveRequest | undefined;
 	#status: SessionStatus = "idle";
 	#nextSyncId = 1;
 	#starting = false;
@@ -63,7 +64,7 @@ export class LocalSession {
 			),
 		}));
 		this.#pi.on("turn_end", (event, context) =>
-			this.#turnEnd(event.message, context),
+			this.#turnEnd(event.message, event.toolResults, context),
 		);
 		this.#pi.on("agent_settled", (_event, context) => {
 			this.#context = context;
@@ -195,6 +196,7 @@ export class LocalSession {
 				}));
 				break;
 			case "chat":
+			case "call":
 				if (
 					message.sessionId !== this.#context?.sessionManager.getSessionId()
 				) {
@@ -241,8 +243,13 @@ export class LocalSession {
 		this.#active = { request, message: output.message };
 		this.#status = "executing";
 		void this.#sync().catch(() => {});
-		output.text(request.text);
-		output.done();
+		if (request.type === "chat") {
+			output.text(request.text);
+			output.done();
+		} else {
+			output.toolCalls(request.calls);
+			output.done("toolUse");
+		}
 	}
 
 	#wake(): void {
@@ -265,18 +272,31 @@ export class LocalSession {
 		);
 	}
 
-	async #turnEnd(message: unknown, context: ExtensionContext): Promise<void> {
+	async #turnEnd(
+		message: unknown,
+		toolResults: ToolResultMessage[],
+		context: ExtensionContext,
+	): Promise<void> {
 		this.#context = context;
 		const active = this.#active;
 		if (!active || message !== active.message) return;
 		this.#active = undefined;
 		this.#status = "idle";
 		try {
-			await this.#connection?.send({
-				type: "result",
-				id: active.request.id,
-				message: active.message,
-			});
+			await this.#connection?.send(
+				active.request.type === "call"
+					? {
+							type: "result",
+							id: active.request.id,
+							message: active.message,
+							toolResults,
+						}
+					: {
+							type: "result",
+							id: active.request.id,
+							message: active.message,
+						},
+			);
 		} finally {
 			void this.#sync().catch(() => {});
 		}

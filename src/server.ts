@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
+import { directTools, type ToolInput, toolResult } from "./tools.ts";
 
 const instructions = readFileSync(
 	new URL("./instructions.md", import.meta.url),
@@ -78,6 +79,99 @@ export function createServer(broker: Broker): McpServer {
 			return textResult({ message });
 		},
 	);
+
+	server.registerTool(
+		"tools",
+		{
+			title: "Pi tools",
+			description: "List the tools currently active in a Pi session.",
+			inputSchema: z.object({
+				sessionId: z
+					.string()
+					.optional()
+					.describe("Pi session for this operation only"),
+			}),
+			annotations: {
+				readOnlyHint: true,
+				idempotentHint: true,
+				openWorldHint: false,
+			},
+		},
+		async (args, context) => {
+			const inspected = await broker.tools(
+				requireChatId(context),
+				args.sessionId,
+				context.mcpReq.signal,
+			);
+			return textResult({ session: inspected.session, tools: inspected.tools });
+		},
+	);
+
+	server.registerTool(
+		"call",
+		{
+			title: "Call Pi tools",
+			description: "Execute one or more tools as a native Pi tool batch.",
+			inputSchema: z.object({
+				calls: z
+					.array(
+						z.object({
+							name: z.string(),
+							arguments: z.record(z.string(), z.unknown()),
+						}),
+					)
+					.min(1),
+				sessionId: z
+					.string()
+					.optional()
+					.describe("Pi session for this operation only"),
+			}),
+			annotations: {
+				openWorldHint: true,
+			},
+		},
+		async (args, context) =>
+			toolResult(
+				await broker.call(
+					requireChatId(context),
+					args.sessionId,
+					args.calls,
+					context.mcpReq.signal,
+				),
+			),
+	);
+
+	for (const tool of directTools) {
+		server.registerTool(
+			tool.name,
+			{
+				title: tool.name,
+				description: tool.description,
+				inputSchema: tool.inputSchema,
+				annotations: {
+					readOnlyHint: tool.name === "read",
+					idempotentHint: tool.name === "read",
+					openWorldHint: tool.name === "bash",
+				},
+			},
+			async (args, context) => {
+				const input = { ...args } as Record<string, unknown> & {
+					sessionId?: string;
+				};
+				const sessionId = input.sessionId;
+				delete input.sessionId;
+				const calls: ToolInput[] = [{ name: tool.name, arguments: input }];
+				return toolResult(
+					await broker.call(
+						requireChatId(context),
+						sessionId,
+						calls,
+						context.mcpReq.signal,
+					),
+				);
+			},
+		);
+	}
 
 	server.registerTool(
 		"sessions",

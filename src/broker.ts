@@ -1,6 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	ToolCall,
+	ToolResultMessage,
+} from "@earendil-works/pi-ai";
 import {
 	type BrokerMessage,
 	IpcServer,
@@ -11,6 +16,7 @@ import {
 	type SessionResult,
 } from "./ipc.ts";
 import { State } from "./state.ts";
+import type { ToolInput } from "./tools.ts";
 
 interface RegisteredSession {
 	description: SessionDescription;
@@ -116,6 +122,37 @@ export class Broker {
 		throw new Error("Pi session returned no assistant message");
 	}
 
+	async tools(
+		chatId: string,
+		sessionId: string | undefined,
+		signal: AbortSignal,
+	): Promise<SessionInspection> {
+		const target = await this.#selectSession(chatId, sessionId, signal, false);
+		return this.#inspect(target, signal);
+	}
+
+	async call(
+		chatId: string,
+		sessionId: string | undefined,
+		calls: ToolInput[],
+		signal: AbortSignal,
+	): Promise<ToolResultMessage[]> {
+		const target = await this.#selectSession(chatId, sessionId, signal, false);
+		const toolCalls: ToolCall[] = calls.map((call) => ({
+			type: "toolCall",
+			id: `chappi-${randomUUID()}`,
+			name: call.name,
+			arguments: call.arguments,
+		}));
+		const result = await this.#request(
+			target,
+			(id) => ({ type: "call", id, sessionId: target, calls: toolCalls }),
+			signal,
+		);
+		if ("toolResults" in result) return result.toolResults;
+		throw new Error("Pi session returned no tool results");
+	}
+
 	async #receive(
 		peer: JsonLinePeer<SessionMessage, BrokerMessage>,
 		message: SessionMessage,
@@ -151,9 +188,10 @@ export class Broker {
 				if (!pending || pending.peer !== peer) break;
 				this.#finishRequest(message.id, pending);
 				if ("error" in message) pending.reject(new Error(message.error));
-				else if ("inspection" in message)
-					pending.resolve({ inspection: message.inspection });
-				else pending.resolve({ message: message.message });
+				else {
+					const { type: _type, id: _id, ...result } = message;
+					pending.resolve(result);
+				}
 				break;
 			}
 		}
