@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/pi-ai";
+import type { Context, UserMessage } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -7,6 +7,7 @@ import {
 	type BrokerMessage,
 	IpcClient,
 	type SessionDescription,
+	type SessionInspection,
 	type SessionStatus,
 } from "./ipc.ts";
 import type { ProviderOutput } from "./provider.ts";
@@ -23,6 +24,7 @@ export class LocalSession {
 	#context: ExtensionContext | undefined;
 	#connection: IpcClient | undefined;
 	#output: ProviderOutput | undefined;
+	#providerContext: Context | undefined;
 	#status: SessionStatus = "idle";
 	#nextSyncId = 1;
 
@@ -43,10 +45,7 @@ export class LocalSession {
 		this.#pi.on("session_shutdown", () => this.close());
 	}
 
-	async start(
-		output: ProviderOutput,
-		_providerContext: Context,
-	): Promise<void> {
+	async start(output: ProviderOutput, providerContext: Context): Promise<void> {
 		const context = this.#context;
 		const connection = this.#connection;
 		if (context?.model?.provider !== "chappi" || !connection) {
@@ -57,6 +56,7 @@ export class LocalSession {
 		}
 
 		this.#output = output;
+		this.#providerContext = providerContext;
 		try {
 			await connection.connect();
 			if (output.closed) return;
@@ -81,6 +81,7 @@ export class LocalSession {
 		}
 		this.#output?.fail(new Error("Chappi session ended"), true);
 		this.#output = undefined;
+		this.#providerContext = undefined;
 		this.#connection?.close();
 		this.#connection = undefined;
 		this.#context = undefined;
@@ -144,9 +145,49 @@ export class LocalSession {
 		}
 	}
 
-	#receive(message: BrokerMessage): void {
-		if (message.type !== "synced") return;
-		this.#syncs.get(message.id)?.resolve();
+	async #receive(message: BrokerMessage): Promise<void> {
+		switch (message.type) {
+			case "synced":
+				this.#syncs.get(message.id)?.resolve();
+				break;
+			case "inspect":
+				try {
+					if (
+						message.sessionId !== this.#context?.sessionManager.getSessionId()
+					) {
+						throw new Error("The requested Pi session is no longer active");
+					}
+					await this.#connection?.send({
+						type: "result",
+						id: message.id,
+						inspection: this.#inspection(),
+					});
+				} catch (error) {
+					await this.#connection?.send({
+						type: "result",
+						id: message.id,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+				break;
+		}
+	}
+
+	#inspection(): SessionInspection {
+		const activeTools = new Set(this.#pi.getActiveTools());
+		const input = this.#providerContext?.messages.findLast(
+			(message): message is UserMessage => message.role === "user",
+		);
+		return {
+			session: this.#description(),
+			tools: this.#pi
+				.getAllTools()
+				.filter((tool) => activeTools.has(tool.name)),
+			skills: this.#pi
+				.getCommands()
+				.filter((command) => command.source === "skill"),
+			...(input ? { input } : {}),
+		};
 	}
 
 	#rejectSyncs(error: Error): void {

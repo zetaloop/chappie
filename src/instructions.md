@@ -1,1 +1,1 @@
-Chappi connects the current ChatGPT conversation to local Pi sessions. Use sessions to inspect the sessions currently connected to this broker.
+Chappi connects this ChatGPT conversation to local Pi sessions. Call init before starting work. Omitting sessionId reuses the current binding or pairs with the next Pi session waiting for ChatGPT; specifying sessionId selects that Pi session as the new default. Use sessions to inspect connected sessions without changing the binding.

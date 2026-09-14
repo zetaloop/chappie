@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtempDisposable } from "node:fs/promises";
+import { mkdir, mkdtempDisposable, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,22 +57,24 @@ async function stopBroker(broker: RunningBroker): Promise<void> {
 	assert.equal(code, 0, broker.stderr());
 }
 
-async function listSessions(
+async function callTool(
 	client: McpClient,
-): Promise<Array<Record<string, unknown>>> {
+	chatId: string,
+	name: string,
+	arguments_: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
 	const called = record(
 		await client.request("tools/call", {
-			_meta: requestMeta,
-			name: "sessions",
-			arguments: {},
+			_meta: { ...requestMeta, "openai/session": chatId },
+			name,
+			arguments: arguments_,
 		}),
 	);
+	assert.notEqual(called.isError, true, JSON.stringify(called));
 	assert(Array.isArray(called.content));
 	const content = record(called.content[0]);
 	assert.equal(content.type, "text");
-	const body = record(JSON.parse(String(content.text)));
-	assert(Array.isArray(body.sessions));
-	return body.sessions.map(record);
+	return record(JSON.parse(String(content.text)));
 }
 
 await using workspace = await mkdtempDisposable(join(tmpdir(), "chappi-"));
@@ -80,6 +82,10 @@ const agentDir = join(workspace.path, "agent");
 const firstCwd = join(workspace.path, "first");
 const secondCwd = join(workspace.path, "second");
 await Promise.all([mkdir(agentDir), mkdir(firstCwd), mkdir(secondCwd)]);
+await writeFile(
+	join(agentDir, "AGENTS.md"),
+	"Use the Chappi verification workspace.\n",
+);
 process.env.PI_CODING_AGENT_DIR = agentDir;
 
 const {
@@ -142,9 +148,12 @@ const listed = record(
 assert(Array.isArray(listed.tools));
 assert.deepEqual(
 	listed.tools.map((tool) => record(tool).name),
-	["sessions"],
+	["init", "sessions"],
 );
-assert.deepEqual(await listSessions(broker.client), []);
+assert.deepEqual(await callTool(broker.client, "chat-a", "sessions"), {
+	binding: null,
+	sessions: [],
+});
 
 const first = await createNativeSession(firstCwd);
 const second = await createNativeSession(secondCwd);
@@ -156,20 +165,32 @@ let { run: secondRun } = await startProvider(
 	second,
 	"Connect the second session.",
 );
+
+const firstId = first.sessionManager.getSessionId();
+const secondId = second.sessionManager.getSessionId();
+const firstInit = await callTool(broker.client, "chat-a", "init");
+assert.equal(record(firstInit.session).id, firstId);
+assert.match(JSON.stringify(firstInit.input), /Connect the first session/);
+assert.equal(
+	firstInit.globalAgents,
+	"Use the Chappi verification workspace.\n",
+);
+const secondInit = await callTool(broker.client, "chat-b", "init");
+assert.equal(record(secondInit.session).id, secondId);
+assert.match(JSON.stringify(secondInit.input), /Connect the second session/);
+
+const selected = await callTool(broker.client, "chat-b", "sessions", {
+	sessionId: firstId,
+});
+assert.equal(selected.binding, secondId);
 assert.deepEqual(
-	(await listSessions(broker.client)).map(({ id, cwd, status }) => ({
-		id,
-		cwd,
-		status,
-	})),
-	[
-		{ id: first.sessionManager.getSessionId(), cwd: firstCwd, status: "ready" },
-		{
-			id: second.sessionManager.getSessionId(),
-			cwd: secondCwd,
-			status: "ready",
-		},
-	],
+	(selected.sessions as unknown[]).map((session) => record(session).id),
+	[firstId],
+);
+await callTool(broker.client, "chat-b", "init", { sessionId: firstId });
+assert.equal(
+	(await callTool(broker.client, "chat-b", "sessions")).binding,
+	firstId,
 );
 
 await stopBroker(broker);
@@ -177,20 +198,13 @@ await Promise.all([firstRun, secondRun]);
 broker = await startBroker(agentDir);
 firstRun = (await startProvider(first, "Reconnect the first session.")).run;
 secondRun = (await startProvider(second, "Reconnect the second session.")).run;
-assert.deepEqual(
-	(await listSessions(broker.client)).map(({ id, cwd, status }) => ({
-		id,
-		cwd,
-		status,
-	})),
-	[
-		{ id: first.sessionManager.getSessionId(), cwd: firstCwd, status: "ready" },
-		{
-			id: second.sessionManager.getSessionId(),
-			cwd: secondCwd,
-			status: "ready",
-		},
-	],
+assert.equal(
+	record((await callTool(broker.client, "chat-a", "init")).session).id,
+	firstId,
+);
+assert.equal(
+	(await callTool(broker.client, "chat-b", "sessions")).binding,
+	firstId,
 );
 
 const duplicate = spawn(
