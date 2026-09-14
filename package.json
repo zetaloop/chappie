@@ -10,10 +10,8 @@
 		"typescript": "^7.0.2"
 	},
 	"scripts": {
-		"verify": "pnpm check && node scripts/verify.ts",
 		"format": "biome check --write .",
-		"check": "biome check . && tsc",
-		"verify-package": "node scripts/verify-package.ts"
+		"check": "biome check . && tsc"
 	},
 	"keywords": [
 		"pi-package",

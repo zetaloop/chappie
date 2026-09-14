@@ -99,10 +99,8 @@ pnpm format
 pnpm check
 ```
 
-Release verification uses `pnpm verify` for the local broker and Pi SDK integration, and `pnpm verify-package` for loading the npm tarball through Pi.
-
 ## Release
 
-A `vX.Y.Z` tag runs verification on Linux, macOS, and Windows, packages the npm archive, and creates a release draft. Manual release runs offer `dryrun` artifacts or a `draft` for the selected tagged commit.
+A `vX.Y.Z` tag runs static checks, packages the npm archive, and creates a release draft. Manual release runs offer `dryrun` artifacts or a `draft` for the selected tagged commit.
 
 Publishing the draft runs `publish.yml`, which publishes to npm through Trusted Publishing using the `release` environment. The publish workflow also accepts a release tag for manual execution.

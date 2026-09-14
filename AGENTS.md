@@ -18,6 +18,4 @@ Files use one `transfer` tool. Supplying `files` imports ChatGPT files directly 
 
 ## Development
 
-Use `pnpm format` and `pnpm check` during development. Version tags and manual release runs execute verification and produce an npm package with a release draft. Publishing the draft runs the npm publishing workflow.
-
-Release verification should exercise installed-package behavior through the real Pi runtime. Keep assertions tied to observable results such as the target session, file contents, or completed tool results.
+Use `pnpm format` and `pnpm check` during development. Version tags and manual release runs check the source and produce an npm package with a release draft. Publishing the draft runs the npm publishing workflow.

@@ -17,5 +17,5 @@
 		"types": ["node"],
 		"verbatimModuleSyntax": true
 	},
-	"include": ["src", "scripts"]
+	"include": ["src"]
 }
