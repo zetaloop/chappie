@@ -10,7 +10,7 @@
 		"typescript": "^7.0.2"
 	},
 	"scripts": {
-		"verify": "pnpm check",
+		"verify": "pnpm check && node scripts/verify.ts",
 		"format": "biome check --write .",
 		"check": "biome check . && tsc"
 	},
@@ -43,5 +43,9 @@
 		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",
 		"typebox": "*"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/server": "^2.0.0",
+		"zod": "^4.6.4"
 	}
 }
