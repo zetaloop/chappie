@@ -1,8 +1,10 @@
 import { createWriteStream } from "node:fs";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	StdioServerTransport,
 	serveStdio,
 } from "@modelcontextprotocol/server/stdio";
+import { Broker } from "./broker.ts";
 import { createServer } from "./server.ts";
 
 const terminationSignals =
@@ -11,6 +13,8 @@ const terminationSignals =
 		: ["SIGHUP", "SIGINT", "SIGTERM"];
 
 export async function serveChappi(): Promise<never> {
+	const broker = new Broker(getAgentDir());
+	await broker.start();
 	const output = createWriteStream("", { fd: 1, autoClose: false });
 	const transport = new StdioServerTransport(process.stdin, output);
 	let stop: (() => void) | undefined;
@@ -25,7 +29,7 @@ export async function serveChappi(): Promise<never> {
 		process.once(signal, requestStop);
 	}
 
-	const handle = serveStdio(() => createServer(), {
+	const handle = serveStdio(() => createServer(broker), {
 		transport,
 		onerror(error) {
 			console.error(error);
@@ -34,8 +38,12 @@ export async function serveChappi(): Promise<never> {
 		},
 	});
 
-	await stopped;
-	await handle.close();
+	try {
+		await stopped;
+		await handle.close();
+	} finally {
+		await broker.close();
+	}
 	await new Promise<void>((resolve) => output.end(resolve));
 	process.exit(0);
 }

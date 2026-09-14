@@ -2,13 +2,14 @@ import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import packageJson from "../package.json" with { type: "json" };
+import type { Broker } from "./broker.ts";
 
 const instructions = readFileSync(
 	new URL("./instructions.md", import.meta.url),
 	"utf8",
 ).trim();
 
-export function createServer(): McpServer {
+export function createServer(broker: Broker): McpServer {
 	const server = new McpServer(
 		{
 			name: "chappi",
@@ -30,7 +31,12 @@ export function createServer(): McpServer {
 			},
 		},
 		async () => ({
-			content: [{ type: "text", text: JSON.stringify({ sessions: [] }) }],
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ sessions: broker.listSessions() }),
+				},
+			],
 		}),
 	);
 
