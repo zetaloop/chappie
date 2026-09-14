@@ -20,13 +20,6 @@
 	],
 	"author": "zetaloop",
 	"license": "MIT",
-	"devEngines": {
-		"packageManager": {
-			"name": "pnpm",
-			"version": "12.4.1",
-			"onFail": "download"
-		}
-	},
 	"packageManager": "pnpm@12.4.1",
 	"type": "module",
 	"engines": {
