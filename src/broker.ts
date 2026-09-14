@@ -91,7 +91,7 @@ export class Broker {
 	}
 
 	async close(): Promise<void> {
-		const error = new Error("Chappi broker ended");
+		const error = new Error("Chappie broker ended");
 		for (const [id, pending] of this.#pending) {
 			this.#finishRequest(id, pending);
 			pending.reject(error);
@@ -169,7 +169,7 @@ export class Broker {
 		const target = await this.#selectSession(chatId, sessionId, signal, false);
 		const toolCalls: ToolCall[] = calls.map((call) => ({
 			type: "toolCall",
-			id: `chappi-${randomUUID()}`,
+			id: `chappie-${randomUUID()}`,
 			name: call.name,
 			arguments: call.arguments,
 		}));

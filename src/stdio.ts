@@ -12,7 +12,7 @@ const terminationSignals =
 		? ["SIGINT", "SIGTERM"]
 		: ["SIGHUP", "SIGINT", "SIGTERM"];
 
-export async function serveChappi(): Promise<never> {
+export async function serveChappie(): Promise<never> {
 	const broker = new Broker(getAgentDir());
 	await broker.start();
 	const output = createWriteStream("", { fd: 1, autoClose: false });

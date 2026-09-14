@@ -28,7 +28,7 @@ export const transfer = {
 	name: "transfer",
 	label: "transfer",
 	description:
-		"Transfer files between ChatGPT and the current Pi session. Provide files to write them to paths; omit files to export existing paths or Chappi image references.",
+		"Transfer files between ChatGPT and the current Pi session. Provide files to write them to paths; omit files to export existing paths or Chappie image references.",
 	parameters: Type.Object({
 		paths: Type.Array(Type.String(), { minItems: 1 }),
 		files: Type.Optional(Type.Array(transferFile, { minItems: 1 })),
@@ -54,7 +54,7 @@ export const transfer = {
 		if (!args.files) {
 			const resources = await Promise.all(
 				args.paths.map((requested) =>
-					requested.startsWith("chappi://")
+					requested.startsWith("chappie://")
 						? describeResource(sessionId, requested)
 						: registerFile(sessionId, localPath(requested, context.cwd)),
 				),

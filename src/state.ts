@@ -15,7 +15,7 @@ export class State {
 	#writes = Promise.resolve();
 
 	constructor(agentDir: string) {
-		this.#path = join(agentDir, "chappi.state.json");
+		this.#path = join(agentDir, "chappie.state.json");
 		this.#temporaryPath = `${this.#path}.tmp`;
 	}
 

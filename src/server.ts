@@ -26,7 +26,7 @@ interface RequestContext {
 export function createServer(broker: Broker): McpServer {
 	const server = new McpServer(
 		{
-			name: "chappi",
+			name: "chappie",
 			version: packageJson.version,
 		},
 		{ instructions },
@@ -232,7 +232,7 @@ export function createServer(broker: Broker): McpServer {
 
 	server.registerResource(
 		"Pi resource",
-		new ResourceTemplate("chappi://session/{sessionId}/{kind}/{id}/{name}", {
+		new ResourceTemplate("chappie://session/{sessionId}/{kind}/{id}/{name}", {
 			list: undefined,
 		}),
 		{ title: "Pi resource" },

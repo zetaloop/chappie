@@ -83,9 +83,9 @@ export type BrokerMessage =
 
 export function ipcEndpoint(agentDir: string): string {
 	const directory = resolve(agentDir);
-	if (process.platform !== "win32") return join(directory, "chappi.sock");
+	if (process.platform !== "win32") return join(directory, "chappie.sock");
 	const identity = directory.replaceAll("\\", "/").toLowerCase();
-	return String.raw`\\.\pipe\chappi-${createHash("sha256").update(identity).digest("hex").slice(0, 16)}`;
+	return String.raw`\\.\pipe\chappie-${createHash("sha256").update(identity).digest("hex").slice(0, 16)}`;
 }
 
 export class JsonLinePeer<Incoming, Outgoing> {
@@ -124,7 +124,7 @@ export class JsonLinePeer<Incoming, Outgoing> {
 			() =>
 				new Promise<void>((resolveWrite, rejectWrite) => {
 					if (this.#closed) {
-						rejectWrite(new Error("Chappi IPC connection is closed"));
+						rejectWrite(new Error("Chappie IPC connection is closed"));
 						return;
 					}
 					this.#socket.write(line, (error) => {
@@ -252,7 +252,7 @@ export class IpcClient {
 
 	connect(): Promise<void> {
 		if (this.#closed)
-			return Promise.reject(new Error("Chappi IPC client is closed"));
+			return Promise.reject(new Error("Chappie IPC client is closed"));
 		if (this.connected) return Promise.resolve();
 		if (this.#opening) return this.#opening;
 		clearTimeout(this.#retry);
@@ -266,7 +266,7 @@ export class IpcClient {
 	send(message: SessionMessage): Promise<void> {
 		const peer = this.#peer;
 		if (!peer || peer.closed)
-			return Promise.reject(new Error("Chappi broker is not running"));
+			return Promise.reject(new Error("Chappie broker is not running"));
 		return peer.send(message);
 	}
 
@@ -280,7 +280,7 @@ export class IpcClient {
 
 	async #open(): Promise<void> {
 		const socket = createConnection(this.#endpoint);
-		let failure = new Error("Chappi broker connection ended");
+		let failure = new Error("Chappie broker connection ended");
 		await new Promise<void>((resolveOpen, rejectOpen) => {
 			socket.once("connect", resolveOpen);
 			socket.once("error", (error) => {
@@ -336,7 +336,7 @@ async function prepareUnixSocket(endpoint: string): Promise<void> {
 
 	if (await endpointAcceptsConnections(endpoint)) {
 		const error = new Error(
-			`Chappi broker is already listening at ${endpoint}`,
+			`Chappie broker is already listening at ${endpoint}`,
 		) as NodeJS.ErrnoException;
 		error.code = "EADDRINUSE";
 		throw error;

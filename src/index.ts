@@ -3,23 +3,23 @@ import {
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 
-export default async function chappi(pi: ExtensionAPI): Promise<void> {
-	pi.registerFlag("chappi", {
-		description: "Serve Chappi over MCP",
+export default async function chappie(pi: ExtensionAPI): Promise<void> {
+	pi.registerFlag("chappie", {
+		description: "Serve Chappie over MCP",
 		type: "boolean",
 	});
 
-	if (process.argv.includes("--chappi")) {
+	if (process.argv.includes("--chappie")) {
 		try {
-			const { serveChappi } = await import("./stdio.ts");
-			await serveChappi();
+			const { serveChappie } = await import("./stdio.ts");
+			await serveChappie();
 		} catch (error) {
 			console.error(error instanceof Error ? error.message : String(error));
 			process.exit(1);
 		}
 	}
 
-	const [{ createChappiProvider }, { LocalSession }, { transfer }] =
+	const [{ createChappieProvider }, { LocalSession }, { transfer }] =
 		await Promise.all([
 			import("./provider.ts"),
 			import("./session.ts"),
@@ -29,6 +29,6 @@ export default async function chappi(pi: ExtensionAPI): Promise<void> {
 	session.install();
 	pi.registerTool(transfer);
 	pi.registerProvider(
-		createChappiProvider((output, context) => session.start(output, context)),
+		createChappieProvider((output, context) => session.start(output, context)),
 	);
 }

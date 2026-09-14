@@ -68,7 +68,7 @@ export class LocalSession {
 	install(): void {
 		this.#pi.on("session_start", (_event, context) => this.#update(context));
 		this.#pi.on("model_select", (event, context) =>
-			this.#update(context, event.model.provider === "chappi"),
+			this.#update(context, event.model.provider === "chappie"),
 		);
 		this.#pi.on("session_info_changed", (_event, context) => {
 			this.#context = context;
@@ -77,7 +77,7 @@ export class LocalSession {
 		this.#pi.on("context", (event) => ({
 			messages: event.messages.filter(
 				(message) =>
-					message.role !== "custom" || message.customType !== "chappi.request",
+					message.role !== "custom" || message.customType !== "chappie.request",
 			),
 		}));
 		this.#pi.on("turn_end", (event, context) =>
@@ -99,11 +99,11 @@ export class LocalSession {
 	): Promise<void> {
 		const context = this.#context;
 		const connection = this.#connection;
-		if (context?.model?.provider !== "chappi" || !connection) {
-			throw new Error("Chappi is not active for this session");
+		if (context?.model?.provider !== "chappie" || !connection) {
+			throw new Error("Chappie is not active for this session");
 		}
 		if (this.#output && !this.#output.closed) {
-			throw new Error("Chappi already has an active provider request");
+			throw new Error("Chappie already has an active provider request");
 		}
 
 		this.#starting = false;
@@ -133,7 +133,7 @@ export class LocalSession {
 				.send({ type: "unregister", sessionId })
 				.catch(() => {});
 		}
-		this.#output?.fail(new Error("Chappi session ended"), true);
+		this.#output?.fail(new Error("Chappie session ended"), true);
 		this.#output = undefined;
 		this.#active = undefined;
 		this.#queue.length = 0;
@@ -141,13 +141,13 @@ export class LocalSession {
 		this.#connection?.close();
 		this.#connection = undefined;
 		this.#context = undefined;
-		this.#rejectSyncs(new Error("Chappi session ended"));
-		this.#rejectStores(new Error("Chappi session ended"));
+		this.#rejectSyncs(new Error("Chappie session ended"));
+		this.#rejectStores(new Error("Chappie session ended"));
 	}
 
 	#update(
 		context: ExtensionContext,
-		active = context.model?.provider === "chappi",
+		active = context.model?.provider === "chappie",
 	): void {
 		this.#context = context;
 		if (!active) {
@@ -179,7 +179,7 @@ export class LocalSession {
 
 	#description(): SessionDescription {
 		const context = this.#context;
-		if (!context) throw new Error("Chappi session is not available");
+		if (!context) throw new Error("Chappie session is not available");
 		const name = this.#pi.getSessionName();
 		const sessionFile = context.sessionManager.getSessionFile();
 		return {
@@ -196,7 +196,7 @@ export class LocalSession {
 		if (
 			!connection?.connected ||
 			!this.#context ||
-			this.#context.model?.provider !== "chappi"
+			this.#context.model?.provider !== "chappie"
 		)
 			return;
 		const id = this.#nextSyncId++;
@@ -326,7 +326,7 @@ export class LocalSession {
 		this.#starting = true;
 		this.#pi.sendMessage(
 			{
-				customType: "chappi.request",
+				customType: "chappie.request",
 				content: "",
 				display: false,
 			},

@@ -30,7 +30,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: package
-          path: chappi-*.tgz
+          path: zetaloop-chappie-*.tgz
           if-no-files-found: error
           compression-level: 0
 
@@ -46,4 +46,4 @@ jobs:
           fi
           version=$(jq -r .version package.json)
           test "$tag" = "v$version"
-          gh release create "$tag" chappi-*.tgz --verify-tag --draft --title "$tag" --generate-notes
+          gh release create "$tag" zetaloop-chappie-*.tgz --verify-tag --draft --title "$tag" --generate-notes

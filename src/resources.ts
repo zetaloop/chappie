@@ -117,7 +117,7 @@ export function describeResource(
 		throw new Error("The resource belongs to another Pi session");
 	}
 	const entry = store(sessionId).get(uri);
-	if (!entry) throw new Error(`Unknown Chappi resource: ${uri}`);
+	if (!entry) throw new Error(`Unknown Chappie resource: ${uri}`);
 	return entry.descriptor;
 }
 
@@ -127,7 +127,7 @@ export async function readSessionResource(
 ): Promise<ResourceData> {
 	const descriptor = describeResource(sessionId, uri);
 	const entry = store(sessionId).get(uri);
-	if (!entry) throw new Error(`Unknown Chappi resource: ${uri}`);
+	if (!entry) throw new Error(`Unknown Chappie resource: ${uri}`);
 	const blob =
 		entry.type === "file"
 			? (await readFile(entry.path)).toString("base64")
@@ -157,7 +157,7 @@ function resourceDescriptor(
 	size: number,
 ): ResourceDescriptor {
 	return {
-		uri: `chappi://session/${encodeURIComponent(sessionId)}/${kind}/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,
+		uri: `chappie://session/${encodeURIComponent(sessionId)}/${kind}/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,
 		name,
 		mimeType,
 		size,
@@ -171,19 +171,19 @@ function parseResourceUri(uri: string): {
 	name: string;
 } {
 	const parsed = new URL(uri);
-	if (parsed.protocol !== "chappi:" || parsed.hostname !== "session") {
-		throw new Error(`Unsupported Chappi resource: ${uri}`);
+	if (parsed.protocol !== "chappie:" || parsed.hostname !== "session") {
+		throw new Error(`Unsupported Chappie resource: ${uri}`);
 	}
 	const parts = parsed.pathname
 		.slice(1)
 		.split("/")
 		.map((part) => decodeURIComponent(part));
 	if (parts.length !== 4 || !parts.every(Boolean)) {
-		throw new Error(`Invalid Chappi resource: ${uri}`);
+		throw new Error(`Invalid Chappie resource: ${uri}`);
 	}
 	const [sessionId, kind, id, name] = parts;
 	if (!sessionId || !kind || !id || !name) {
-		throw new Error(`Invalid Chappi resource: ${uri}`);
+		throw new Error(`Invalid Chappie resource: ${uri}`);
 	}
 	return { sessionId, kind, id, name };
 }

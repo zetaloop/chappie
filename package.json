@@ -1,5 +1,5 @@
 {
-	"name": "chappi",
+	"name": "@zetaloop/chappie",
 	"version": "0.1.0",
 	"description": "Connect ChatGPT to Pi",
 	"devDependencies": {
@@ -50,6 +50,6 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/zetaloop/chappi.git"
+		"url": "git+https://github.com/zetaloop/chappie.git"
 	}
 }

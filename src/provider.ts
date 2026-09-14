@@ -43,7 +43,7 @@ export class ProviderOutput {
 		this.#resolveFinished = completion.resolve;
 		if (signal) {
 			const abort = (): void =>
-				this.fail(new Error("Chappi provider request was cancelled"), true);
+				this.fail(new Error("Chappie provider request was cancelled"), true);
 			signal.addEventListener("abort", abort, { once: true });
 			this.#removeAbort = () => signal.removeEventListener("abort", abort);
 			if (signal.aborted) abort();
@@ -62,7 +62,7 @@ export class ProviderOutput {
 
 	text(text: string): void {
 		if (this.#closed)
-			throw new Error("Chappi provider response is already complete");
+			throw new Error("Chappie provider response is already complete");
 		this.begin();
 		const contentIndex = this.message.content.length;
 		const block = { type: "text" as const, text: "" };
@@ -89,7 +89,7 @@ export class ProviderOutput {
 
 	toolCalls(calls: ToolCall[]): void {
 		if (this.#closed)
-			throw new Error("Chappi provider response is already complete");
+			throw new Error("Chappie provider response is already complete");
 		this.begin();
 		for (const call of calls) {
 			const contentIndex = this.message.content.length;
@@ -146,7 +146,7 @@ export class ProviderOutput {
 	}
 }
 
-export function createChappiProvider(
+export function createChappieProvider(
 	start: (output: ProviderOutput, context: Context) => Promise<void>,
 ) {
 	const stream = (
@@ -166,11 +166,11 @@ export function createChappiProvider(
 	};
 
 	return createProvider({
-		id: "chappi",
-		name: "Chappi",
+		id: "chappie",
+		name: "Chappie",
 		auth: {
 			apiKey: {
-				name: "Local Chappi",
+				name: "Local Chappie",
 				async resolve() {
 					return { auth: { headers: {} }, source: "local" };
 				},
@@ -180,8 +180,8 @@ export function createChappiProvider(
 			{
 				id: "chatgpt",
 				name: "ChatGPT",
-				api: "chappi",
-				provider: "chappi",
+				api: "chappie",
+				provider: "chappie",
 				baseUrl: "",
 				reasoning: false,
 				input: ["text", "image"],
