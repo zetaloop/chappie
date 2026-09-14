@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
+import { deliveryContent } from "./delivery.ts";
 import {
 	directTools,
 	inputContent,
@@ -53,7 +54,7 @@ export function createServer(broker: Broker): McpServer {
 				args.sessionId,
 				context.mcpReq.signal,
 			);
-			return textResult(initialized, inputs);
+			return finishResult(broker, context, textResult(initialized, inputs));
 		},
 	);
 
@@ -81,7 +82,7 @@ export function createServer(broker: Broker): McpServer {
 				args.text,
 				context.mcpReq.signal,
 			);
-			return textResult({ message }, inputs);
+			return finishResult(broker, context, textResult({ message }, inputs));
 		},
 	);
 
@@ -108,9 +109,13 @@ export function createServer(broker: Broker): McpServer {
 				args.sessionId,
 				context.mcpReq.signal,
 			);
-			return textResult(
-				{ session: inspected.session, tools: inspected.tools },
-				inputs,
+			return finishResult(
+				broker,
+				context,
+				textResult(
+					{ session: inspected.session, tools: inspected.tools },
+					inputs,
+				),
 			);
 		},
 	);
@@ -145,7 +150,11 @@ export function createServer(broker: Broker): McpServer {
 				args.calls,
 				context.mcpReq.signal,
 			);
-			return toolResult(result.toolResults, result.inputs);
+			return finishResult(
+				broker,
+				context,
+				toolResult(result.toolResults, result.inputs),
+			);
 		},
 	);
 
@@ -175,7 +184,11 @@ export function createServer(broker: Broker): McpServer {
 					calls,
 					context.mcpReq.signal,
 				);
-				return toolResult(result.toolResults, result.inputs);
+				return finishResult(
+					broker,
+					context,
+					toolResult(result.toolResults, result.inputs),
+				);
 			},
 		);
 	}
@@ -203,13 +216,14 @@ export function createServer(broker: Broker): McpServer {
 			const inputs = chatId
 				? await broker.inputs(chatId, args.sessionId, context.mcpReq.signal)
 				: [];
-			return textResult(
+			const result = textResult(
 				{
 					binding: chatId ? (broker.binding(chatId) ?? null) : null,
 					sessions: broker.listSessions(args.sessionId),
 				},
 				inputs,
 			);
+			return chatId ? finishResult(broker, context, result) : result;
 		},
 	);
 
@@ -226,6 +240,21 @@ function textResult(
 			...inputContent(inputs),
 		],
 	};
+}
+
+async function finishResult<T extends { content: object[] }>(
+	broker: Broker,
+	context: RequestContext,
+	result: T,
+): Promise<T> {
+	const chatId = requireChatId(context);
+	const deliveries = await broker.deliveries(chatId);
+	const completed = {
+		...result,
+		content: [...result.content, ...deliveryContent(deliveries)],
+	} as T;
+	await broker.acknowledgeDeliveries(deliveries, context.mcpReq.signal);
+	return completed;
 }
 
 function requestChatId(context: RequestContext): string | undefined {

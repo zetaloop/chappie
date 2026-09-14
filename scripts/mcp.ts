@@ -15,6 +15,7 @@ interface JsonRpcResponse {
 interface PendingRequest {
 	resolve(result: unknown): void;
 	reject(error: Error): void;
+	removeAbort?(): void;
 }
 
 export const requestMeta = {
@@ -46,6 +47,7 @@ export class McpClient {
 			const pending = this.#pending.get(response.id);
 			if (!pending) return;
 			this.#pending.delete(response.id);
+			pending.removeAbort?.();
 			if (response.error) {
 				pending.reject(
 					new Error(`${response.error.code}: ${response.error.message}`),
@@ -64,10 +66,44 @@ export class McpClient {
 		});
 	}
 
-	request(method: string, params: Record<string, unknown>): Promise<unknown> {
+	request(
+		method: string,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	): Promise<unknown> {
 		const id = this.#nextId++;
 		const result = new Promise<unknown>((resolve, reject) => {
-			this.#pending.set(id, { resolve, reject });
+			const abort = (): void => {
+				this.#process.stdin.write(
+					`${JSON.stringify({
+						jsonrpc: "2.0",
+						method: "notifications/cancelled",
+						params: { requestId: id, reason: "verification cancellation" },
+					})}\n`,
+				);
+				const pending = this.#pending.get(id);
+				if (!pending) return;
+				this.#pending.delete(id);
+				pending.removeAbort?.();
+				pending.reject(
+					signal?.reason instanceof Error
+						? signal.reason
+						: new Error("Request cancelled"),
+				);
+			};
+			this.#pending.set(id, {
+				resolve,
+				reject,
+				...(signal
+					? {
+							removeAbort: () => signal.removeEventListener("abort", abort),
+						}
+					: {}),
+			});
+			if (signal) {
+				signal.addEventListener("abort", abort, { once: true });
+				if (signal.aborted) abort();
+			}
 		});
 		this.#process.stdin.write(
 			`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
@@ -75,6 +111,7 @@ export class McpClient {
 				if (!error) return;
 				const pending = this.#pending.get(id);
 				this.#pending.delete(id);
+				pending?.removeAbort?.();
 				pending?.reject(error);
 			},
 		);
@@ -86,7 +123,10 @@ export class McpClient {
 	}
 
 	#fail(error: Error): void {
-		for (const pending of this.#pending.values()) pending.reject(error);
+		for (const pending of this.#pending.values()) {
+			pending.removeAbort?.();
+			pending.reject(error);
+		}
 		this.#pending.clear();
 	}
 }

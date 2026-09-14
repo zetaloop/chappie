@@ -17,6 +17,7 @@ import type {
 	SlashCommandInfo,
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
+import type { DeliveryRecord } from "./delivery.ts";
 
 export type SessionStatus = "idle" | "ready" | "executing";
 
@@ -52,13 +53,28 @@ export type SessionResult =
 export type SessionMessage =
 	| { type: "sync"; id: number; session: SessionDescription }
 	| { type: "unregister"; sessionId: string }
+	| { type: "delivery"; delivery: DeliveryRecord }
 	| ({ type: "result"; id: number } & SessionResult);
 
 export type BrokerMessage =
 	| { type: "synced"; id: number; sessionId: string }
+	| { type: "stored"; id: string }
 	| { type: "inspect"; id: number; sessionId: string }
-	| { type: "chat"; id: number; sessionId: string; text: string }
-	| { type: "call"; id: number; sessionId: string; calls: ToolCall[] }
+	| {
+			type: "chat";
+			id: number;
+			chatId: string;
+			sessionId: string;
+			text: string;
+	  }
+	| {
+			type: "call";
+			id: number;
+			chatId: string;
+			sessionId: string;
+			calls: ToolCall[];
+	  }
+	| { type: "cancel"; id: number; sessionId: string }
 	| { type: "ackInputs"; sessionId: string; ids: string[] };
 
 export function ipcEndpoint(agentDir: string): string {

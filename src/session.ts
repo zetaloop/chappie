@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
 	AssistantMessage,
 	Context,
@@ -8,6 +9,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import type { DeliveryRecord } from "./delivery.ts";
 import {
 	type BrokerMessage,
 	IpcClient,
@@ -25,10 +27,16 @@ interface SyncRequest {
 	reject(error: Error): void;
 }
 
+interface StoreRequest {
+	resolve(): void;
+	reject(error: Error): void;
+}
+
 interface ActiveRequest {
 	request: RemoteRequest;
 	message: AssistantMessage;
 	completed: boolean;
+	cancelled: boolean;
 	toolResults: ToolResultMessage[];
 }
 
@@ -36,9 +44,11 @@ export class LocalSession {
 	readonly #pi: ExtensionAPI;
 	readonly #agentDir: string;
 	readonly #syncs = new Map<number, SyncRequest>();
+	readonly #stores = new Map<string, StoreRequest>();
 	readonly #queue: RemoteRequest[] = [];
 	readonly #seenInputs = new Set<string>();
 	readonly #pendingInputs = new Map<string, SessionInput>();
+	readonly #deliveries = new Map<string, DeliveryRecord>();
 	#context: ExtensionContext | undefined;
 	#connection: IpcClient | undefined;
 	#output: ProviderOutput | undefined;
@@ -47,6 +57,7 @@ export class LocalSession {
 	#nextSyncId = 1;
 	#starting = false;
 	#sessionId: string | undefined;
+	#flushing = Promise.resolve();
 
 	constructor(pi: ExtensionAPI, agentDir: string) {
 		this.#pi = pi;
@@ -130,6 +141,7 @@ export class LocalSession {
 		this.#connection = undefined;
 		this.#context = undefined;
 		this.#rejectSyncs(new Error("Chappi session ended"));
+		this.#rejectStores(new Error("Chappi session ended"));
 	}
 
 	#update(
@@ -143,10 +155,14 @@ export class LocalSession {
 		}
 		if (!this.#connection) {
 			this.#connection = new IpcClient(this.#agentDir, {
-				onOpen: () => this.#sync(),
+				onOpen: async () => {
+					await this.#sync();
+					await this.#flushDeliveries();
+				},
 				onMessage: (message) => this.#receive(message),
 				onClose: (error) => {
 					this.#rejectSyncs(error);
+					this.#rejectStores(error);
 					this.#output?.fail(error);
 					this.#active = undefined;
 					this.#queue.length = 0;
@@ -198,6 +214,9 @@ export class LocalSession {
 			case "synced":
 				this.#syncs.get(message.id)?.resolve();
 				break;
+			case "stored":
+				this.#stores.get(message.id)?.resolve();
+				break;
 			case "inspect":
 				await this.#reply(message.id, message.sessionId, () => ({
 					type: "result",
@@ -213,6 +232,20 @@ export class LocalSession {
 					for (const id of message.ids) this.#pendingInputs.delete(id);
 				}
 				break;
+			case "cancel": {
+				const queued = this.#queue.findIndex(
+					(request) => request.id === message.id,
+				);
+				if (queued !== -1) {
+					this.#queue.splice(queued, 1);
+					break;
+				}
+				if (this.#active?.request.id !== message.id) break;
+				this.#active.cancelled = true;
+				if (this.#active.completed) await this.#completeActive();
+				else this.#context?.abort();
+				break;
+			}
 			case "chat":
 			case "call":
 				if (
@@ -259,6 +292,7 @@ export class LocalSession {
 			request,
 			message: output.message,
 			completed: false,
+			cancelled: false,
 			toolResults: [],
 		};
 		this.#status = "executing";
@@ -309,22 +343,46 @@ export class LocalSession {
 		if (!active?.completed) return;
 		this.#collectInputs();
 		const inputs = this.#inputs();
-		await this.#connection?.send(
-			active.request.type === "call"
-				? {
-						type: "result",
-						id: active.request.id,
-						message: active.message,
-						toolResults: active.toolResults,
-						inputs,
-					}
-				: {
-						type: "result",
-						id: active.request.id,
-						message: active.message,
-						inputs,
-					},
-		);
+		if (active.cancelled) {
+			const context = this.#context;
+			if (context) {
+				const sessionFile = context.sessionManager.getSessionFile();
+				const delivery: DeliveryRecord = {
+					id: randomUUID(),
+					chatId: active.request.chatId,
+					sessionId: context.sessionManager.getSessionId(),
+					toolCallIds:
+						active.request.type === "call"
+							? active.request.calls.map(({ id }) => id)
+							: [],
+					...(sessionFile
+						? { sessionFile }
+						: { inlineResults: active.toolResults }),
+					...(active.message.errorMessage
+						? { error: active.message.errorMessage }
+						: { error: "Request cancelled" }),
+				};
+				this.#deliveries.set(delivery.id, delivery);
+				await this.#flushDeliveries().catch(() => {});
+			}
+		} else {
+			await this.#connection?.send(
+				active.request.type === "call"
+					? {
+							type: "result",
+							id: active.request.id,
+							message: active.message,
+							toolResults: active.toolResults,
+							inputs,
+						}
+					: {
+							type: "result",
+							id: active.request.id,
+							message: active.message,
+							inputs,
+						},
+			);
+		}
 		this.#active = undefined;
 		this.#status = "idle";
 		void this.#sync().catch(() => {});
@@ -359,6 +417,26 @@ export class LocalSession {
 		return [...this.#pendingInputs.values()];
 	}
 
+	async #flushDeliveries(): Promise<void> {
+		const flushed = this.#flushing.then(async () => {
+			const connection = this.#connection;
+			if (!connection?.connected) return;
+			for (const delivery of this.#deliveries.values()) {
+				const completion = Promise.withResolvers<void>();
+				this.#stores.set(delivery.id, completion);
+				try {
+					await connection.send({ type: "delivery", delivery });
+					await completion.promise;
+					this.#deliveries.delete(delivery.id);
+				} finally {
+					this.#stores.delete(delivery.id);
+				}
+			}
+		});
+		this.#flushing = flushed.catch(() => {});
+		return flushed;
+	}
+
 	async #reply(
 		id: number,
 		sessionId: string,
@@ -384,5 +462,10 @@ export class LocalSession {
 	#rejectSyncs(error: Error): void {
 		for (const sync of this.#syncs.values()) sync.reject(error);
 		this.#syncs.clear();
+	}
+
+	#rejectStores(error: Error): void {
+		for (const store of this.#stores.values()) store.reject(error);
+		this.#stores.clear();
 	}
 }

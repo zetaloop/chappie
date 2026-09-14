@@ -7,6 +7,11 @@ import type {
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import {
+	type DeliveryRecord,
+	type ResolvedDelivery,
+	resolveDelivery,
+} from "./delivery.ts";
+import {
 	type BrokerMessage,
 	IpcServer,
 	type JsonLinePeer,
@@ -132,7 +137,7 @@ export class Broker {
 		const target = await this.#selectSession(chatId, sessionId, signal, false);
 		const result = await this.#request(
 			target,
-			(id) => ({ type: "chat", id, sessionId: target, text }),
+			(id) => ({ type: "chat", id, chatId, sessionId: target, text }),
 			signal,
 		);
 		if ("message" in result) {
@@ -168,7 +173,13 @@ export class Broker {
 		}));
 		const result = await this.#request(
 			target,
-			(id) => ({ type: "call", id, sessionId: target, calls: toolCalls }),
+			(id) => ({
+				type: "call",
+				id,
+				chatId,
+				sessionId: target,
+				calls: toolCalls,
+			}),
 			signal,
 		);
 		if ("toolResults" in result) {
@@ -189,6 +200,22 @@ export class Broker {
 		const { inputs } = await this.#inspect(target, signal);
 		await this.#ackInputs(target, inputs);
 		return inputs;
+	}
+
+	async deliveries(chatId: string): Promise<ResolvedDelivery[]> {
+		return Promise.all(this.#state.deliveries(chatId).map(resolveDelivery));
+	}
+
+	async acknowledgeDeliveries(
+		deliveries: DeliveryRecord[],
+		signal: AbortSignal,
+	): Promise<void> {
+		if (deliveries.length === 0) return;
+		if (signal.aborted) throw abortError(signal);
+		await this.#state.removeDeliveries(deliveries.map(({ id }) => id));
+		if (!signal.aborted) return;
+		await this.#state.restoreDeliveries(deliveries);
+		throw abortError(signal);
 	}
 
 	async #receive(
@@ -221,6 +248,10 @@ export class Broker {
 				if (session?.peer === peer) this.#removeSession(message.sessionId);
 				break;
 			}
+			case "delivery":
+				await this.#state.addDelivery(message.delivery);
+				await peer.send({ type: "stored", id: message.delivery.id });
+				break;
 			case "result": {
 				const pending = this.#pending.get(message.id);
 				if (!pending || pending.peer !== peer) break;
@@ -312,6 +343,7 @@ export class Broker {
 		const onAbort = (): void => {
 			const pending = this.#pending.get(id);
 			if (!pending) return;
+			void pending.peer.send({ type: "cancel", id, sessionId }).catch(() => {});
 			this.#finishRequest(id, pending);
 			pending.reject(abortError(signal));
 		};

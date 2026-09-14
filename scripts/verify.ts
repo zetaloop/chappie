@@ -117,6 +117,7 @@ const { default: chappi } = await import("../src/index.ts");
 
 const holdStarted = Promise.withResolvers<void>();
 const holdRelease = Promise.withResolvers<void>();
+const cancelStarted = Promise.withResolvers<void>();
 const verificationTools: ExtensionFactory = (pi) => {
 	pi.on("input", (event) =>
 		event.text === "raw instruction"
@@ -145,6 +146,25 @@ const verificationTools: ExtensionFactory = (pi) => {
 			holdStarted.resolve();
 			await holdRelease.promise;
 			return { content: [{ type: "text", text: "released" }], details: {} };
+		},
+	});
+	pi.registerTool({
+		name: "waitCancel",
+		label: "Wait for cancellation",
+		description: "Wait until the current Pi run is cancelled.",
+		parameters: Type.Object({}),
+		async execute(_id, _params, signal) {
+			cancelStarted.resolve();
+			return new Promise<never>((_resolve, reject) => {
+				const abort = (): void =>
+					reject(
+						signal?.reason instanceof Error
+							? signal.reason
+							: new Error("Tool cancelled"),
+					);
+				if (signal?.aborted) abort();
+				else signal?.addEventListener("abort", abort, { once: true });
+			});
 		},
 	});
 };
@@ -271,7 +291,7 @@ assert.match(
 const catalog = await callTool(broker.client, "chat-a", "tools");
 assert.deepEqual(
 	(catalog.tools as unknown[]).map((tool) => record(tool).name),
-	["read", "bash", "edit", "write", "echo", "hold"],
+	["read", "bash", "edit", "write", "echo", "hold", "waitCancel"],
 );
 const directRead = await callToolResult(broker.client, "chat-a", "read", {
 	path: "first.txt",
@@ -350,14 +370,42 @@ assert.equal(
 	firstId,
 );
 
+const cancellation = new AbortController();
+const cancelledBatch = broker.client.request(
+	"tools/call",
+	{
+		_meta: { ...requestMeta, "openai/session": "chat-a" },
+		name: "call",
+		arguments: {
+			calls: [
+				{
+					name: "echo",
+					arguments: { value: "completed-before-cancel" },
+				},
+				{ name: "waitCancel", arguments: {} },
+			],
+		},
+	},
+	cancellation.signal,
+);
+await cancelStarted.promise;
+cancellation.abort(new Error("verification cancellation"));
+await assert.rejects(cancelledBatch);
+await first.waitForIdle();
+
 await stopBroker(broker);
 await Promise.all([firstRun, secondRun]);
 broker = await startBroker(agentDir);
 firstRun = (await startProvider(first, "Reconnect the first session.")).run;
 secondRun = (await startProvider(second, "Reconnect the second session.")).run;
-assert.equal(
-	record((await callTool(broker.client, "chat-a", "init")).session).id,
-	firstId,
+const recovered = await callToolResult(broker.client, "chat-a", "init");
+assert.equal(record(resultJson(recovered).session).id, firstId);
+assert.match(resultTexts(recovered).join("\n"), /completed-before-cancel/);
+assert.match(resultTexts(recovered).join("\n"), /waitCancel/);
+const deliveredOnce = await callToolResult(broker.client, "chat-a", "sessions");
+assert.doesNotMatch(
+	resultTexts(deliveredOnce).join("\n"),
+	/completed-before-cancel/,
 );
 assert.equal(
 	(await callTool(broker.client, "chat-b", "sessions")).binding,
