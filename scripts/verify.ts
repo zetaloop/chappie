@@ -82,9 +82,12 @@ async function callTool(
 	name: string,
 	arguments_: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
-	const called = await callToolResult(client, chatId, name, arguments_);
-	assert(Array.isArray(called.content));
-	const content = record(called.content[0]);
+	return resultJson(await callToolResult(client, chatId, name, arguments_));
+}
+
+function resultJson(result: Record<string, unknown>): Record<string, unknown> {
+	assert(Array.isArray(result.content));
+	const content = record(result.content[0]);
 	assert.equal(content.type, "text");
 	return record(JSON.parse(String(content.text)));
 }
@@ -115,6 +118,15 @@ const { default: chappi } = await import("../src/index.ts");
 const holdStarted = Promise.withResolvers<void>();
 const holdRelease = Promise.withResolvers<void>();
 const verificationTools: ExtensionFactory = (pi) => {
+	pi.on("input", (event) =>
+		event.text === "raw instruction"
+			? {
+					action: "transform",
+					text: "transformed instruction",
+					...(event.images ? { images: event.images } : {}),
+				}
+			: { action: "continue" },
+	);
 	pi.registerTool({
 		name: "echo",
 		label: "Echo",
@@ -237,16 +249,24 @@ let { run: secondRun } = await startProvider(
 
 const firstId = first.sessionManager.getSessionId();
 const secondId = second.sessionManager.getSessionId();
-const firstInit = await callTool(broker.client, "chat-a", "init");
+const firstInitResult = await callToolResult(broker.client, "chat-a", "init");
+const firstInit = resultJson(firstInitResult);
 assert.equal(record(firstInit.session).id, firstId);
-assert.match(JSON.stringify(firstInit.input), /Connect the first session/);
+assert.match(
+	resultTexts(firstInitResult).join("\n"),
+	/Connect the first session/,
+);
 assert.equal(
 	firstInit.globalAgents,
 	"Use the Chappi verification workspace.\n",
 );
-const secondInit = await callTool(broker.client, "chat-b", "init");
+const secondInitResult = await callToolResult(broker.client, "chat-b", "init");
+const secondInit = resultJson(secondInitResult);
 assert.equal(record(secondInit.session).id, secondId);
-assert.match(JSON.stringify(secondInit.input), /Connect the second session/);
+assert.match(
+	resultTexts(secondInitResult).join("\n"),
+	/Connect the second session/,
+);
 
 const catalog = await callTool(broker.client, "chat-a", "tools");
 assert.deepEqual(
@@ -270,12 +290,27 @@ const held = callToolResult(broker.client, "chat-a", "call", {
 	calls: [{ name: "hold", arguments: {} }],
 });
 await holdStarted.promise;
+await first.steer("SDK steering message");
 const independentRead = await callToolResult(broker.client, "chat-b", "read", {
 	path: "second.txt",
 });
 assert.match(resultTexts(independentRead).join("\n"), /second session/);
 holdRelease.resolve();
-assert.match(resultTexts(await held).join("\n"), /released/);
+const heldResult = await held;
+assert.match(resultTexts(heldResult).join("\n"), /released/);
+assert.equal(
+	resultTexts(heldResult).filter((text) =>
+		text.includes("SDK steering message"),
+	).length,
+	1,
+);
+
+await first.prompt("raw instruction", { streamingBehavior: "steer" });
+const transformed = await callToolResult(broker.client, "chat-a", "read", {
+	path: "first.txt",
+});
+assert.match(resultTexts(transformed).join("\n"), /transformed instruction/);
+assert.doesNotMatch(resultTexts(transformed).join("\n"), /raw instruction/);
 
 await callTool(broker.client, "chat-a", "chat", {
 	text: "First remote assistant reply.",

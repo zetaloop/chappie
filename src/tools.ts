@@ -6,6 +6,7 @@ import {
 	createWriteToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
+import type { SessionInput } from "./ipc.ts";
 
 export interface ToolInput {
 	name: string;
@@ -27,21 +28,39 @@ export const directTools = definitions.map((definition) => ({
 	),
 }));
 
-export function toolResult(toolResults: ToolResultMessage[]) {
+export function toolResult(
+	toolResults: ToolResultMessage[],
+	inputs: SessionInput[] = [],
+) {
 	return {
-		content: toolResults.flatMap((result) => [
-			{
-				type: "text" as const,
-				text: JSON.stringify({
-					toolCallId: result.toolCallId,
-					toolName: result.toolName,
-					isError: result.isError,
-				}),
-			},
-			...result.content,
-		]),
+		content: [
+			...toolResults.flatMap((result) => [
+				{
+					type: "text" as const,
+					text: JSON.stringify({
+						toolCallId: result.toolCallId,
+						toolName: result.toolName,
+						isError: result.isError,
+					}),
+				},
+				...result.content,
+			]),
+			...inputContent(inputs),
+		],
 		isError: toolResults.some((result) => result.isError),
 	};
+}
+
+export function inputContent(inputs: SessionInput[]) {
+	return inputs.flatMap(({ id, message }) => [
+		{
+			type: "text" as const,
+			text: JSON.stringify({ piInput: id }),
+		},
+		...(typeof message.content === "string"
+			? [{ type: "text" as const, text: message.content }]
+			: message.content),
+	]);
 }
 
 function withSessionId(

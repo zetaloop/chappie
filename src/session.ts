@@ -12,6 +12,7 @@ import {
 	type BrokerMessage,
 	IpcClient,
 	type SessionDescription,
+	type SessionInput,
 	type SessionInspection,
 	type SessionStatus,
 } from "./ipc.ts";
@@ -27,6 +28,8 @@ interface SyncRequest {
 interface ActiveRequest {
 	request: RemoteRequest;
 	message: AssistantMessage;
+	completed: boolean;
+	toolResults: ToolResultMessage[];
 }
 
 export class LocalSession {
@@ -34,14 +37,16 @@ export class LocalSession {
 	readonly #agentDir: string;
 	readonly #syncs = new Map<number, SyncRequest>();
 	readonly #queue: RemoteRequest[] = [];
+	readonly #seenInputs = new Set<string>();
+	readonly #pendingInputs = new Map<string, SessionInput>();
 	#context: ExtensionContext | undefined;
 	#connection: IpcClient | undefined;
 	#output: ProviderOutput | undefined;
-	#providerContext: Context | undefined;
 	#active: ActiveRequest | undefined;
 	#status: SessionStatus = "idle";
 	#nextSyncId = 1;
 	#starting = false;
+	#sessionId: string | undefined;
 
 	constructor(pi: ExtensionAPI, agentDir: string) {
 		this.#pi = pi;
@@ -66,15 +71,20 @@ export class LocalSession {
 		this.#pi.on("turn_end", (event, context) =>
 			this.#turnEnd(event.message, event.toolResults, context),
 		);
-		this.#pi.on("agent_settled", (_event, context) => {
+		this.#pi.on("agent_settled", async (_event, context) => {
 			this.#context = context;
 			this.#starting = false;
+			this.#collectInputs();
+			await this.#completeActive();
 			this.#dispatch();
 		});
 		this.#pi.on("session_shutdown", () => this.close());
 	}
 
-	async start(output: ProviderOutput, providerContext: Context): Promise<void> {
+	async start(
+		output: ProviderOutput,
+		_providerContext: Context,
+	): Promise<void> {
 		const context = this.#context;
 		const connection = this.#connection;
 		if (context?.model?.provider !== "chappi" || !connection) {
@@ -86,10 +96,11 @@ export class LocalSession {
 
 		this.#starting = false;
 		this.#output = output;
-		this.#providerContext = providerContext;
 		try {
 			await connection.connect();
 			if (output.closed) return;
+			this.#collectInputs();
+			await this.#completeActive();
 			this.#status = "ready";
 			await this.#sync();
 			if (output.closed) return;
@@ -112,7 +123,6 @@ export class LocalSession {
 		}
 		this.#output?.fail(new Error("Chappi session ended"), true);
 		this.#output = undefined;
-		this.#providerContext = undefined;
 		this.#active = undefined;
 		this.#queue.length = 0;
 		this.#starting = false;
@@ -193,7 +203,15 @@ export class LocalSession {
 					type: "result",
 					id: message.id,
 					inspection: this.#inspection(),
+					inputs: this.#inputs(),
 				}));
+				break;
+			case "ackInputs":
+				if (
+					message.sessionId === this.#context?.sessionManager.getSessionId()
+				) {
+					for (const id of message.ids) this.#pendingInputs.delete(id);
+				}
 				break;
 			case "chat":
 			case "call":
@@ -214,9 +232,7 @@ export class LocalSession {
 
 	#inspection(): SessionInspection {
 		const activeTools = new Set(this.#pi.getActiveTools());
-		const input = this.#providerContext?.messages.findLast(
-			(message): message is UserMessage => message.role === "user",
-		);
+		this.#collectInputs();
 		return {
 			session: this.#description(),
 			tools: this.#pi
@@ -225,7 +241,6 @@ export class LocalSession {
 			skills: this.#pi
 				.getCommands()
 				.filter((command) => command.source === "skill"),
-			...(input ? { input } : {}),
 		};
 	}
 
@@ -240,7 +255,12 @@ export class LocalSession {
 		}
 
 		this.#queue.shift();
-		this.#active = { request, message: output.message };
+		this.#active = {
+			request,
+			message: output.message,
+			completed: false,
+			toolResults: [],
+		};
 		this.#status = "executing";
 		void this.#sync().catch(() => {});
 		if (request.type === "chat") {
@@ -280,26 +300,63 @@ export class LocalSession {
 		this.#context = context;
 		const active = this.#active;
 		if (!active || message !== active.message) return;
+		active.completed = true;
+		active.toolResults = toolResults;
+	}
+
+	async #completeActive(): Promise<void> {
+		const active = this.#active;
+		if (!active?.completed) return;
+		this.#collectInputs();
+		const inputs = this.#inputs();
+		await this.#connection?.send(
+			active.request.type === "call"
+				? {
+						type: "result",
+						id: active.request.id,
+						message: active.message,
+						toolResults: active.toolResults,
+						inputs,
+					}
+				: {
+						type: "result",
+						id: active.request.id,
+						message: active.message,
+						inputs,
+					},
+		);
 		this.#active = undefined;
 		this.#status = "idle";
-		try {
-			await this.#connection?.send(
-				active.request.type === "call"
-					? {
-							type: "result",
-							id: active.request.id,
-							message: active.message,
-							toolResults,
-						}
-					: {
-							type: "result",
-							id: active.request.id,
-							message: active.message,
-						},
-			);
-		} finally {
-			void this.#sync().catch(() => {});
+		void this.#sync().catch(() => {});
+	}
+
+	#collectInputs(): void {
+		const context = this.#context;
+		if (!context) return;
+		const sessionId = context.sessionManager.getSessionId();
+		if (this.#sessionId !== sessionId) {
+			this.#sessionId = sessionId;
+			this.#seenInputs.clear();
+			this.#pendingInputs.clear();
 		}
+		for (const entry of context.sessionManager.getBranch()) {
+			if (
+				entry.type !== "message" ||
+				entry.message.role !== "user" ||
+				this.#seenInputs.has(entry.id)
+			)
+				continue;
+			this.#seenInputs.add(entry.id);
+			this.#pendingInputs.set(entry.id, {
+				id: entry.id,
+				message: entry.message as UserMessage,
+			});
+		}
+	}
+
+	#inputs(): SessionInput[] {
+		this.#collectInputs();
+		return [...this.#pendingInputs.values()];
 	}
 
 	async #reply(

@@ -3,7 +3,12 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
-import { directTools, type ToolInput, toolResult } from "./tools.ts";
+import {
+	directTools,
+	inputContent,
+	type ToolInput,
+	toolResult,
+} from "./tools.ts";
 
 const instructions = readFileSync(
 	new URL("./instructions.md", import.meta.url),
@@ -43,12 +48,12 @@ export function createServer(broker: Broker): McpServer {
 		},
 		async (args, context) => {
 			const chatId = requireChatId(context);
-			const initialized = await broker.initialize(
+			const { inputs, ...initialized } = await broker.initialize(
 				chatId,
 				args.sessionId,
 				context.mcpReq.signal,
 			);
-			return textResult(initialized);
+			return textResult(initialized, inputs);
 		},
 	);
 
@@ -70,13 +75,13 @@ export function createServer(broker: Broker): McpServer {
 		},
 		async (args, context) => {
 			const chatId = requireChatId(context);
-			const message = await broker.chat(
+			const { message, inputs } = await broker.chat(
 				chatId,
 				args.sessionId,
 				args.text,
 				context.mcpReq.signal,
 			);
-			return textResult({ message });
+			return textResult({ message }, inputs);
 		},
 	);
 
@@ -98,12 +103,15 @@ export function createServer(broker: Broker): McpServer {
 			},
 		},
 		async (args, context) => {
-			const inspected = await broker.tools(
+			const { inputs, ...inspected } = await broker.tools(
 				requireChatId(context),
 				args.sessionId,
 				context.mcpReq.signal,
 			);
-			return textResult({ session: inspected.session, tools: inspected.tools });
+			return textResult(
+				{ session: inspected.session, tools: inspected.tools },
+				inputs,
+			);
 		},
 	);
 
@@ -130,15 +138,15 @@ export function createServer(broker: Broker): McpServer {
 				openWorldHint: true,
 			},
 		},
-		async (args, context) =>
-			toolResult(
-				await broker.call(
-					requireChatId(context),
-					args.sessionId,
-					args.calls,
-					context.mcpReq.signal,
-				),
-			),
+		async (args, context) => {
+			const result = await broker.call(
+				requireChatId(context),
+				args.sessionId,
+				args.calls,
+				context.mcpReq.signal,
+			);
+			return toolResult(result.toolResults, result.inputs);
+		},
 	);
 
 	for (const tool of directTools) {
@@ -161,14 +169,13 @@ export function createServer(broker: Broker): McpServer {
 				const sessionId = input.sessionId;
 				delete input.sessionId;
 				const calls: ToolInput[] = [{ name: tool.name, arguments: input }];
-				return toolResult(
-					await broker.call(
-						requireChatId(context),
-						sessionId,
-						calls,
-						context.mcpReq.signal,
-					),
+				const result = await broker.call(
+					requireChatId(context),
+					sessionId,
+					calls,
+					context.mcpReq.signal,
 				);
+				return toolResult(result.toolResults, result.inputs);
 			},
 		);
 	}
@@ -193,19 +200,31 @@ export function createServer(broker: Broker): McpServer {
 		},
 		async (args, context) => {
 			const chatId = requestChatId(context);
-			return textResult({
-				binding: chatId ? (broker.binding(chatId) ?? null) : null,
-				sessions: broker.listSessions(args.sessionId),
-			});
+			const inputs = chatId
+				? await broker.inputs(chatId, args.sessionId, context.mcpReq.signal)
+				: [];
+			return textResult(
+				{
+					binding: chatId ? (broker.binding(chatId) ?? null) : null,
+					sessions: broker.listSessions(args.sessionId),
+				},
+				inputs,
+			);
 		},
 	);
 
 	return server;
 }
 
-function textResult(value: unknown) {
+function textResult(
+	value: unknown,
+	inputs: Parameters<typeof inputContent>[0] = [],
+) {
 	return {
-		content: [{ type: "text" as const, text: JSON.stringify(value) }],
+		content: [
+			{ type: "text" as const, text: JSON.stringify(value) },
+			...inputContent(inputs),
+		],
 	};
 }
 

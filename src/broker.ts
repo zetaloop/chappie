@@ -11,6 +11,7 @@ import {
 	IpcServer,
 	type JsonLinePeer,
 	type SessionDescription,
+	type SessionInput,
 	type SessionInspection,
 	type SessionMessage,
 	type SessionResult,
@@ -40,6 +41,21 @@ interface ChangeWaiter {
 
 export interface InitializedSession extends SessionInspection {
 	globalAgents?: string;
+	inputs: SessionInput[];
+}
+
+export interface InspectedSession extends SessionInspection {
+	inputs: SessionInput[];
+}
+
+export interface ChatResult {
+	message: AssistantMessage;
+	inputs: SessionInput[];
+}
+
+export interface CallResult {
+	toolResults: ToolResultMessage[];
+	inputs: SessionInput[];
 }
 
 export class Broker {
@@ -101,9 +117,10 @@ export class Broker {
 		signal: AbortSignal,
 	): Promise<InitializedSession> {
 		const target = await this.#selectSession(chatId, sessionId, signal, true);
-		const inspection = await this.#inspect(target, signal);
+		const { inspection, inputs } = await this.#inspect(target, signal);
 		const globalAgents = await this.#readGlobalAgents();
-		return { ...inspection, ...(globalAgents ? { globalAgents } : {}) };
+		await this.#ackInputs(target, inputs);
+		return { ...inspection, inputs, ...(globalAgents ? { globalAgents } : {}) };
 	}
 
 	async chat(
@@ -111,14 +128,17 @@ export class Broker {
 		sessionId: string | undefined,
 		text: string,
 		signal: AbortSignal,
-	): Promise<AssistantMessage> {
+	): Promise<ChatResult> {
 		const target = await this.#selectSession(chatId, sessionId, signal, false);
 		const result = await this.#request(
 			target,
 			(id) => ({ type: "chat", id, sessionId: target, text }),
 			signal,
 		);
-		if ("message" in result) return result.message;
+		if ("message" in result) {
+			await this.#ackInputs(target, result.inputs);
+			return { message: result.message, inputs: result.inputs };
+		}
 		throw new Error("Pi session returned no assistant message");
 	}
 
@@ -126,9 +146,11 @@ export class Broker {
 		chatId: string,
 		sessionId: string | undefined,
 		signal: AbortSignal,
-	): Promise<SessionInspection> {
+	): Promise<InspectedSession> {
 		const target = await this.#selectSession(chatId, sessionId, signal, false);
-		return this.#inspect(target, signal);
+		const { inspection, inputs } = await this.#inspect(target, signal);
+		await this.#ackInputs(target, inputs);
+		return { ...inspection, inputs };
 	}
 
 	async call(
@@ -136,7 +158,7 @@ export class Broker {
 		sessionId: string | undefined,
 		calls: ToolInput[],
 		signal: AbortSignal,
-	): Promise<ToolResultMessage[]> {
+	): Promise<CallResult> {
 		const target = await this.#selectSession(chatId, sessionId, signal, false);
 		const toolCalls: ToolCall[] = calls.map((call) => ({
 			type: "toolCall",
@@ -149,8 +171,24 @@ export class Broker {
 			(id) => ({ type: "call", id, sessionId: target, calls: toolCalls }),
 			signal,
 		);
-		if ("toolResults" in result) return result.toolResults;
+		if ("toolResults" in result) {
+			await this.#ackInputs(target, result.inputs);
+			return { toolResults: result.toolResults, inputs: result.inputs };
+		}
 		throw new Error("Pi session returned no tool results");
+	}
+
+	async inputs(
+		chatId: string,
+		sessionId: string | undefined,
+		signal: AbortSignal,
+	): Promise<SessionInput[]> {
+		const target = sessionId ?? this.#state.binding(chatId);
+		if (!target) return [];
+		await this.#waitForSession(target, signal);
+		const { inputs } = await this.#inspect(target, signal);
+		await this.#ackInputs(target, inputs);
+		return inputs;
 	}
 
 	async #receive(
@@ -240,14 +278,25 @@ export class Broker {
 	async #inspect(
 		sessionId: string,
 		signal: AbortSignal,
-	): Promise<SessionInspection> {
+	): Promise<Extract<SessionResult, { inspection: SessionInspection }>> {
 		const result = await this.#request(
 			sessionId,
 			(id) => ({ type: "inspect", id, sessionId }),
 			signal,
 		);
-		if ("inspection" in result) return result.inspection;
+		if ("inspection" in result) return result;
 		throw new Error("Pi session returned no inspection");
+	}
+
+	async #ackInputs(sessionId: string, inputs: SessionInput[]): Promise<void> {
+		if (inputs.length === 0) return;
+		const session = this.#sessions.get(sessionId);
+		if (!session) throw new Error(`Pi session ${sessionId} is offline`);
+		await session.peer.send({
+			type: "ackInputs",
+			sessionId,
+			ids: inputs.map(({ id }) => id),
+		});
 	}
 
 	async #request(

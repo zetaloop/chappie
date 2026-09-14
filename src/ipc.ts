@@ -32,13 +32,21 @@ export interface SessionInspection {
 	session: SessionDescription;
 	tools: ToolInfo[];
 	skills: SlashCommandInfo[];
-	input?: UserMessage;
+}
+
+export interface SessionInput {
+	id: string;
+	message: UserMessage;
 }
 
 export type SessionResult =
-	| { inspection: SessionInspection }
-	| { message: AssistantMessage }
-	| { message: AssistantMessage; toolResults: ToolResultMessage[] }
+	| { inspection: SessionInspection; inputs: SessionInput[] }
+	| { message: AssistantMessage; inputs: SessionInput[] }
+	| {
+			message: AssistantMessage;
+			toolResults: ToolResultMessage[];
+			inputs: SessionInput[];
+	  }
 	| { error: string };
 
 export type SessionMessage =
@@ -50,7 +58,8 @@ export type BrokerMessage =
 	| { type: "synced"; id: number; sessionId: string }
 	| { type: "inspect"; id: number; sessionId: string }
 	| { type: "chat"; id: number; sessionId: string; text: string }
-	| { type: "call"; id: number; sessionId: string; calls: ToolCall[] };
+	| { type: "call"; id: number; sessionId: string; calls: ToolCall[] }
+	| { type: "ackInputs"; sessionId: string; ids: string[] };
 
 export function ipcEndpoint(agentDir: string): string {
 	const directory = resolve(agentDir);
