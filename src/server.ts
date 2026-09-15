@@ -235,7 +235,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Local sessions",
 			description:
-				"List online Pi sessions and the current conversation binding without waiting for offline sessions.",
+				"List online Pi sessions, their saved binding counts, and this conversation's default. A zero bindingCount permits automatic pairing; status describes execution. Offline sessions do not delay the listing.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z

@@ -40,8 +40,12 @@ export class State {
 		return this.#bindings.get(chatId);
 	}
 
-	boundSessions(): Set<string> {
-		return new Set(this.#bindings.values());
+	bindingCounts(): Map<string, number> {
+		const counts = new Map<string, number>();
+		for (const sessionId of this.#bindings.values()) {
+			counts.set(sessionId, (counts.get(sessionId) ?? 0) + 1);
+		}
+		return counts;
 	}
 
 	setBinding(chatId: string, sessionId: string): Promise<void> {

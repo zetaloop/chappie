@@ -25,7 +25,9 @@ Use `chat` for progress or results that should appear in Pi. When a Pi user deci
 
 Call `init` with `{}` to reuse the chat's session or pair with the first online, unbound Pi session. A newly opened Pi session can be selected before its first user message; the first remote operation starts its Chappie provider turn.
 
-`sessions` lists session IDs, working directories, names, and status. `ready` means the provider is accepting output, `executing` means Pi is handling an operation, and `idle` means the next operation will start a turn.
+`sessions` lists session IDs, working directories, names, status, and `bindingCount`, the number of saved chat defaults pointing to each session. Zero means the session can be allocated automatically. The count includes closed chats; execution status describes Pi activity: `ready` accepts provider output, `executing` handles an operation, and `idle` starts a turn on the next operation.
+
+`init.selection` reports how the target was chosen: `existing` reuses this chat's default, `explicit` uses the supplied session ID, and `automatic` allocates the first online session with no saved bindings. Explicit selection also accepts sessions already used by other chats.
 
 Use an ID from that list to select a default with `init`:
 

@@ -42,6 +42,7 @@ interface ChangeWaiter {
 }
 
 export interface InitializedSession extends Omit<SessionInspection, "tools"> {
+	selection: "existing" | "explicit" | "automatic";
 	globalAgents?: string;
 	inputs: SessionInput[];
 	tools: { name: string; description: string }[];
@@ -101,12 +102,16 @@ export class Broker {
 		await this.#ipc.close();
 	}
 
-	listSessions(sessionId?: string): SessionDescription[] {
-		if (sessionId) {
-			const session = this.#sessions.get(sessionId);
-			return session ? [session.description] : [];
-		}
-		return [...this.#sessions.values()].map(({ description }) => description);
+	listSessions(
+		sessionId?: string,
+	): (SessionDescription & { bindingCount: number })[] {
+		const counts = this.#state.bindingCounts();
+		return [...this.#sessions.values()]
+			.filter(({ description }) => !sessionId || description.id === sessionId)
+			.map(({ description }) => ({
+				...description,
+				bindingCount: counts.get(description.id) ?? 0,
+			}));
 	}
 
 	binding(chatId: string): string | undefined {
@@ -118,11 +123,17 @@ export class Broker {
 		sessionId: string | undefined,
 		signal: AbortSignal,
 	): Promise<InitializedSession> {
-		const target = await this.#selectSession(chatId, sessionId, signal, true);
+		const { sessionId: target, selection } = await this.#selectSession(
+			chatId,
+			sessionId,
+			signal,
+			true,
+		);
 		const { inspection, inputs } = await this.#inspect(target, signal);
 		const globalAgents = await this.#readGlobalAgents();
 		await this.#ackInputs(target, inputs);
 		return {
+			selection,
 			...inspection,
 			tools: inspection.tools.map(({ name, description }) => ({
 				name,
@@ -139,7 +150,12 @@ export class Broker {
 		text: string,
 		signal: AbortSignal,
 	): Promise<ChatResult> {
-		const target = await this.#selectSession(chatId, sessionId, signal, false);
+		const { sessionId: target } = await this.#selectSession(
+			chatId,
+			sessionId,
+			signal,
+			false,
+		);
 		const result = await this.#request(
 			target,
 			(id) => ({ type: "chat", id, chatId, sessionId: target, text }),
@@ -158,7 +174,12 @@ export class Broker {
 		names: string[] | undefined,
 		signal: AbortSignal,
 	): Promise<InspectedSession> {
-		const target = await this.#selectSession(chatId, sessionId, signal, false);
+		const { sessionId: target } = await this.#selectSession(
+			chatId,
+			sessionId,
+			signal,
+			false,
+		);
 		const { inspection, inputs } = await this.#inspect(target, signal);
 		await this.#ackInputs(target, inputs);
 		const selected = names ? new Set(names) : undefined;
@@ -177,7 +198,12 @@ export class Broker {
 		calls: ToolInput[],
 		signal: AbortSignal,
 	): Promise<CallResult> {
-		const target = await this.#selectSession(chatId, sessionId, signal, false);
+		const { sessionId: target } = await this.#selectSession(
+			chatId,
+			sessionId,
+			signal,
+			false,
+		);
 		const toolCalls: ToolCall[] = calls.map((call) => ({
 			type: "toolCall",
 			id: `chappie-${randomUUID()}`,
@@ -292,31 +318,34 @@ export class Broker {
 		requestedId: string | undefined,
 		signal: AbortSignal,
 		bindRequested: boolean,
-	): Promise<string> {
+	): Promise<{
+		sessionId: string;
+		selection: InitializedSession["selection"];
+	}> {
 		if (requestedId) {
 			await this.#waitForSession(requestedId, signal);
 			if (bindRequested && this.#state.binding(chatId) !== requestedId) {
 				await this.#state.setBinding(chatId, requestedId);
 				this.#notifyChange();
 			}
-			return requestedId;
+			return { sessionId: requestedId, selection: "explicit" };
 		}
 
 		const boundId = this.#state.binding(chatId);
 		if (boundId) {
 			await this.#waitForSession(boundId, signal);
-			return boundId;
+			return { sessionId: boundId, selection: "existing" };
 		}
 
 		for (;;) {
-			const occupied = this.#state.boundSessions();
+			const occupied = this.#state.bindingCounts();
 			const candidate = [...this.#sessions.keys()].find(
 				(sessionId) => !occupied.has(sessionId),
 			);
 			if (candidate) {
 				await this.#state.setBinding(chatId, candidate);
 				this.#notifyChange();
-				return candidate;
+				return { sessionId: candidate, selection: "automatic" };
 			}
 			await this.#waitForChange(signal);
 		}
