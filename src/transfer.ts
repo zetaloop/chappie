@@ -18,8 +18,8 @@ interface TransferDetails {
 }
 
 export const transferFile = Type.Object({
-	file_id: Type.String(),
-	download_url: Type.String(),
+	file_id: Type.String({ description: "Host file identifier" }),
+	download_url: Type.String({ description: "Host-provided download URL" }),
 	file_name: Type.Optional(Type.String()),
 	mime_type: Type.Optional(Type.String()),
 });
@@ -28,10 +28,20 @@ export const transfer = {
 	name: "transfer",
 	label: "transfer",
 	description:
-		"Transfer files between ChatGPT and the current Pi session. Provide files to write them to paths; omit files to export existing paths or Chappie image references.",
+		"Copy ChatGPT files into Pi paths, or export Pi paths and Chappie image references as MCP resources. The paths field always names Pi-side sources or destinations.",
 	parameters: Type.Object({
-		paths: Type.Array(Type.String(), { minItems: 1 }),
-		files: Type.Optional(Type.Array(transferFile, { minItems: 1 })),
+		paths: Type.Array(Type.String(), {
+			minItems: 1,
+			description:
+				"Pi paths to import into or export from; chappie:// image references can be exported",
+		}),
+		files: Type.Optional(
+			Type.Array(transferFile, {
+				minItems: 1,
+				description:
+					"ChatGPT files matched to paths by index; omit to export Pi paths",
+			}),
+		),
 		overwrite: Type.Optional(
 			Type.Boolean({ description: "Overwrite existing target files" }),
 		),

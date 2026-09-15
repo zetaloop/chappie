@@ -36,7 +36,8 @@ export function createServer(broker: Broker): McpServer {
 		"init",
 		{
 			title: "Connect to Pi",
-			description: "Connect this ChatGPT conversation to a Pi session.",
+			description:
+				"Connect this ChatGPT conversation to an online Pi session. A sessionId on init becomes the new default.",
 			inputSchema: z.object({
 				sessionId: z
 					.string()
@@ -44,6 +45,7 @@ export function createServer(broker: Broker): McpServer {
 					.describe("Pi session to select explicitly"),
 			}),
 			annotations: {
+				destructiveHint: false,
 				openWorldHint: false,
 			},
 		},
@@ -62,7 +64,7 @@ export function createServer(broker: Broker): McpServer {
 		"chat",
 		{
 			title: "Reply in Pi",
-			description: "Send one complete assistant message to a Pi session.",
+			description: "Display one complete assistant message in Pi.",
 			inputSchema: z.object({
 				text: z.string().min(1).describe("Assistant message to display in Pi"),
 				sessionId: z
@@ -71,6 +73,7 @@ export function createServer(broker: Broker): McpServer {
 					.describe("Pi session for this operation only"),
 			}),
 			annotations: {
+				destructiveHint: false,
 				openWorldHint: false,
 			},
 		},
@@ -105,6 +108,7 @@ export function createServer(broker: Broker): McpServer {
 			}),
 			annotations: {
 				readOnlyHint: true,
+				destructiveHint: false,
 				idempotentHint: true,
 				openWorldHint: false,
 			},
@@ -131,7 +135,8 @@ export function createServer(broker: Broker): McpServer {
 		"call",
 		{
 			title: "Call Pi tools",
-			description: "Execute one or more tools as a native Pi tool batch.",
+			description:
+				"Execute one or more active Pi tools as one native batch. Arguments must match definitions returned by tools.",
 			inputSchema: z.object({
 				calls: z
 					.array(
@@ -147,6 +152,7 @@ export function createServer(broker: Broker): McpServer {
 					.describe("Pi session for this operation only"),
 			}),
 			annotations: {
+				destructiveHint: true,
 				openWorldHint: true,
 			},
 		},
@@ -174,8 +180,9 @@ export function createServer(broker: Broker): McpServer {
 				inputSchema: tool.inputSchema,
 				annotations: {
 					readOnlyHint: tool.name === "read",
+					destructiveHint: tool.name !== "read",
 					idempotentHint: tool.name === "read",
-					openWorldHint: tool.name === "bash",
+					openWorldHint: tool.name === "bash" || tool.name === "transfer",
 				},
 				...(tool.fileParams
 					? { _meta: { "openai/fileParams": tool.fileParams } }
@@ -217,6 +224,7 @@ export function createServer(broker: Broker): McpServer {
 			}),
 			annotations: {
 				readOnlyHint: true,
+				destructiveHint: false,
 				idempotentHint: true,
 				openWorldHint: false,
 			},

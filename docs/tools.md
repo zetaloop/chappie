@@ -13,6 +13,14 @@
 | `write` | Write text to a file. |
 | `transfer` | Copy files between ChatGPT and Pi, or export a Pi image as a file. |
 
+## Model environment
+
+The active model is the current ChatGPT conversation. A Pi tool that starts another `chappie/chatgpt` agent cannot create a new browser conversation, so that child waits without a model response. Subagents configured with another provider use that provider normally.
+
+Use ChatGPT's web search, connectors, and cloud tools for remote research and cloud-side work. Chappie tools operate on local files, processes, Pi extensions, and Pi user interfaces. Pi project-memory tools access their local stores; Pi context-reduction tools do not alter the current ChatGPT conversation.
+
+Use `chat` for progress or results that should appear in Pi. When a Pi user decision is needed, load the installed interactive tool definition with `tools` and invoke it through `call`.
+
 ## Sessions
 
 Call `init` with `{}` to reuse the chat's session or pair with the first online, unbound Pi session. A newly opened Pi session can be selected before its first user message; the first remote operation starts its Chappie provider turn.
