@@ -15,7 +15,7 @@
 
 ## Sessions
 
-Call `init` with `{}` to reuse the chat's session or pair with the next ready, unbound Pi session. Either side can arrive first. Sending a task in Pi starts its Chappie provider request.
+Call `init` with `{}` to reuse the chat's session or pair with the first online, unbound Pi session. A newly opened Pi session can be selected before its first user message; the first remote operation starts its Chappie provider turn.
 
 `sessions` lists session IDs, working directories, names, and status. `ready` means the provider is accepting output, `executing` means Pi is handling an operation, and `idle` means the next operation will start a turn.
 

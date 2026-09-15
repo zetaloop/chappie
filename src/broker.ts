@@ -70,7 +70,6 @@ export class Broker {
 	readonly #ipc: IpcServer;
 	readonly #state: State;
 	readonly #sessions = new Map<string, RegisteredSession>();
-	readonly #ready = new Set<string>();
 	readonly #pending = new Map<number, PendingRequest>();
 	readonly #waiters = new Set<ChangeWaiter>();
 	#nextRequestId = 1;
@@ -102,7 +101,6 @@ export class Broker {
 		}
 		this.#waiters.clear();
 		this.#sessions.clear();
-		this.#ready.clear();
 		await this.#ipc.close();
 	}
 
@@ -242,17 +240,10 @@ export class Broker {
 	): Promise<void> {
 		switch (message.type) {
 			case "sync": {
-				const previous = this.#sessions.get(message.session.id);
 				this.#sessions.set(message.session.id, {
 					description: message.session,
 					peer,
 				});
-				if (message.session.status === "ready") {
-					if (previous?.description.status !== "ready")
-						this.#ready.add(message.session.id);
-				} else {
-					this.#ready.delete(message.session.id);
-				}
 				this.#notifyChange();
 				await peer.send({
 					type: "synced",
@@ -307,9 +298,8 @@ export class Broker {
 
 		for (;;) {
 			const occupied = this.#state.boundSessions();
-			const candidate = [...this.#ready].find(
-				(sessionId) =>
-					this.#sessions.has(sessionId) && !occupied.has(sessionId),
+			const candidate = [...this.#sessions.keys()].find(
+				(sessionId) => !occupied.has(sessionId),
 			);
 			if (candidate) {
 				await this.#state.setBinding(chatId, candidate);
@@ -427,7 +417,6 @@ export class Broker {
 
 	#removeSession(sessionId: string): void {
 		this.#sessions.delete(sessionId);
-		this.#ready.delete(sessionId);
 		this.#notifyChange();
 	}
 
