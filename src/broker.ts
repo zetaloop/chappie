@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type {
-	AssistantMessage,
-	ToolCall,
-	ToolResultMessage,
-} from "@earendil-works/pi-ai";
+import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import {
 	type DeliveryRecord,
 	type ResolvedDelivery,
@@ -56,7 +52,7 @@ export interface InspectedSession extends SessionInspection {
 }
 
 export interface ChatResult {
-	message: AssistantMessage;
+	sessionId: string;
 	inputs: SessionInput[];
 }
 
@@ -151,7 +147,7 @@ export class Broker {
 		);
 		if ("message" in result) {
 			await this.#ackInputs(target, result.inputs);
-			return { message: result.message, inputs: result.inputs };
+			return { sessionId: target, inputs: result.inputs };
 		}
 		throw new Error("Pi session returned no assistant message");
 	}

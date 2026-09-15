@@ -78,7 +78,7 @@ Call `chat` to display a reply in Pi:
 { "text": "Updated the parser and its callers." }
 ```
 
-Each call completes one assistant message. Later operations start another turn when Pi is idle. Use `chat` for text that should appear in Pi.
+Each call completes one assistant message. Later operations start another turn when Pi is idle. The result returns the target session and any new Pi input without repeating the message text.
 
 User messages consumed by Pi accompany later Chappie replies, including images. Steering is delivered when Pi consumes it; follow-up uses Pi's normal follow-up timing.
 

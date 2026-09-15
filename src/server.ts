@@ -79,13 +79,13 @@ export function createServer(broker: Broker): McpServer {
 		},
 		async (args, context) => {
 			const chatId = requireChatId(context);
-			const { message, inputs } = await broker.chat(
+			const { sessionId, inputs } = await broker.chat(
 				chatId,
 				args.sessionId,
 				args.text,
 				context.mcpReq.signal,
 			);
-			return finishResult(broker, context, textResult({ message }, inputs));
+			return finishResult(broker, context, textResult({ sessionId }, inputs));
 		},
 	);
 
