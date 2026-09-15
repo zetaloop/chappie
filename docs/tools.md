@@ -68,7 +68,7 @@ A single extension tool uses a one-item `calls` array. To request a batch:
 
 Each batch returns its results together. Pi determines how its tools run within the batch. Separate calls run in order within one Pi session; different sessions can work independently.
 
-Extension tools execute through Pi, including their interactive prompts. Results include each tool's name, call ID, error status, and original text or image content.
+Extension tools execute through Pi, including their interactive prompts. Each batch starts with its executing `sessionId` and Pi `cwd`, followed by each tool's name, call ID, error status, and original text or image content. The directory is captured when the batch starts; a shell `cd` changes that command's working directory, while the operation stays in the same Pi session.
 
 Every tool declares a `{ text: string }` output. `structuredContent.text` contains the complete text in result order, including Pi input, deferred results, and image references. The same text remains in `content` alongside native images and resource links.
 
@@ -82,11 +82,11 @@ Call `chat` to display a reply in Pi:
 { "text": "Updated the parser and its callers." }
 ```
 
-Pi renders the supplied Markdown, including fenced code blocks, and appends the message to the session transcript. Each call completes one assistant message. Later operations start another turn when Pi is idle. The result returns the target session and any new Pi input without repeating the message text.
+Pi renders the supplied Markdown, including fenced code blocks, and appends the message to the session transcript. Each call completes one assistant message. Later operations start another turn when Pi is idle. The result returns the target `sessionId`, Pi `cwd`, and any new Pi input without repeating the message text.
 
 User messages consumed by Pi accompany later Chappie replies, including images. Steering is delivered when Pi consumes it; follow-up uses Pi's normal follow-up timing.
 
-Explicit cancellation removes a queued request or asks Pi to stop its active batch. Available results from that batch accompany a later reply to the originating chat. `sessions` can retrieve them before another tool call. When ChatGPT stops without sending cancellation, local execution continues.
+Explicit cancellation removes a queued request or asks Pi to stop its active batch. Available results from that batch accompany a later reply to the originating chat, with the original session ID and working directory. `sessions` can retrieve them before another tool call. When ChatGPT stops without sending cancellation, local execution continues.
 
 Host request deadlines include time spent in the queue. Use local facilities such as tmux for work intended to outlive one call.
 

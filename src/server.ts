@@ -95,13 +95,17 @@ export function createServer(broker: Broker): McpServer {
 		},
 		async (args, context) => {
 			const chatId = requireChatId(context);
-			const { sessionId, inputs } = await broker.chat(
+			const { sessionId, cwd, inputs } = await broker.chat(
 				chatId,
 				args.sessionId,
 				args.text,
 				context.mcpReq.signal,
 			);
-			return finishResult(broker, context, textResult({ sessionId }, inputs));
+			return finishResult(
+				broker,
+				context,
+				textResult({ sessionId, cwd }, inputs),
+			);
 		},
 	);
 
@@ -185,7 +189,12 @@ export function createServer(broker: Broker): McpServer {
 			return finishResult(
 				broker,
 				context,
-				toolResult(result.toolResults, result.sessionId, result.inputs),
+				toolResult(
+					result.toolResults,
+					result.sessionId,
+					result.cwd,
+					result.inputs,
+				),
 			);
 		},
 	);
@@ -224,7 +233,12 @@ export function createServer(broker: Broker): McpServer {
 				return finishResult(
 					broker,
 					context,
-					toolResult(result.toolResults, result.sessionId, result.inputs),
+					toolResult(
+						result.toolResults,
+						result.sessionId,
+						result.cwd,
+						result.inputs,
+					),
 				);
 			},
 		);

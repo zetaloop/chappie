@@ -9,6 +9,7 @@ export interface DeliveryRecord {
 	id: string;
 	chatId: string;
 	sessionId: string;
+	cwd: string;
 	sessionFile?: string;
 	toolCallIds: string[];
 	inlineResults?: ToolResultMessage[];
@@ -57,6 +58,7 @@ export function deliveryContent(deliveries: ResolvedDelivery[]) {
 			text: JSON.stringify({
 				deferredResult: delivery.id,
 				sessionId: delivery.sessionId,
+				cwd: delivery.cwd,
 				error: delivery.error,
 			}),
 		},

@@ -38,10 +38,12 @@ export const directTools = definitions.map((definition) => ({
 export function toolResult(
 	toolResults: ToolResultMessage[],
 	sessionId: string,
+	cwd: string,
 	inputs: SessionInput[] = [],
 ) {
 	return {
 		content: [
+			{ type: "text" as const, text: JSON.stringify({ sessionId, cwd }) },
 			...toolResults.flatMap((result) => [
 				{
 					type: "text" as const,
@@ -70,7 +72,7 @@ export function inputContent(inputs: SessionInput[]) {
 	return inputs.flatMap(({ id, sessionId, message }) => [
 		{
 			type: "text" as const,
-			text: JSON.stringify({ piInput: id }),
+			text: JSON.stringify({ piInput: id, sessionId }),
 		},
 		...(typeof message.content === "string"
 			? [{ type: "text" as const, text: message.content }]

@@ -35,6 +35,7 @@ interface StoreRequest {
 
 interface ActiveRequest {
 	request: RemoteRequest;
+	session: SessionDescription;
 	message: AssistantMessage;
 	completed: boolean;
 	cancelled: boolean;
@@ -298,6 +299,7 @@ export class LocalSession {
 		this.#queue.shift();
 		this.#active = {
 			request,
+			session: this.#description(),
 			message: output.message,
 			completed: false,
 			cancelled: false,
@@ -342,7 +344,7 @@ export class LocalSession {
 		this.#context = context;
 		const active = this.#active;
 		if (!active || message !== active.message) return;
-		const sessionId = context.sessionManager.getSessionId();
+		const sessionId = active.session.id;
 		for (const result of toolResults) rememberImages(sessionId, result.content);
 		active.completed = true;
 		active.toolResults = toolResults;
@@ -354,44 +356,36 @@ export class LocalSession {
 		this.#collectInputs();
 		const inputs = this.#inputs();
 		if (active.cancelled) {
-			const context = this.#context;
-			if (context) {
-				const sessionFile = context.sessionManager.getSessionFile();
-				const delivery: DeliveryRecord = {
-					id: randomUUID(),
-					chatId: active.request.chatId,
-					sessionId: context.sessionManager.getSessionId(),
-					toolCallIds:
-						active.request.type === "call"
-							? active.request.calls.map(({ id }) => id)
-							: [],
-					...(sessionFile
-						? { sessionFile }
-						: { inlineResults: active.toolResults }),
-					...(active.message.errorMessage
-						? { error: active.message.errorMessage }
-						: { error: "Request cancelled" }),
-				};
-				this.#deliveries.set(delivery.id, delivery);
-				await this.#flushDeliveries().catch(() => {});
-			}
+			const sessionFile = active.session.sessionFile;
+			const delivery: DeliveryRecord = {
+				id: randomUUID(),
+				chatId: active.request.chatId,
+				sessionId: active.session.id,
+				cwd: active.session.cwd,
+				toolCallIds:
+					active.request.type === "call"
+						? active.request.calls.map(({ id }) => id)
+						: [],
+				...(sessionFile
+					? { sessionFile }
+					: { inlineResults: active.toolResults }),
+				...(active.message.errorMessage
+					? { error: active.message.errorMessage }
+					: { error: "Request cancelled" }),
+			};
+			this.#deliveries.set(delivery.id, delivery);
+			await this.#flushDeliveries().catch(() => {});
 		} else {
-			await this.#connection?.send(
-				active.request.type === "call"
-					? {
-							type: "result",
-							id: active.request.id,
-							message: active.message,
-							toolResults: active.toolResults,
-							inputs,
-						}
-					: {
-							type: "result",
-							id: active.request.id,
-							message: active.message,
-							inputs,
-						},
-			);
+			await this.#connection?.send({
+				type: "result",
+				id: active.request.id,
+				cwd: active.session.cwd,
+				message: active.message,
+				inputs,
+				...(active.request.type === "call"
+					? { toolResults: active.toolResults }
+					: {}),
+			});
 		}
 		this.#active = undefined;
 		this.#status = "idle";

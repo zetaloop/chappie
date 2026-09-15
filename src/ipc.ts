@@ -44,9 +44,10 @@ export interface SessionInput {
 
 export type SessionResult =
 	| { inspection: SessionInspection; inputs: SessionInput[] }
-	| { message: AssistantMessage; inputs: SessionInput[] }
+	| { message: AssistantMessage; cwd: string; inputs: SessionInput[] }
 	| {
 			message: AssistantMessage;
+			cwd: string;
 			toolResults: ToolResultMessage[];
 			inputs: SessionInput[];
 	  }

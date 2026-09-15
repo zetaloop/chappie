@@ -54,11 +54,13 @@ export interface InspectedSession extends SessionInspection {
 
 export interface ChatResult {
 	sessionId: string;
+	cwd: string;
 	inputs: SessionInput[];
 }
 
 export interface CallResult {
 	sessionId: string;
+	cwd: string;
 	toolResults: ToolResultMessage[];
 	inputs: SessionInput[];
 }
@@ -163,7 +165,7 @@ export class Broker {
 		);
 		if ("message" in result) {
 			await this.#ackInputs(target, result.inputs);
-			return { sessionId: target, inputs: result.inputs };
+			return { sessionId: target, cwd: result.cwd, inputs: result.inputs };
 		}
 		throw new Error("Pi session returned no assistant message");
 	}
@@ -225,6 +227,7 @@ export class Broker {
 			await this.#ackInputs(target, result.inputs);
 			return {
 				sessionId: target,
+				cwd: result.cwd,
 				toolResults: result.toolResults,
 				inputs: result.inputs,
 			};
