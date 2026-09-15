@@ -212,8 +212,7 @@ export class Broker {
 		signal: AbortSignal,
 	): Promise<SessionInput[]> {
 		const target = sessionId ?? this.#state.binding(chatId);
-		if (!target) return [];
-		await this.#waitForSession(target, signal);
+		if (!target || !this.#sessions.has(target)) return [];
 		const { inputs } = await this.#inspect(target, signal);
 		await this.#ackInputs(target, inputs);
 		return inputs;

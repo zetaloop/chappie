@@ -39,7 +39,7 @@ The optional `sessionId` on other tools selects a session for that operation. Fo
 { "path": "package.json", "sessionId": "<session-id>" }
 ```
 
-`sessions({ sessionId })` shows the selected session and retrieves available input and deferred results. It can be called while Pi is executing a tool batch.
+`sessions({ sessionId })` filters the online list and retrieves available input when that session is connected. The call returns immediately when the selected or bound session is offline; the saved binding is still shown, and deferred results remain available.
 
 Several chats can select the same Pi session, and one chat can address several sessions. Defaults are saved in `chappie.state.json` under Pi's agent directory. An existing binding waits for its Pi session to reconnect; `init` with another ID selects a different target.
 

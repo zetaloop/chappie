@@ -215,12 +215,12 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Local sessions",
 			description:
-				"List connected Pi sessions and the current conversation binding.",
+				"List online Pi sessions and the current conversation binding without waiting for offline sessions.",
 			inputSchema: z.object({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Return only this Pi session when it is online"),
+					.describe("Return this Pi session when it is online"),
 			}),
 			annotations: {
 				readOnlyHint: true,
