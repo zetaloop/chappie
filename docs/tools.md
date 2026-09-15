@@ -23,17 +23,19 @@ Use `chat` for progress or results that should appear in Pi. When a Pi user deci
 
 ## Sessions
 
-Call `init` with `{}` to reuse the chat's session or pair with the first online, unbound Pi session. A newly opened Pi session can be selected before its first user message; the first remote operation starts its Chappie provider turn.
+For a new task without a specific target, call `init` with `{}` to reuse this chat's default or allocate the first online, unbound Pi session. Sessions register while `chappie/chatgpt` is selected. They can be blank or already contain a task; a remote operation starts a turn when Pi is idle.
 
 `sessions` lists session IDs, working directories, names, status, and `bindingCount`, the number of saved chat defaults pointing to each session. Zero means the session can be allocated automatically. The count includes closed chats; execution status describes Pi activity: `ready` accepts provider output, `executing` handles an operation, and `idle` starts a turn on the next operation.
 
 `init.selection` reports how the target was chosen: `existing` reuses this chat's default, `explicit` uses the supplied session ID, and `automatic` allocates the first online session with no saved bindings. Explicit selection also accepts sessions already used by other chats.
 
-Use an ID from that list to select a default with `init`:
+To continue existing work in a new chat or branch, pass the Pi session ID associated with that task in the inherited context:
 
 ```json
 { "sessionId": "<session-id>" }
 ```
+
+This establishes the new chat's default, even when another chat already uses the same Pi session. For a requested project or session without a known ID, select it from `sessions` by working directory or name. When the target is absent or ambiguous, clarify the intended session before running tools. A session being the only one online does not establish that it is the requested target.
 
 The optional `sessionId` on other tools selects a session for that operation. For example, `read` can inspect another project:
 
@@ -47,7 +49,7 @@ Several chats can select the same Pi session, and one chat can address several s
 
 ## Tool calls
 
-`read`, `bash`, `edit`, and `write` accept Pi's tool parameters plus `sessionId`. Their descriptions provide the current schemas. `init` lists every active tool by name with a short description. Load complete definitions for installed extension tools before calling them:
+`read`, `bash`, `edit`, and `write` accept Pi's tool parameters plus `sessionId`. Their descriptions provide the current schemas. The catalog in `init.tools` lists Pi's native and extension tools available through `call`. Chappie's `init`, `sessions`, `tools`, and `chat` are separate top-level MCP tools. Load complete definitions for installed extension tools before calling them:
 
 ```json
 { "names": ["ask_user", "ctx_search"] }

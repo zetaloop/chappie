@@ -25,7 +25,7 @@ Start otunnel with this configuration and add its tunnel as a developer-mode app
 pi --provider chappie --model chatgpt
 ```
 
-Open Pi with the Chappie provider, then ask ChatGPT to call `init`. Chappie pairs the chat with an online Pi session; the first remote operation starts its turn.
+Open Pi with the Chappie provider, then ask ChatGPT to call `init`. A chat without a default is paired with the first online, unbound Pi session. To resume work in a new chat or branch, use `init` with the original Pi session ID; `sessions` lists projects when the target ID is unknown.
 
 ## Usage
 

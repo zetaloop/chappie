@@ -45,13 +45,15 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Connect to Pi",
 			description:
-				"Connect this ChatGPT conversation to an online Pi session. A sessionId on init becomes the new default.",
+				"Bind this chat to a Pi session. To resume work or a ChatGPT branch, pass that task's Pi sessionId from context; use sessions to locate a requested target when its ID is unknown. Omit sessionId to reuse this chat's default or allocate the first online, unbound session. Returns the selection source.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Pi session to select explicitly"),
+					.describe(
+						"Pi session ID to set as this chat's default, including an already-bound session when resuming work",
+					),
 			}),
 			annotations: {
 				readOnlyHint: false,
@@ -114,7 +116,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Pi tools",
 			description:
-				"Return complete definitions for active Pi tools. Provide names to inspect only those tools.",
+				"Return complete definitions for active Pi tools invoked through call. Provide names to inspect selected tools. Chappie's own MCP controls, including init, sessions, and chat, are exposed separately.",
 			outputSchema,
 			inputSchema: z.object({
 				names: z
