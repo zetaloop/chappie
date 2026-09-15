@@ -2,9 +2,9 @@
 
 | Tool | Purpose |
 |---|---|
-| `init` | Connect to a Pi session and read its environment, tools, skills, global `AGENTS.md`, and pending input. |
+| `init` | Connect to a Pi session and read its environment, tool catalog, skills, global `AGENTS.md`, and pending input. |
 | `sessions` | List connected Pi sessions and the chat's default session. |
-| `tools` | Read the selected session's active tool definitions. |
+| `tools` | Read complete definitions for selected active tools. |
 | `chat` | Send an assistant message to Pi. |
 | `call` | Run one or more tools as a Pi batch. |
 | `read` | Read local text or images. |
@@ -37,9 +37,15 @@ Several chats can select the same Pi session, and one chat can address several s
 
 ## Tool calls
 
-`read`, `bash`, `edit`, and `write` accept Pi's tool parameters plus `sessionId`. Their descriptions provide the current schemas. For installed extension tools, call `tools` and use the returned name and parameters in `call`.
+`read`, `bash`, `edit`, and `write` accept Pi's tool parameters plus `sessionId`. Their descriptions provide the current schemas. `init` lists every active tool by name with a short description. Load complete definitions for installed extension tools before calling them:
 
-A single tool uses a one-item `calls` array. To request a batch:
+```json
+{ "names": ["ask_user", "ctx_search"] }
+```
+
+Omit `names` to return every active definition. Definitions already present in the current ChatGPT context can be reused without another query.
+
+A single extension tool uses a one-item `calls` array. To request a batch:
 
 ```json
 {

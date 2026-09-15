@@ -45,9 +45,10 @@ interface ChangeWaiter {
 	onAbort(): void;
 }
 
-export interface InitializedSession extends SessionInspection {
+export interface InitializedSession extends Omit<SessionInspection, "tools"> {
 	globalAgents?: string;
 	inputs: SessionInput[];
+	tools: { name: string; description: string }[];
 }
 
 export interface InspectedSession extends SessionInspection {
@@ -125,7 +126,15 @@ export class Broker {
 		const { inspection, inputs } = await this.#inspect(target, signal);
 		const globalAgents = await this.#readGlobalAgents();
 		await this.#ackInputs(target, inputs);
-		return { ...inspection, inputs, ...(globalAgents ? { globalAgents } : {}) };
+		return {
+			...inspection,
+			tools: inspection.tools.map(({ name, description }) => ({
+				name,
+				description: description.split("\n", 1)[0] ?? description,
+			})),
+			inputs,
+			...(globalAgents ? { globalAgents } : {}),
+		};
 	}
 
 	async chat(
@@ -150,12 +159,20 @@ export class Broker {
 	async tools(
 		chatId: string,
 		sessionId: string | undefined,
+		names: string[] | undefined,
 		signal: AbortSignal,
 	): Promise<InspectedSession> {
 		const target = await this.#selectSession(chatId, sessionId, signal, false);
 		const { inspection, inputs } = await this.#inspect(target, signal);
 		await this.#ackInputs(target, inputs);
-		return { ...inspection, inputs };
+		const selected = names ? new Set(names) : undefined;
+		return {
+			...inspection,
+			tools: selected
+				? inspection.tools.filter(({ name }) => selected.has(name))
+				: inspection.tools,
+			inputs,
+		};
 	}
 
 	async call(

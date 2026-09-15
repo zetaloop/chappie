@@ -90,8 +90,14 @@ export function createServer(broker: Broker): McpServer {
 		"tools",
 		{
 			title: "Pi tools",
-			description: "List the tools currently active in a Pi session.",
+			description:
+				"Return complete definitions for active Pi tools. Provide names to inspect only those tools.",
 			inputSchema: z.object({
+				names: z
+					.array(z.string())
+					.min(1)
+					.optional()
+					.describe("Tool names to describe; omit to return every active tool"),
 				sessionId: z
 					.string()
 					.optional()
@@ -107,6 +113,7 @@ export function createServer(broker: Broker): McpServer {
 			const { inputs, ...inspected } = await broker.tools(
 				requireChatId(context),
 				args.sessionId,
+				args.names,
 				context.mcpReq.signal,
 			);
 			return finishResult(
