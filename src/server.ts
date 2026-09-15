@@ -16,6 +16,14 @@ const instructions = readFileSync(
 	"utf8",
 ).trim();
 
+const outputSchema = z.object({
+	text: z
+		.string()
+		.describe(
+			"Complete text output, including Pi user input and deferred results. Images and file resources accompany it as native content blocks.",
+		),
+});
+
 interface RequestContext {
 	mcpReq: {
 		_meta?: Record<string, unknown>;
@@ -38,6 +46,7 @@ export function createServer(broker: Broker): McpServer {
 			title: "Connect to Pi",
 			description:
 				"Connect this ChatGPT conversation to an online Pi session. A sessionId on init becomes the new default.",
+			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
@@ -65,6 +74,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Reply in Pi",
 			description: "Display one complete assistant message in Pi.",
+			outputSchema,
 			inputSchema: z.object({
 				text: z.string().min(1).describe("Assistant message to display in Pi"),
 				sessionId: z
@@ -95,6 +105,7 @@ export function createServer(broker: Broker): McpServer {
 			title: "Pi tools",
 			description:
 				"Return complete definitions for active Pi tools. Provide names to inspect only those tools.",
+			outputSchema,
 			inputSchema: z.object({
 				names: z
 					.array(z.string())
@@ -137,6 +148,7 @@ export function createServer(broker: Broker): McpServer {
 			title: "Call Pi tools",
 			description:
 				"Execute one or more active Pi tools as one native batch. Arguments must match definitions returned by tools.",
+			outputSchema,
 			inputSchema: z.object({
 				calls: z
 					.array(
@@ -177,6 +189,7 @@ export function createServer(broker: Broker): McpServer {
 			{
 				title: tool.name,
 				description: tool.description,
+				outputSchema,
 				inputSchema: tool.inputSchema,
 				annotations: {
 					readOnlyHint: tool.name === "read",
@@ -216,6 +229,7 @@ export function createServer(broker: Broker): McpServer {
 			title: "Local sessions",
 			description:
 				"List online Pi sessions and the current conversation binding without waiting for offline sessions.",
+			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
@@ -241,7 +255,7 @@ export function createServer(broker: Broker): McpServer {
 				},
 				inputs,
 			);
-			return chatId ? finishResult(broker, context, result) : result;
+			return finishResult(broker, context, result);
 		},
 	);
 
@@ -283,19 +297,19 @@ function textResult(
 	};
 }
 
-async function finishResult<T extends { content: object[] }>(
-	broker: Broker,
-	context: RequestContext,
-	result: T,
-): Promise<T> {
-	const chatId = requireChatId(context);
-	const deliveries = await broker.deliveries(chatId);
-	const completed = {
-		...result,
-		content: [...result.content, ...deliveryContent(deliveries)],
-	} as T;
+async function finishResult<
+	T extends { content: ReturnType<typeof toolResult>["content"] },
+>(broker: Broker, context: RequestContext, result: T) {
+	const chatId = requestChatId(context);
+	const deliveries = chatId ? await broker.deliveries(chatId) : [];
+	const content = [...result.content, ...deliveryContent(deliveries)];
+	const structuredContent = {
+		text: content
+			.flatMap((block) => (block.type === "text" ? [block.text] : []))
+			.join("\n"),
+	};
 	await broker.acknowledgeDeliveries(deliveries, context.mcpReq.signal);
-	return completed;
+	return { ...result, content, structuredContent };
 }
 
 function requestChatId(context: RequestContext): string | undefined {

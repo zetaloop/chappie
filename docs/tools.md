@@ -68,6 +68,8 @@ Each batch returns its results together. Pi determines how its tools run within 
 
 Extension tools execute through Pi, including their interactive prompts. Results include each tool's name, call ID, error status, and original text or image content.
 
+Every tool declares a `{ text: string }` output. `structuredContent.text` contains the complete text in result order, including Pi input, deferred results, and image references. The same text remains in `content` alongside native images and resource links.
+
 ChatGPT file inputs use the direct `transfer` tool. Its top-level `files` parameter lets the host prepare the files before sending them to Pi.
 
 ## Messages and interrupted calls

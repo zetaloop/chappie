@@ -8,4 +8,4 @@ Use chat to send progress and final messages that should appear in Pi. Use read,
 
 Use transfer with paths and files to copy ChatGPT files into Pi. Omit files to expose existing Pi paths or chappie:// image references as MCP resources. Relative paths use the Pi working directory, existing targets require overwrite: true, and resource materialization may require host confirmation.
 
-Tool replies may contain user input consumed by Pi or results from an earlier explicitly cancelled request. Continue from those results instead of repeating completed work. Host request deadlines include queueing and execution; use local persistent-process facilities for work intended to outlive one request.
+Tool replies provide their complete text in structuredContent.text, including user input consumed by Pi and results from an earlier explicitly cancelled request. Images and file resources accompany the text as native content blocks. Continue from those results instead of repeating completed work. Host request deadlines include queueing and execution; use local persistent-process facilities for work intended to outlive one request.
