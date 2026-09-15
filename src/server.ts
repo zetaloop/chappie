@@ -54,6 +54,7 @@ export function createServer(broker: Broker): McpServer {
 					.describe("Pi session to select explicitly"),
 			}),
 			annotations: {
+				readOnlyHint: false,
 				destructiveHint: false,
 				openWorldHint: false,
 			},
@@ -73,16 +74,21 @@ export function createServer(broker: Broker): McpServer {
 		"chat",
 		{
 			title: "Reply in Pi",
-			description: "Display one complete assistant message in Pi.",
+			description:
+				"Display the supplied Markdown in Pi and append it to the session transcript. Code blocks are displayed as text.",
 			outputSchema,
 			inputSchema: z.object({
-				text: z.string().min(1).describe("Assistant message to display in Pi"),
+				text: z
+					.string()
+					.min(1)
+					.describe("Markdown message, including prose and code examples"),
 				sessionId: z
 					.string()
 					.optional()
 					.describe("Pi session for this operation only"),
 			}),
 			annotations: {
+				readOnlyHint: false,
 				destructiveHint: false,
 				openWorldHint: false,
 			},
@@ -164,6 +170,7 @@ export function createServer(broker: Broker): McpServer {
 					.describe("Pi session for this operation only"),
 			}),
 			annotations: {
+				readOnlyHint: false,
 				destructiveHint: true,
 				openWorldHint: true,
 			},

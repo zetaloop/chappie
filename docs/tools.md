@@ -5,7 +5,7 @@
 | `init` | Connect to a Pi session and read its environment, tool catalog, skills, global `AGENTS.md`, and pending input. |
 | `sessions` | List connected Pi sessions and the chat's default session. |
 | `tools` | Read complete definitions for selected active tools. |
-| `chat` | Send an assistant message to Pi. |
+| `chat` | Display Markdown as an assistant message in Pi. |
 | `call` | Run one or more tools as a Pi batch. |
 | `read` | Read local text or images. |
 | `bash` | Execute a shell command. |
@@ -80,7 +80,7 @@ Call `chat` to display a reply in Pi:
 { "text": "Updated the parser and its callers." }
 ```
 
-Each call completes one assistant message. Later operations start another turn when Pi is idle. The result returns the target session and any new Pi input without repeating the message text.
+Pi renders the supplied Markdown, including fenced code blocks, and appends the message to the session transcript. Each call completes one assistant message. Later operations start another turn when Pi is idle. The result returns the target session and any new Pi input without repeating the message text.
 
 User messages consumed by Pi accompany later Chappie replies, including images. Steering is delivered when Pi consumes it; follow-up uses Pi's normal follow-up timing.
 
