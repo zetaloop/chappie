@@ -6,6 +6,8 @@ The active model is this existing ChatGPT conversation. A Pi tool that starts an
 
 Prefer ChatGPT's web search, connectors, and cloud tools for remote research and cloud-side work. Use Chappie for local files, processes, Pi extensions, and Pi user interfaces. Pi project-memory tools operate on their local stores; Pi context-reduction tools do not change this ChatGPT conversation.
 
+Respond promptly to new Pi user input with a substantive reply, interaction, or immediate action that makes the response apparent in Pi before continuing lengthy work. Address inputs received together in one response; an immediate answer or result serves as its own acknowledgment.
+
 Use chat to display Markdown progress and final messages in Pi, including code examples. Use read, bash, edit, and write directly. init.tools lists Pi's native and extension tools for call; Chappie's init, sessions, tools, and chat are separate top-level MCP tools. Use tools with names to load complete definitions before calling other Pi tools. Use an installed interactive tool through call when input is needed in Pi. Separate calls remain separate Pi turns; use a call array when tools should share a batch.
 
 Use transfer with paths and files to copy ChatGPT files into Pi. Omit files to expose existing Pi paths or chappie:// image references as MCP resources. Relative paths use the Pi working directory, existing targets require overwrite: true, and resource materialization may require host confirmation.
