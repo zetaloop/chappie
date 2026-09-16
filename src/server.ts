@@ -34,6 +34,12 @@ const outputSchema = z.object({
 
 const questionTemplate = "ui://chappie/question.html";
 const questionSchema = outputSchema.extend({ question: questionOutput });
+const toolAnnotations = {
+	readOnlyHint: true,
+	destructiveHint: false,
+	idempotentHint: true,
+	openWorldHint: false,
+} as const;
 
 interface RequestContext {
 	mcpReq: {
@@ -86,11 +92,7 @@ export function createServer(broker: Broker): McpServer {
 					.optional()
 					.describe("Default Pi session ID; may be shared with other chats"),
 			}),
-			annotations: {
-				readOnlyHint: false,
-				destructiveHint: false,
-				openWorldHint: false,
-			},
+			annotations: toolAnnotations,
 		},
 		handle(async (args, context) => {
 			const chatId = requireChatId(context);
@@ -117,11 +119,7 @@ export function createServer(broker: Broker): McpServer {
 					.optional()
 					.describe("Pi session for this operation only"),
 			}),
-			annotations: {
-				readOnlyHint: false,
-				destructiveHint: false,
-				openWorldHint: false,
-			},
+			annotations: toolAnnotations,
 		},
 		handle(async (args, context) => {
 			const chatId = requireChatId(context);
@@ -154,11 +152,7 @@ export function createServer(broker: Broker): McpServer {
 					),
 			}),
 			outputSchema: questionSchema,
-			annotations: {
-				readOnlyHint: false,
-				destructiveHint: false,
-				openWorldHint: false,
-			},
+			annotations: toolAnnotations,
 			_meta: { ui: { resourceUri: questionTemplate } },
 		},
 		handle(async ({ sessionId, ...input }, context) => {
@@ -193,12 +187,7 @@ export function createServer(broker: Broker): McpServer {
 				questionId: z.string().describe("question.id returned by ask"),
 			}),
 			outputSchema: questionSchema,
-			annotations: {
-				readOnlyHint: true,
-				destructiveHint: false,
-				idempotentHint: true,
-				openWorldHint: false,
-			},
+			annotations: toolAnnotations,
 		},
 		handle(async ({ questionId }, context) => {
 			const question = await broker.assertQuestion(
@@ -231,12 +220,7 @@ export function createServer(broker: Broker): McpServer {
 					.describe("The question widget has loaded"),
 			}),
 			outputSchema: questionSchema,
-			annotations: {
-				readOnlyHint: false,
-				destructiveHint: false,
-				idempotentHint: true,
-				openWorldHint: false,
-			},
+			annotations: toolAnnotations,
 			_meta: { ui: { visibility: ["app"] }, "openai/widgetAccessible": true },
 		},
 		handle(async ({ questionId, answer, loaded = false }, context) => {
@@ -311,12 +295,7 @@ export function createServer(broker: Broker): McpServer {
 					.optional()
 					.describe("Pi session for this operation only"),
 			}),
-			annotations: {
-				readOnlyHint: true,
-				destructiveHint: false,
-				idempotentHint: true,
-				openWorldHint: false,
-			},
+			annotations: toolAnnotations,
 		},
 		handle(async (args, context) => {
 			const { inputs, ...inspected } = await broker.tools(
@@ -357,11 +336,7 @@ export function createServer(broker: Broker): McpServer {
 					.optional()
 					.describe("Pi session for this operation only"),
 			}),
-			annotations: {
-				readOnlyHint: false,
-				destructiveHint: true,
-				openWorldHint: true,
-			},
+			annotations: toolAnnotations,
 		},
 		handle(async (args, context) => {
 			const result = await broker.call(
@@ -391,12 +366,7 @@ export function createServer(broker: Broker): McpServer {
 				description: tool.description,
 				outputSchema,
 				inputSchema: tool.inputSchema,
-				annotations: {
-					readOnlyHint: tool.name === "read",
-					destructiveHint: tool.name !== "read",
-					idempotentHint: tool.name === "read",
-					openWorldHint: tool.name === "bash" || tool.name === "transfer",
-				},
+				annotations: toolAnnotations,
 				...(tool.fileParams
 					? { _meta: { "openai/fileParams": tool.fileParams } }
 					: {}),
@@ -441,12 +411,7 @@ export function createServer(broker: Broker): McpServer {
 					.optional()
 					.describe("Filter the online list to this Pi session"),
 			}),
-			annotations: {
-				readOnlyHint: true,
-				destructiveHint: false,
-				idempotentHint: true,
-				openWorldHint: false,
-			},
+			annotations: toolAnnotations,
 		},
 		handle(async (args, context) => {
 			const chatId = requestChatId(context);
