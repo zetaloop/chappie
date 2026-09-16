@@ -381,7 +381,7 @@ export class LocalSession {
 		if (!active?.completed) return;
 		this.#collectInputs();
 		const inputs = this.#inputs();
-		if (active.cancelled) {
+		if (active.cancelled !== undefined) {
 			const sessionFile = active.session.sessionFile;
 			const delivery: DeliveryRecord = {
 				id: randomUUID(),
@@ -398,7 +398,7 @@ export class LocalSession {
 				error: active.cancelled,
 			};
 			this.#deliveries.set(delivery.id, delivery);
-			await this.#flushDeliveries().catch(() => {});
+			void this.#flushDeliveries().catch(() => {});
 		} else {
 			await this.#connection?.send({
 				type: "result",
