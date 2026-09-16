@@ -1,4 +1,4 @@
-import { createWriteStream } from "node:fs";
+import { Writable } from "node:stream";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	StdioServerTransport,
@@ -15,7 +15,15 @@ const terminationSignals =
 export async function serveChappie(): Promise<never> {
 	const broker = new Broker(getAgentDir());
 	await broker.start();
-	const output = createWriteStream("", { fd: 1, autoClose: false });
+	const output = new Writable({
+		write(chunk, encoding, callback) {
+			Reflect.apply(Writable.prototype.write, process.stdout, [
+				chunk,
+				encoding,
+				callback,
+			]);
+		},
+	});
 	const transport = new StdioServerTransport(process.stdin, output);
 	let stop: (() => void) | undefined;
 	const stopped = new Promise<void>((resolve) => {
@@ -23,6 +31,7 @@ export async function serveChappie(): Promise<never> {
 	});
 	const requestStop = (): void => stop?.();
 
+	output.once("error", requestStop);
 	process.stdin.once("end", requestStop);
 	process.stdin.once("close", requestStop);
 	for (const signal of terminationSignals) {
