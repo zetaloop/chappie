@@ -5,115 +5,230 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Chappie question</title>
 	<style>
-		:root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; color: var(--color-text-primary, CanvasText); }
+		:root {
+			color-scheme: light dark;
+			font: 14px/1.5 system-ui, sans-serif;
+			--ink: var(--color-text-primary, light-dark(#202123, #ececec));
+			--muted: var(--color-text-secondary, light-dark(#71717a, #a1a1aa));
+			--surface: var(--color-background-secondary, light-dark(#f5f5f5, #303030));
+			--hover: light-dark(#f1f1f1, #363636);
+			--line: var(--color-border-secondary, light-dark(#e5e5e5, #484848));
+			--badge: light-dark(#e8e8e8, #444444);
+			color: var(--ink);
+		}
 		* { box-sizing: border-box; }
-		body { margin: 0; padding: 16px; background: transparent; }
-		fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
-		h2 { margin: 0; font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
-		p { margin: 8px 0 12px; }
-		#context, .description { white-space: pre-wrap; overflow-wrap: anywhere; }
-		#context, .description, #status { color: var(--color-text-secondary, GrayText); }
-		#options { display: grid; gap: 8px; margin: 14px 0; }
-		.option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--color-border-primary, ButtonBorder); border-radius: 10px; cursor: pointer; }
-		.option:has(input:checked) { outline: 1px solid currentColor; }
-		.option input { margin: 4px 0 0; flex-shrink: 0; accent-color: currentColor; }
-		.option span { min-width: 0; }
-		.option strong, .description { display: block; }
-		.description { margin-top: 3px; font-size: 13px; }
-		#text-label { display: block; margin: 12px 0 6px; }
-		textarea { display: block; width: 100%; min-height: 80px; resize: vertical; padding: 10px 12px; font: inherit; color: inherit; background: var(--color-background-primary, Canvas); border: 1px solid var(--color-border-primary, ButtonBorder); border-radius: 10px; }
-		.actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
-		button { font: inherit; padding: 7px 16px; border: 1px solid var(--color-border-primary, ButtonBorder); border-radius: 8px; color: inherit; background: var(--color-background-secondary, ButtonFace); cursor: pointer; }
-		button:disabled { opacity: .5; cursor: default; }
-		button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
-		#clear { border-color: transparent; background: transparent; }
-		#status { margin-bottom: 0; font-size: 13px; }
-		[hidden] { display: none; }
+		body { margin: 0; background: transparent; }
+		button, textarea { font: inherit; color: inherit; }
+		button { border: 0; cursor: pointer; background: transparent; }
+		button:disabled { cursor: default; opacity: .5; }
+		button:focus-visible, textarea:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+		#card { padding: 20px 12px 12px; }
+		.heading { display: flex; align-items: flex-start; gap: 12px; padding: 0 12px 16px; }
+		.heading-text { flex: 1; min-width: 0; }
+		#header { margin: 0 0 5px; color: var(--muted); font-size: 12px; font-weight: 500; }
+		h2 { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.5; }
+		#context { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+		h2, #header, #context, .choice-detail, #answer-summary { overflow-wrap: anywhere; white-space: pre-wrap; }
+		fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+		.icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+		.icon-button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border-radius: 50%; flex-shrink: 0; color: var(--muted); }
+		.icon-button:hover { background: var(--surface); color: var(--ink); }
+		#collapse { margin: -3px -3px 0 0; }
+		#options { display: grid; gap: 4px; }
+		.choice { display: grid; grid-template-columns: 32px minmax(0, 1fr) 20px; align-items: start; gap: 12px; width: 100%; padding: 12px; border-radius: 14px; text-align: start; transition: background-color 120ms ease; }
+		.choice:hover, .choice:focus-visible, .choice[aria-pressed="true"] { background: var(--hover); }
+		.number, .custom-icon { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+		.number { background: var(--surface); }
+		.choice[aria-pressed="true"] .number { color: var(--ink); border-color: var(--muted); }
+		.choice-title { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 4px; min-height: 24px; font-weight: 500; font-size: 14px; }
+		.badge { padding: 1px 6px; border-radius: 5px; background: var(--badge); color: var(--muted); font-size: 11px; font-weight: 500; line-height: 18px; white-space: nowrap; }
+		.description { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+		.choice-action { margin-top: 6px; color: var(--muted); opacity: 0; }
+		.choice:hover .choice-action, .choice:focus-visible .choice-action, .choice[aria-pressed="true"] .choice-action { opacity: 1; }
+		.composer { display: flex; align-items: flex-start; gap: 12px; margin-top: 8px; padding: 10px 12px 2px; }
+		.custom-icon { flex-shrink: 0; background: transparent; }
+		.custom-icon .icon { width: 15px; height: 15px; }
+		textarea { display: block; flex: 1; min-width: 0; width: 100%; min-height: 32px; border: 0; border-radius: 6px; padding: 5px 0; resize: none; background: transparent; line-height: 22px; overflow: hidden; }
+		textarea::placeholder { color: var(--muted); opacity: .75; }
+		.composer-actions { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+		.pill { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 4px 11px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+		.pill:hover { background: var(--surface); }
+		#submit { border-color: transparent; background: var(--ink); color: light-dark(#fff, #212121); }
+		#submit:hover { opacity: .85; }
+		#submit.icon-only { width: 32px; padding: 0; }
+		#summary { display: flex; align-items: flex-start; gap: 12px; padding: 0 12px 4px; }
+		.summary-content { flex: 1; min-width: 0; }
+		#answer-label { color: var(--muted); font-size: 12px; }
+		#answer-summary { margin: 4px 0 0; font-size: 14px; }
+		#notice { display: flex; align-items: center; gap: 10px; padding: 8px 12px 0; color: var(--muted); font-size: 12px; }
+		#status { margin: 0; overflow-wrap: anywhere; }
+		#notice[data-error="true"] { color: var(--color-text-danger, light-dark(#b42318, #fda29b)); }
+		#retry { padding: 0; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+		@media (max-width: 420px) {
+			#card { padding: 16px 8px 10px; }
+			.heading { padding-inline: 8px; }
+			.choice { padding: 10px 8px; gap: 10px; grid-template-columns: 28px minmax(0, 1fr) 18px; }
+			.number, .custom-icon { width: 28px; height: 28px; }
+			.composer { padding-inline: 8px; gap: 10px; flex-wrap: wrap; }
+			.composer-actions { margin-inline-start: auto; }
+			#summary { padding-inline: 8px; }
+			h2 { font-size: 15px; }
+		}
+		@media (prefers-reduced-motion: reduce) { .choice { transition: none; } }
+		#card [hidden], svg[hidden] { display: none; }
 	</style>
 </head>
 <body>
-	<form id="form" hidden>
-		<fieldset id="fields">
-			<h2 id="question">Question</h2>
-			<p id="context" hidden></p>
-			<div id="options"></div>
-			<label id="text-label" for="answer-text">Answer or additional context</label>
-			<textarea id="answer-text" rows="3"></textarea>
-			<div class="actions">
-				<button id="submit" type="submit">Submit</button>
-				<button id="clear" type="button" hidden>Clear selection</button>
+	<!-- Icons from Lucide (https://lucide.dev), ISC; arrow-right, check and x derived from Feather, MIT.
+	Copyright (c) 2026 Lucide Icons and Contributors
+	Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.
+	THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+	Copyright (c) 2013-present Cole Bemis
+	Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+	The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+	-->
+	<svg xmlns="http://www.w3.org/2000/svg" hidden aria-hidden="true">
+		<symbol id="icon-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+		<symbol id="icon-pencil" viewBox="0 0 24 24"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></symbol>
+		<symbol id="icon-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+		<symbol id="icon-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+	</svg>
+	<main id="card" aria-labelledby="question">
+		<header class="heading" hidden>
+			<div class="heading-text">
+				<p id="header" hidden></p>
+				<h2 id="question">Question</h2>
+				<p id="context" hidden></p>
 			</div>
-		</fieldset>
-	</form>
-	<p id="status" role="status" aria-live="polite">Loading question…</p>
-	<button id="retry" type="button" hidden>Retry</button>
+			<button id="collapse" class="icon-button" type="button" aria-label="Collapse question" title="Collapse question"><svg class="icon" aria-hidden="true"><use href="#icon-x"/></svg></button>
+		</header>
+		<form id="form" hidden>
+			<fieldset id="fields">
+				<fieldset id="options" aria-labelledby="question"></fieldset>
+				<div class="composer">
+					<span class="custom-icon" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="#icon-pencil"/></svg></span>
+					<textarea id="answer-text" rows="1" aria-label="Custom answer" placeholder="Write your own answer…"></textarea>
+					<div class="composer-actions">
+						<button id="skip" class="pill" type="button">Skip</button>
+						<button id="submit" class="pill icon-only" type="submit" aria-label="Send answer" title="Send answer" hidden><span id="submit-label" hidden></span><svg class="icon" aria-hidden="true"><use href="#icon-arrow-right"/></svg></button>
+					</div>
+				</div>
+			</fieldset>
+		</form>
+		<section id="summary" hidden aria-live="polite">
+			<div class="summary-content"><span id="answer-label"></span><p id="answer-summary" hidden></p></div>
+			<button id="edit" class="pill" type="button">Edit</button>
+		</section>
+		<div id="notice" role="status" aria-live="polite"><p id="status">Loading…</p><button id="retry" type="button" hidden>Retry</button></div>
+	</main>
 	<script type="module">
+		const card = document.getElementById("card");
 		const form = document.getElementById("form");
 		const fields = document.getElementById("fields");
 		const options = document.getElementById("options");
 		const text = document.getElementById("answer-text");
+		const notice = document.getElementById("notice");
 		const status = document.getElementById("status");
 		const submit = document.getElementById("submit");
-		const clear = document.getElementById("clear");
+		const skip = document.getElementById("skip");
 		const retry = document.getElementById("retry");
+		const collapse = document.getElementById("collapse");
+		const edit = document.getElementById("edit");
 		let current;
 		let copy;
+		let selections = [];
+		let editing = true;
+		let collapsed = false;
+		let busy = false;
 
-		function globals() {
-			const host = window.openai;
-			const chinese = (host?.locale ?? document.documentElement.lang).startsWith("zh");
-			copy = chinese ? {
-				label: "回答或补充说明", submit: "提交", update: "更新回答", clear: "清除选择", retry: "重试",
-				pending: "可以稍后回答，助手会继续工作。", saved: "已提交，答案会随正常工具结果送给助手。",
-				saving: "正在提交…", required: "请选择选项或填写回答。", missing: "工具未返回问题内容。",
-			} : {
-				label: "Answer or additional context", submit: "Submit", update: "Update answer", clear: "Clear selection", retry: "Retry",
-				pending: "You can answer later while the assistant keeps working.", saved: "Saved. Your answer will accompany a normal tool result to the assistant.",
-				saving: "Submitting…", required: "Select an option or enter an answer.", missing: "The tool returned no question.",
-			};
-			document.getElementById("text-label").textContent = copy.label;
-			submit.textContent = current?.answer ? copy.update : copy.submit;
-			clear.textContent = copy.clear;
-			retry.textContent = copy.retry;
-			if (host?.theme) document.documentElement.style.colorScheme = host.theme;
-			const question = host?.toolOutput?.question;
-			if (question && question.id !== current?.id) void load(question);
+		function icon(name, className = "") {
+			const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+			svg.setAttribute("class", `icon ${className}`);
+			svg.setAttribute("aria-hidden", "true");
+			const use = document.createElementNS(svg.namespaceURI, "use");
+			use.setAttribute("href", `#icon-${name}`);
+			svg.append(use);
+			return svg;
+		}
+
+		function message(value = "", error = false) {
+			status.textContent = value;
+			notice.hidden = !value;
+			notice.dataset.error = String(error);
 		}
 
 		function draft() {
-			return {
-				selections: [...options.querySelectorAll("input:checked")].map((input) => Number(input.value)),
-				text: text.value,
-			};
+			return { selections: [...selections], text: text.value };
 		}
 
-		function saveDraft() {
+		function persist() {
 			if (!current) return;
-			const answer = draft();
-			clear.hidden = answer.selections.length === 0;
-			window.openai.setWidgetState({ privateContent: { questionId: current.id, ...answer } });
+			window.openai.setWidgetState({ privateContent: { questionId: current.id, ...draft(), editing, collapsed } });
+		}
+
+		function controls() {
+			const active = editing && !collapsed;
+			form.hidden = !active;
+			document.getElementById("summary").hidden = active;
+			collapse.hidden = !active;
+			fields.disabled = busy;
+			collapse.disabled = busy;
+			edit.disabled = busy;
+			submit.hidden = !current?.allowMultiple && !text.value.trim();
+			submit.disabled = busy || (!selections.length && !text.value.trim());
+			submit.classList.toggle("icon-only", !current?.allowMultiple);
+			const label = document.getElementById("submit-label");
+			label.hidden = !current?.allowMultiple;
+			label.textContent = copy.submit;
+			for (const [index, choice] of [...options.children].entries()) {
+				if (current.allowMultiple) choice.setAttribute("aria-pressed", String(selections.includes(index)));
+				const action = choice.querySelector(".choice-action use");
+				action.setAttribute("href", `#icon-${current.allowMultiple && selections.includes(index) ? "check" : "arrow-right"}`);
+			}
+			text.style.height = "auto";
+			text.style.height = `${text.scrollHeight}px`;
+			const answer = current?.answer;
+			document.getElementById("answer-label").textContent = answer ? (answer.skipped ? copy.skipped : copy.answered) : copy.pending;
+			const summary = document.getElementById("answer-summary");
+			summary.textContent = answer?.skipped ? "" : [...(answer?.selections ?? []).map((index) => current.options[index].title), answer?.text].filter(Boolean).join("\n");
+			summary.hidden = !summary.textContent;
+			edit.textContent = answer ? (answer.skipped ? copy.answer : copy.edit) : copy.answer;
 		}
 
 		function render(question) {
 			current = question;
+			document.querySelector(".heading").hidden = false;
 			document.getElementById("question").textContent = question.question;
+			const header = document.getElementById("header");
+			header.textContent = question.header ?? "";
+			header.hidden = !question.header;
 			const context = document.getElementById("context");
 			context.textContent = question.context ?? "";
 			context.hidden = !question.context;
-			const saved = window.openai.widgetState?.privateContent;
-			const answer = saved?.questionId === question.id ? saved : question.answer;
 			options.replaceChildren();
 			for (const [index, option] of question.options.entries()) {
-				const label = document.createElement("label");
-				label.className = "option";
-				const input = document.createElement("input");
-				input.type = question.allowMultiple ? "checkbox" : "radio";
-				input.name = "choice";
-				input.value = String(index);
-				input.checked = answer?.selections?.includes(index) ?? false;
+				const choice = document.createElement("button");
+				choice.type = "button";
+				choice.className = "choice";
+				if (index < 9) choice.setAttribute("aria-keyshortcuts", String(index + 1));
+				const number = document.createElement("span");
+				number.className = "number";
+				number.textContent = String(index + 1);
+				number.setAttribute("aria-hidden", "true");
 				const detail = document.createElement("span");
-				const title = document.createElement("strong");
-				title.textContent = option.title;
+				detail.className = "choice-detail";
+				const title = document.createElement("span");
+				title.className = "choice-title";
+				const name = document.createElement("span");
+				name.textContent = option.title;
+				title.append(name);
+				if (option.recommended) {
+					const badge = document.createElement("span");
+					badge.className = "badge";
+					badge.textContent = copy.recommended;
+					title.append(badge);
+				}
 				detail.append(title);
 				if (option.description) {
 					const description = document.createElement("span");
@@ -121,13 +236,49 @@
 					description.textContent = option.description;
 					detail.append(description);
 				}
-				label.append(input, detail);
-				options.append(label);
+				choice.append(number, detail, icon("arrow-right", "choice-action"));
+				choice.addEventListener("click", () => {
+					if (busy) return;
+					if (!current.allowMultiple) { void save({ selections: [index], text: "" }); return; }
+					selections = selections.includes(index) ? selections.filter((value) => value !== index) : [...selections, index].sort((a, b) => a - b);
+					controls();
+					persist();
+				});
+				options.append(choice);
 			}
-			text.value = answer?.text ?? "";
-			submit.textContent = question.answer ? copy.update : copy.submit;
-			clear.hidden = !answer?.selections?.length;
-			form.hidden = false;
+			controls();
+		}
+
+		function globals() {
+			const host = window.openai;
+			const locale = host?.locale ?? navigator.language;
+			const chinese = locale.startsWith("zh");
+			copy = chinese ? {
+				custom: "填写自己的回答…", submit: "提交", send: "发送回答", skip: "跳过", retry: "重试", edit: "修改", answer: "回答",
+				recommended: "推荐", collapse: "收起问题", pending: "待回答", answered: "已回答", skipped: "已跳过",
+				loading: "正在读取…", saving: "正在提交…", required: "请选择选项或填写回答。", missing: "工具未返回问题内容。",
+			} : {
+				custom: "Write your own answer…", submit: "Submit", send: "Send answer", skip: "Skip", retry: "Retry", edit: "Edit", answer: "Answer",
+				recommended: "Recommended", collapse: "Collapse question", pending: "Unanswered", answered: "Answered", skipped: "Skipped",
+				loading: "Loading…", saving: "Submitting…", required: "Select an option or enter an answer.", missing: "The tool returned no question.",
+			};
+			document.documentElement.lang = locale;
+			if (host?.theme) document.documentElement.style.colorScheme = host.theme;
+			text.placeholder = copy.custom;
+			text.setAttribute("aria-label", copy.custom);
+			submit.setAttribute("aria-label", copy.send);
+			submit.title = copy.send;
+			collapse.setAttribute("aria-label", copy.collapse);
+			collapse.title = copy.collapse;
+			skip.textContent = copy.skip;
+			retry.textContent = copy.retry;
+			const question = host?.toolOutput?.question;
+			if (question && question.id !== current?.id) void load(question);
+			else if (current) {
+				for (const badge of options.querySelectorAll(".badge")) badge.textContent = copy.recommended;
+				controls();
+			}
+			else message(copy.loading);
 		}
 
 		async function request(args) {
@@ -139,51 +290,94 @@
 		}
 
 		async function load(question) {
-			render(question);
-			fields.disabled = true;
+			const saved = window.openai.widgetState?.privateContent;
+			const local = saved?.questionId === question.id ? saved : undefined;
+			selections = [...(local?.selections ?? question.answer?.selections ?? [])];
+			text.value = local?.text ?? question.answer?.text ?? "";
+			editing = local?.editing ?? !question.answer;
+			collapsed = local?.collapsed ?? false;
+			busy = true;
 			retry.hidden = true;
+			message(copy.loading);
+			render(question);
 			try {
 				const snapshot = await request({ questionId: question.id });
+				if (current.id !== question.id) return;
+				if (!local?.editing) {
+					selections = [...(snapshot.answer?.selections ?? [])];
+					text.value = snapshot.answer?.text ?? "";
+					editing = !snapshot.answer;
+				}
 				render(snapshot);
-				status.textContent = snapshot.answer ? copy.saved : copy.pending;
+				message();
 			} catch (error) {
-				status.textContent = error instanceof Error ? error.message : String(error);
+				if (current.id !== question.id) return;
+				message(error instanceof Error ? error.message : String(error), true);
 				retry.hidden = false;
 			} finally {
-				fields.disabled = false;
+				if (current.id === question.id) { busy = false; controls(); }
 			}
 		}
 
-		form.addEventListener("input", saveDraft);
-		clear.addEventListener("click", () => {
-			for (const input of options.querySelectorAll("input")) input.checked = false;
-			saveDraft();
+		async function save(answer) {
+			if (!current || busy) return;
+			if (!answer.skipped && !answer.selections.length && !answer.text.trim()) { message(copy.required, true); return; }
+			const id = current.id;
+			busy = true;
+			retry.hidden = true;
+			message(copy.saving);
+			controls();
+			try {
+				const question = await request({ questionId: id, answer });
+				if (current.id !== id) return;
+				selections = [...question.answer.selections];
+				text.value = question.answer.text;
+				editing = false;
+				collapsed = false;
+				render(question);
+				persist();
+				message();
+			} catch (error) {
+				if (current.id !== id) return;
+				message(error instanceof Error ? error.message : String(error), true);
+			} finally {
+				if (current.id === id) { busy = false; controls(); if (!editing) edit.focus({ preventScroll: true }); }
+			}
+		}
+
+		text.addEventListener("input", () => {
+			if (!current.allowMultiple) selections = [];
+			controls();
+			persist();
+		});
+		form.addEventListener("submit", (event) => { event.preventDefault(); void save(draft()); });
+		text.addEventListener("keydown", (event) => {
+			if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); form.requestSubmit(); }
+		});
+		skip.addEventListener("click", () => void save({ selections: [], text: "", skipped: true }));
+		collapse.addEventListener("click", () => { collapsed = true; persist(); controls(); edit.focus({ preventScroll: true }); });
+		edit.addEventListener("click", () => {
+			editing = true;
+			collapsed = false;
+			message();
+			controls();
+			persist();
+			(options.children[selections[0] ?? 0] ?? text).focus({ preventScroll: true });
 		});
 		retry.addEventListener("click", () => { if (current) void load(current); });
-		form.addEventListener("submit", async (event) => {
-			event.preventDefault();
-			if (!current) return;
-			const answer = draft();
-			if (!answer.selections.length && !answer.text.trim()) {
-				status.textContent = copy.required;
-				return;
-			}
-			fields.disabled = true;
-			retry.hidden = true;
-			status.textContent = copy.saving;
-			try {
-				current = await request({ questionId: current.id, answer });
-				saveDraft();
-				submit.textContent = copy.update;
-				status.textContent = copy.saved;
-			} catch (error) {
-				status.textContent = error instanceof Error ? error.message : String(error);
-			} finally {
-				fields.disabled = false;
+		card.addEventListener("keydown", (event) => {
+			if (busy || !editing || collapsed || event.target === text || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+			if (/^[1-9]$/.test(event.key)) {
+				const choice = options.children[Number(event.key) - 1];
+				if (choice) { event.preventDefault(); choice.click(); }
+			} else if (["ArrowDown", "ArrowUp"].includes(event.key) && options.contains(event.target)) {
+				event.preventDefault();
+				const index = [...options.children].indexOf(event.target);
+				options.children[(index + (event.key === "ArrowDown" ? 1 : -1) + options.children.length) % options.children.length].focus();
 			}
 		});
 		window.addEventListener("openai:set_globals", globals);
-		new ResizeObserver(() => window.openai?.notifyIntrinsicHeight?.(document.body.scrollHeight)).observe(document.body);
+		new ResizeObserver(() => window.openai?.notifyIntrinsicHeight?.(card.offsetHeight)).observe(card);
 		globals();
 	</script>
 </body>

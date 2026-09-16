@@ -117,6 +117,8 @@ Use `header` for a short topic label when useful. Put the recommended option fir
 
 Submitting saves the answer directly in the broker, even while Pi is executing a tool. The next normal Chappie result carries a `webAnswer` with the question, selected options, free text, and original Pi session. A skipped question carries `skipped: true`; continue with the available information instead of asking the same question again. The assistant uses that result to continue the current response. The widget does not send a chat message, start another response, or poll for an answer.
 
+Single-choice options submit on click. Custom input submits with Enter; Shift+Enter adds a line. Multiple selections use the submit button and can include free text. Number keys choose options while focus is inside the card, and arrow keys move between choices. Submitted and skipped questions show a compact summary with an action to answer again. The close control folds the card without submitting; reopening it restores the draft.
+
 Questions and answers survive broker restarts in `chappie.state.json`. Reopening a widget reads its saved question once; drafts stay with that widget. An updated answer is delivered again, while repeated submission of an unchanged answer has no additional effect. The component-only `answer` tool handles reading and submission; its response confirms the saved state without consuming delivery to the model.
 
 Pi's installed interactive tools continue to use their own interface through `call`. The webpage question is independent of those tools and their request lifetime.
