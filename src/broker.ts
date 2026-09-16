@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import { readConfig } from "./config.ts";
 import {
 	type DeliveryRecord,
 	type ResolvedDelivery,
@@ -39,6 +40,11 @@ interface PendingRequest {
 	reject(error: Error): void;
 	signal: AbortSignal;
 	onAbort(): void;
+}
+
+interface Workflow {
+	id: string;
+	controller: AbortController;
 }
 
 interface ChangeWaiter {
@@ -79,6 +85,8 @@ export class Broker {
 	readonly #sessions = new Map<string, RegisteredSession>();
 	readonly #pending = new Map<number, PendingRequest>();
 	readonly #waiters = new Set<ChangeWaiter>();
+	readonly #workflows = new Map<string, Workflow>();
+	#latestWorkflow = false;
 	#nextRequestId = 1;
 
 	constructor(agentDir: string) {
@@ -92,12 +100,18 @@ export class Broker {
 	}
 
 	async start(): Promise<void> {
+		const config = await readConfig(this.#agentDir);
+		this.#latestWorkflow = config.latestWorkflow ?? false;
 		await this.#state.load();
 		await this.#ipc.start();
 	}
 
 	async close(): Promise<void> {
 		const error = new Error("Chappie broker ended");
+		for (const workflow of this.#workflows.values()) {
+			workflow.controller.abort(error);
+		}
+		this.#workflows.clear();
 		for (const [id, pending] of this.#pending) {
 			this.#finishRequest(id, pending);
 			pending.reject(error);
@@ -109,6 +123,39 @@ export class Broker {
 		this.#waiters.clear();
 		this.#sessions.clear();
 		await this.#ipc.close();
+	}
+
+	async workflow(
+		chatId: string | undefined,
+		requestId: unknown,
+		signal: AbortSignal,
+	): Promise<AbortSignal> {
+		if (!this.#latestWorkflow || !chatId) return signal;
+		const id =
+			typeof requestId === "string"
+				? /^wfr_[0-9a-f]{12}7[0-9a-f]{3}[89ab][0-9a-f]{15}(?=\/|$)/i
+						.exec(requestId)?.[0]
+						.toLowerCase()
+				: undefined;
+		if (!id) return signal;
+		signal.throwIfAborted();
+		const latest = this.#state.workflow(chatId);
+		const superseded = new Error(
+			"A newer workflow has taken over this ChatGPT conversation. Tool access for this workflow has ended. Stop this workflow; the newer workflow is handling the task.",
+		);
+		// UUIDv7 puts the creation timestamp first, including across broker restarts.
+		if (latest && id < latest) throw superseded;
+		let workflow = this.#workflows.get(chatId);
+		if (!workflow || workflow.id !== id) {
+			const previous = workflow;
+			workflow = { id, controller: new AbortController() };
+			this.#workflows.set(chatId, workflow);
+			previous?.controller.abort(superseded);
+			if (latest !== id) await this.#state.setWorkflow(chatId, id);
+		}
+		const combined = AbortSignal.any([signal, workflow.controller.signal]);
+		combined.throwIfAborted();
+		return combined;
 	}
 
 	listSessions(

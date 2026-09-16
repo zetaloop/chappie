@@ -5,6 +5,7 @@ import type { QuestionAnswer, QuestionRecord } from "./questions.ts";
 
 interface StateFile {
 	bindings?: Record<string, string>;
+	workflows?: Record<string, string>;
 	deliveries?: DeliveryRecord[];
 	questions?: QuestionRecord[];
 }
@@ -13,6 +14,7 @@ export class State {
 	readonly #path: string;
 	readonly #temporaryPath: string;
 	readonly #bindings = new Map<string, string>();
+	readonly #workflows = new Map<string, string>();
 	readonly #deliveries = new Map<string, DeliveryRecord>();
 	readonly #questions = new Map<string, QuestionRecord>();
 	#writes = Promise.resolve();
@@ -34,11 +36,23 @@ export class State {
 		for (const [chatId, sessionId] of Object.entries(state.bindings ?? {})) {
 			if (typeof sessionId === "string") this.#bindings.set(chatId, sessionId);
 		}
+		for (const [chatId, id] of Object.entries(state.workflows ?? {})) {
+			this.#workflows.set(chatId, id);
+		}
 		for (const delivery of state.deliveries ?? []) {
 			if (delivery?.id) this.#deliveries.set(delivery.id, delivery);
 		}
 		for (const question of state.questions ?? [])
 			this.#questions.set(question.id, question);
+	}
+
+	workflow(chatId: string): string | undefined {
+		return this.#workflows.get(chatId);
+	}
+
+	setWorkflow(chatId: string, id: string): Promise<void> {
+		this.#workflows.set(chatId, id);
+		return this.#save();
 	}
 
 	binding(chatId: string): string | undefined {
@@ -154,9 +168,10 @@ export class State {
 	#save(): Promise<void> {
 		const saved = this.#writes.then(async () => {
 			const bindings = Object.fromEntries(this.#bindings);
+			const workflows = Object.fromEntries(this.#workflows);
 			await writeFile(
 				this.#temporaryPath,
-				`${JSON.stringify({ bindings, deliveries: [...this.#deliveries.values()], questions: [...this.#questions.values()] }, null, 2)}\n`,
+				`${JSON.stringify({ bindings, workflows, deliveries: [...this.#deliveries.values()], questions: [...this.#questions.values()] }, null, 2)}\n`,
 				{
 					mode: 0o600,
 				},

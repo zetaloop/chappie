@@ -32,3 +32,13 @@ Open Pi with the Chappie provider, then ask ChatGPT to call `init`. A chat witho
 Ask ChatGPT to work on the task using Chappie's tools. `chat` sends replies to Pi, and new Pi messages accompany subsequent tool results. Interactive tools display their prompts in Pi; `ask` offers persistent questions in the ChatGPT page while work continues.
 
 See the [tool guide](docs/tools.md) for session selection, batch calls, questions, and file and image transfers.
+
+## Configuration
+
+`chappie.json` in Pi's agent directory configures the broker. To let the newest ChatGPT workflow take over each chat:
+
+```json
+{ "latestWorkflow": true }
+```
+
+This is off by default. Workflow identity comes from otunnel's `otunnel/requestId` metadata. A newer workflow cancels the same chat's older requests; superseded workflows receive an explanation when they call a tool. The newest identity is saved across broker restarts. Different chats can continue sharing the same Pi session, and webpage answers remain associated with their originating chat.

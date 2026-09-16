@@ -49,6 +49,22 @@ export function createServer(broker: Broker): McpServer {
 		{ instructions },
 	);
 
+	function handle<Args, Result>(
+		callback: (args: Args, context: RequestContext) => Promise<Result>,
+	) {
+		return async (args: Args, context: RequestContext): Promise<Result> => {
+			const signal = await broker.workflow(
+				requestChatId(context),
+				context.mcpReq._meta?.["otunnel/requestId"],
+				context.mcpReq.signal,
+			);
+			return callback(args, {
+				...context,
+				mcpReq: { ...context.mcpReq, signal },
+			});
+		};
+	}
+
 	server.registerTool(
 		"init",
 		{
@@ -70,7 +86,7 @@ export function createServer(broker: Broker): McpServer {
 				openWorldHint: false,
 			},
 		},
-		async (args, context) => {
+		handle(async (args, context) => {
 			const chatId = requireChatId(context);
 			const { inputs, ...initialized } = await broker.initialize(
 				chatId,
@@ -78,7 +94,7 @@ export function createServer(broker: Broker): McpServer {
 				context.mcpReq.signal,
 			);
 			return finishResult(broker, context, textResult(initialized, inputs));
-		},
+		}),
 	);
 
 	server.registerTool(
@@ -104,7 +120,7 @@ export function createServer(broker: Broker): McpServer {
 				openWorldHint: false,
 			},
 		},
-		async (args, context) => {
+		handle(async (args, context) => {
 			const chatId = requireChatId(context);
 			const { sessionId, cwd, inputs } = await broker.chat(
 				chatId,
@@ -117,7 +133,7 @@ export function createServer(broker: Broker): McpServer {
 				context,
 				textResult({ sessionId, cwd }, inputs),
 			);
-		},
+		}),
 	);
 
 	server.registerTool(
@@ -140,7 +156,7 @@ export function createServer(broker: Broker): McpServer {
 			},
 			_meta: { ui: { resourceUri: questionTemplate } },
 		},
-		async ({ sessionId, ...input }, context) => {
+		handle(async ({ sessionId, ...input }, context) => {
 			const question = await broker.ask(
 				requireChatId(context),
 				sessionId,
@@ -159,7 +175,7 @@ export function createServer(broker: Broker): McpServer {
 				...result,
 				structuredContent: { ...result.structuredContent, question },
 			};
-		},
+		}),
 	);
 
 	server.registerTool(
@@ -181,7 +197,7 @@ export function createServer(broker: Broker): McpServer {
 			},
 			_meta: { ui: { visibility: ["app"] }, "openai/widgetAccessible": true },
 		},
-		async ({ questionId, answer }, context) => {
+		handle(async ({ questionId, answer }, context) => {
 			const question = await broker.answer(
 				requireChatId(context),
 				questionId,
@@ -196,7 +212,7 @@ export function createServer(broker: Broker): McpServer {
 				content: [{ type: "text", text }],
 				structuredContent: { text, question },
 			};
-		},
+		}),
 	);
 
 	server.registerResource(
@@ -250,7 +266,7 @@ export function createServer(broker: Broker): McpServer {
 				openWorldHint: false,
 			},
 		},
-		async (args, context) => {
+		handle(async (args, context) => {
 			const { inputs, ...inspected } = await broker.tools(
 				requireChatId(context),
 				args.sessionId,
@@ -265,7 +281,7 @@ export function createServer(broker: Broker): McpServer {
 					inputs,
 				),
 			);
-		},
+		}),
 	);
 
 	server.registerTool(
@@ -295,7 +311,7 @@ export function createServer(broker: Broker): McpServer {
 				openWorldHint: true,
 			},
 		},
-		async (args, context) => {
+		handle(async (args, context) => {
 			const result = await broker.call(
 				requireChatId(context),
 				args.sessionId,
@@ -312,7 +328,7 @@ export function createServer(broker: Broker): McpServer {
 					result.inputs,
 				),
 			);
-		},
+		}),
 	);
 
 	for (const tool of directTools) {
@@ -333,7 +349,7 @@ export function createServer(broker: Broker): McpServer {
 					? { _meta: { "openai/fileParams": tool.fileParams } }
 					: {}),
 			},
-			async (args, context) => {
+			handle(async (args, context) => {
 				const input = { ...args } as Record<string, unknown> & {
 					sessionId?: string;
 				};
@@ -356,7 +372,7 @@ export function createServer(broker: Broker): McpServer {
 						result.inputs,
 					),
 				);
-			},
+			}),
 		);
 	}
 
@@ -380,7 +396,7 @@ export function createServer(broker: Broker): McpServer {
 				openWorldHint: false,
 			},
 		},
-		async (args, context) => {
+		handle(async (args, context) => {
 			const chatId = requestChatId(context);
 			const inputs = chatId
 				? await broker.inputs(chatId, args.sessionId, context.mcpReq.signal)
@@ -393,7 +409,7 @@ export function createServer(broker: Broker): McpServer {
 				inputs,
 			);
 			return finishResult(broker, context, result);
-		},
+		}),
 	);
 
 	server.registerResource(
