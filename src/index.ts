@@ -28,7 +28,5 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 	const session = new LocalSession(pi, getAgentDir());
 	session.install();
 	pi.registerTool(transfer);
-	pi.registerProvider(
-		createChappieProvider((output, context) => session.start(output, context)),
-	);
+	pi.registerProvider(createChappieProvider((output) => session.start(output)));
 }

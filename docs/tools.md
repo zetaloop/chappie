@@ -20,6 +20,8 @@ The active model is the current ChatGPT conversation. A Pi tool that starts anot
 
 Use ChatGPT's web search, connectors, and cloud tools for remote research and cloud-side work. Chappie tools operate on local files, processes, Pi extensions, and Pi user interfaces. Pi project-memory tools access their local stores; Pi context-reduction tools do not alter the current ChatGPT conversation.
 
+With the Chappie provider selected, its context hook supplies an empty message list for model-input conversion. Pi's transcript and session tree retain the original messages for display, branching, and input delivery. Chappie collects newly appended entries incrementally; switching providers uses Pi's normal history.
+
 Use `chat` for progress or results that should appear in Pi. When a Pi user decision is needed, load the installed interactive tool definition with `tools` and invoke it through `call`.
 
 ## Sessions

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type {
 	AssistantMessage,
-	Context,
 	ToolResultMessage,
 	UserMessage,
 } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
+	SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import type { DeliveryRecord } from "./delivery.ts";
 import {
@@ -59,6 +59,7 @@ export class LocalSession {
 	#nextSyncId = 1;
 	#starting = false;
 	#sessionId: string | undefined;
+	#inputCursor: string | null = null;
 	#flushing = Promise.resolve();
 
 	constructor(pi: ExtensionAPI, agentDir: string) {
@@ -75,11 +76,15 @@ export class LocalSession {
 			this.#context = context;
 			void this.#sync().catch(() => {});
 		});
-		this.#pi.on("context", (event) => ({
-			messages: event.messages.filter(
-				(message) =>
-					message.role !== "custom" || message.customType !== "chappie.request",
-			),
+		this.#pi.on("context", (event, context) => ({
+			messages:
+				context.model?.provider === "chappie"
+					? []
+					: event.messages.filter(
+							(message) =>
+								message.role !== "custom" ||
+								message.customType !== "chappie.request",
+						),
 		}));
 		this.#pi.on("turn_end", (event, context) =>
 			this.#turnEnd(event.message, event.toolResults, context),
@@ -94,10 +99,7 @@ export class LocalSession {
 		this.#pi.on("session_shutdown", () => this.close());
 	}
 
-	async start(
-		output: ProviderOutput,
-		_providerContext: Context,
-	): Promise<void> {
+	async start(output: ProviderOutput): Promise<void> {
 		const context = this.#context;
 		const connection = this.#connection;
 		if (context?.model?.provider !== "chappie" || !connection) {
@@ -417,13 +419,25 @@ export class LocalSession {
 	#collectInputs(): void {
 		const context = this.#context;
 		if (!context) return;
-		const sessionId = context.sessionManager.getSessionId();
+		const sessionManager = context.sessionManager;
+		const sessionId = sessionManager.getSessionId();
 		if (this.#sessionId !== sessionId) {
 			this.#sessionId = sessionId;
+			this.#inputCursor = null;
 			this.#seenInputs.clear();
 			this.#pendingInputs.clear();
 		}
-		for (const entry of context.sessionManager.getBranch()) {
+		const leafId = sessionManager.getLeafId();
+		if (leafId === this.#inputCursor) return;
+		const entries: SessionEntry[] = [];
+		let current = sessionManager.getLeafEntry();
+		while (current && current.id !== this.#inputCursor) {
+			entries.push(current);
+			current = current.parentId
+				? sessionManager.getEntry(current.parentId)
+				: undefined;
+		}
+		for (const entry of entries.reverse()) {
 			if (
 				entry.type !== "message" ||
 				entry.message.role !== "user" ||
@@ -437,6 +451,7 @@ export class LocalSession {
 			this.#seenInputs.add(entry.id);
 			this.#pendingInputs.set(entry.id, { id: entry.id, sessionId, message });
 		}
+		this.#inputCursor = leafId;
 	}
 
 	#inputs(): SessionInput[] {

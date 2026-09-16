@@ -147,19 +147,17 @@ export class ProviderOutput {
 }
 
 export function createChappieProvider(
-	start: (output: ProviderOutput, context: Context) => Promise<void>,
+	start: (output: ProviderOutput) => Promise<void>,
 ) {
 	const stream = (
 		model: Model<Api>,
-		context: Context,
+		_context: Context,
 		options?: StreamOptions,
 	) => {
 		const output = new ProviderOutput(model, options?.signal);
 		if (!output.closed) {
 			queueMicrotask(() => {
-				void start(output, context).catch((error: unknown) =>
-					output.fail(error),
-				);
+				void start(output).catch((error: unknown) => output.fail(error));
 			});
 		}
 		return output.stream;
