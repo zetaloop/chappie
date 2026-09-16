@@ -29,7 +29,7 @@ Open Pi with the Chappie provider, then ask ChatGPT to call `init`. A chat witho
 
 ## Usage
 
-Ask ChatGPT to work on the task using Chappie's tools. `chat` sends replies to Pi, and new Pi messages accompany subsequent tool results. Interactive tools display their prompts in Pi; `ask` offers persistent questions in the ChatGPT page while work continues.
+Ask ChatGPT to work on the task using Chappie's tools. `chat` sends replies to Pi, and new Pi messages accompany subsequent tool results. Interactive tools display their prompts in Pi. `ask` creates a persistent question in ChatGPT; call `ask_assert` next to confirm it loaded.
 
 See the [tool guide](docs/tools.md) for session selection, batch calls, questions, and file and image transfers.
 

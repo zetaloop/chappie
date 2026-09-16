@@ -50,11 +50,11 @@ export const answerInput = z.object({
 });
 
 export const questionOutput = questionInput.extend({
-	id: z.string(),
+	id: z.string().describe("Generated question ID for ask_assert"),
 	sessionId: z.string(),
 	cwd: z.string(),
 	answer: answerInput.optional(),
-	loaded: z.boolean().optional(),
+	loaded: z.boolean().optional().describe("The widget has reported loading"),
 });
 
 export type QuestionInput = z.infer<typeof questionInput>;

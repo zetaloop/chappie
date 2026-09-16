@@ -2,12 +2,12 @@
 
 | Tool | Purpose |
 |---|---|
-| `init` | Connect to a Pi session and read its environment, tool catalog, skills, global `AGENTS.md`, and pending input. |
+| `init` | Select this chat's default Pi session and read its environment and tool catalog. |
 | `sessions` | List connected Pi sessions and the chat's default session. |
-| `tools` | Read complete definitions for selected active tools. |
+| `tools` | Get full definitions of active Pi tools for `call`. |
 | `chat` | Display Markdown as an assistant message in Pi. |
-| `ask` | Display a persistent question in ChatGPT while work continues. |
-| `ask_assert` | Assert that an `ask` widget becomes available in the ChatGPT UI. |
+| `ask` | Create a question in ChatGPT; follow with `ask_assert`. |
+| `ask_assert` | Confirm that the question widget loaded. |
 | `call` | Run one or more tools as a Pi batch. |
 | `read` | Read local text or images. |
 | `bash` | Execute a shell command. |
@@ -55,7 +55,7 @@ Pi displays Chappie activity as individual session entries in arrival order. Eac
 
 ## Tool calls
 
-`read`, `bash`, `edit`, and `write` accept Pi's tool parameters plus `sessionId`. Their descriptions provide the current schemas. The catalog in `init.tools` lists Pi's native and extension tools available through `call`. Chappie's `init`, `sessions`, `tools`, and `chat` are separate top-level MCP tools. Load complete definitions for installed extension tools before calling them:
+`read`, `bash`, `edit`, and `write` accept Pi's parameters plus optional `sessionId`. `init.tools` lists Pi tools by name and summary; `tools` returns full definitions for `call`. Invoke Chappie's `init`, `sessions`, `tools`, `chat`, `ask`, and `ask_assert` directly. For example, load Pi tool definitions with:
 
 ```json
 { "names": ["ask_user", "ctx_search"] }
@@ -78,7 +78,7 @@ Each batch returns its results together. Pi determines how its tools run within 
 
 Extension tools execute through Pi, including their interactive prompts. Each batch starts with its executing `sessionId` and Pi `cwd`, followed by each tool's name, call ID, error status, and original text or image content. The directory is captured when the batch starts; a shell `cd` changes that command's working directory, while the operation stays in the same Pi session.
 
-Tool results include `structuredContent.text` with complete text in result order, including Pi input, submitted webpage answers, deferred results, and image references. The same text remains in `content` alongside native images and resource links. Question tools also return the structured question for their widget.
+Tool results include `structuredContent.text` with complete text in result order, including Pi input, submitted webpage answers, deferred results, and image references. The same text remains in `content` alongside native images and resource links. `ask` also supplies the widget's question data. `ask_assert` returns the same question state.
 
 ChatGPT file inputs use the direct `transfer` tool. Its top-level `files` parameter lets the host prepare the files before sending them to Pi.
 
@@ -100,7 +100,7 @@ Host request deadlines include time spent in the queue. Use local facilities suc
 
 ## Webpage questions
 
-`ask` creates a question in the ChatGPT page and returns immediately. The returned question contains the generated ID used to check whether its widget actually loaded:
+`ask` creates a question and immediately returns its ID and contents. ChatGPT uses the result to render the widget:
 
 ```json
 {
@@ -114,13 +114,13 @@ Host request deadlines include time spent in the queue. Use local facilities suc
 }
 ```
 
-Call `ask_assert` with `question.id` immediately after `ask` to confirm that the widget becomes available in the ChatGPT UI:
+Pass the returned `question.id` to `ask_assert` immediately after `ask`:
 
 ```json
-{ "questionId": "7fb6b57e-..." }
+{ "questionId": "<question-id>" }
 ```
 
-`ask_assert` returns immediately when the widget already reported `loaded`; otherwise the call remains open until that report or the host ends the request. It asserts widget availability only and does not wait for the user's answer. A host cancellation or request deadline before the report means the assertion did not succeed during that call.
+`ask_assert` returns when the widget reports `loaded` and times out if loading fails. User answers arrive separately as `webAnswer`. The host supplies the request deadline.
 
 Use `header` for a short topic label when useful. Put the recommended option first with `recommended: true`; the widget displays a badge separately from its title. Omit `options` for a text-only question, or set `allowMultiple: true` for multiple selections. Custom input and skipping are supplied by the widget. The optional `sessionId` associates the question with a particular Pi session without changing the chat's default.
 
@@ -128,7 +128,7 @@ Submitting saves the answer directly in the broker, even while Pi is executing a
 
 Single-choice options submit on click. Custom input submits with Enter; Shift+Enter adds a line. Multiple selections use the submit button and can include free text. Number keys choose options while focus is inside the card, and arrow keys move between choices. Submitted and skipped questions show a compact summary with an action to answer again. The close control folds the card without submitting; reopening it restores the draft.
 
-Questions and answers survive broker restarts in `chappie.state.json`. Reopening a widget reads its saved question once; drafts stay with that widget. An updated answer is delivered again, while repeated submission of an unchanged answer has no additional effect. The component-only `answer` tool handles state reads, loading reports, and answer submission. Its initial state read includes `loaded: true` after the question from `toolOutput` has rendered. These replies confirm the saved state without consuming delivery to the model.
+Questions and answers survive broker restarts in `chappie.state.json`. Reopening a widget reads its saved question once; drafts stay with that widget. An updated answer is delivered again, while repeated submission of an unchanged answer has no additional effect. The component-only `answer` tool handles state reads, loading reports, and answer submission. Its initial state read includes `loaded: true` after the question from `toolOutput` has rendered. Replies describe the requested operation and include the saved question state. Normal Chappie tool results handle answer delivery to the model.
 
 Pi's installed interactive tools continue to use their own interface through `call`.
 

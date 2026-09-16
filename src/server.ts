@@ -70,15 +70,13 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Connect to Pi",
 			description:
-				"Bind this chat to a Pi session. To resume work or a ChatGPT branch, pass that task's Pi sessionId from context; use sessions to locate a requested target when its ID is unknown. Omit sessionId to reuse this chat's default or allocate the first online, unbound session. Returns the selection source.",
+				"Select this chat's default Pi session and return its environment and tool catalog. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
 					.optional()
-					.describe(
-						"Pi session ID to set as this chat's default, including an already-bound session when resuming work",
-					),
+					.describe("Default Pi session ID; may be shared with other chats"),
 			}),
 			annotations: {
 				readOnlyHint: false,
@@ -102,13 +100,10 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Reply in Pi",
 			description:
-				"Display the supplied Markdown in Pi and append it to the session transcript. Code blocks are displayed as text.",
+				"Send an assistant message to Pi. Renders Markdown and saves the message in the session transcript.",
 			outputSchema,
 			inputSchema: z.object({
-				text: z
-					.string()
-					.min(1)
-					.describe("Markdown message, including prose and code examples"),
+				text: z.string().min(1).describe("Assistant message in Markdown"),
 				sessionId: z
 					.string()
 					.optional()
@@ -141,12 +136,14 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Ask in ChatGPT",
 			description:
-				"Ask one focused question in ChatGPT with choices, custom input, or skipping. Returns immediately with a generated question ID; follow with ask_assert to confirm the widget is available in the ChatGPT UI. Answers and skips accompany normal Chappie results.",
+				"Create a question in ChatGPT and return its ID immediately. Call ask_assert next with question.id. Answers, revisions, and skips arrive as webAnswer in later tool results.",
 			inputSchema: questionInput.extend({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Pi session associated with this question only"),
+					.describe(
+						"Pi session for this question; defaults to this chat's session",
+					),
 			}),
 			outputSchema: questionSchema,
 			annotations: {
@@ -167,7 +164,7 @@ export function createServer(broker: Broker): McpServer {
 				content: [
 					{
 						type: "text",
-						text: "Question created. Call ask_assert with question.id to confirm the widget is available. The answer will accompany a normal Chappie result.",
+						text: `Question created. Call ask_assert({"questionId":"${question.id}"}) next.`,
 					},
 				],
 			});
@@ -181,11 +178,11 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"ask_assert",
 		{
-			title: "Assert ChatGPT question",
+			title: "Assert question display",
 			description:
-				"Assert that a question created by ask becomes available in the ChatGPT UI. Call this immediately after ask with the returned question ID. Success confirms widget availability only; it does not wait for the user to answer. If the host cancels this call or its request deadline expires, the widget did not report loading during this call.",
+				"Assert that an ask widget loaded in ChatGPT. Call immediately after ask with question.id. Returns when the widget reports loaded; times out if it fails to load. User answers arrive separately as webAnswer.",
 			inputSchema: z.object({
-				questionId: z.string().describe("Question ID returned by ask"),
+				questionId: z.string().describe("question.id returned by ask"),
 			}),
 			outputSchema: questionSchema,
 			annotations: {
@@ -214,9 +211,9 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"answer",
 		{
-			title: "Question answer",
+			title: "Question state",
 			description:
-				"Read the current question, report that its widget loaded, or save the user's answer from the widget.",
+				"Read a saved question, report widget loading, or save an answer, revision, or skip.",
 			inputSchema: z.object({
 				questionId: z.string(),
 				answer: answerInput.optional(),
@@ -241,11 +238,13 @@ export function createServer(broker: Broker): McpServer {
 				answer,
 				loaded,
 			);
-			const text = question.answer?.skipped
-				? "Question skipped."
-				: question.answer
-					? "Answer saved."
-					: "Awaiting an answer.";
+			const text = answer
+				? answer.skipped
+					? "Question skipped."
+					: "Answer saved."
+				: loaded
+					? "Question widget loaded."
+					: "Question state.";
 			return {
 				content: [{ type: "text", text }],
 				structuredContent: { text, question },
@@ -284,7 +283,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Pi tools",
 			description:
-				"Return complete definitions for active Pi tools invoked through call. Provide names to inspect selected tools. Chappie's own MCP controls, including init, sessions, and chat, are exposed separately.",
+				"Get full definitions of Pi tools for call. Filter by names, or omit names to list all active tools.",
 			outputSchema,
 			inputSchema: z.object({
 				names: z
@@ -327,7 +326,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Call Pi tools",
 			description:
-				"Execute one or more active Pi tools as one native batch. Arguments must match definitions returned by tools.",
+				"Execute Pi tools using the definitions returned by tools. Each calls array is one native Pi batch.",
 			outputSchema,
 			inputSchema: z.object({
 				calls: z
@@ -419,13 +418,13 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Local sessions",
 			description:
-				"List online Pi sessions, their saved binding counts, and this conversation's default. A zero bindingCount permits automatic pairing; status describes execution. Offline sessions do not delay the listing.",
+				"List online Pi sessions with their IDs, cwd, names, execution status, and saved binding counts. Also returns this chat's default.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Return this Pi session when it is online"),
+					.describe("Filter the online list to this Pi session"),
 			}),
 			annotations: {
 				readOnlyHint: true,

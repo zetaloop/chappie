@@ -28,18 +28,18 @@ export const transfer = {
 	name: "transfer",
 	label: "transfer",
 	description:
-		"Copy ChatGPT files into Pi paths, or export Pi paths and Chappie image references as MCP resources. The paths field always names Pi-side sources or destinations.",
+		"Copy ChatGPT files into Pi paths when files is supplied. Otherwise, return resource links for Pi paths or Chappie image references.",
 	parameters: Type.Object({
 		paths: Type.Array(Type.String(), {
 			minItems: 1,
 			description:
-				"Pi paths to import into or export from; chappie:// image references can be exported",
+				"Pi destinations for import; Pi paths or chappie:// image references for export",
 		}),
 		files: Type.Optional(
 			Type.Array(transferFile, {
 				minItems: 1,
 				description:
-					"ChatGPT files matched to paths by index; omit to export Pi paths",
+					"ChatGPT files paired with paths in order; omit for export",
 			}),
 		),
 		overwrite: Type.Optional(
