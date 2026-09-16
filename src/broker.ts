@@ -141,7 +141,7 @@ export class Broker {
 		signal.throwIfAborted();
 		const latest = this.#state.workflow(chatId);
 		const superseded = new Error(
-			"A newer workflow has taken over this ChatGPT conversation. Tool access for this workflow has ended. Stop this workflow; the newer workflow is handling the task.",
+			"A newer workflow is handling this chat. Stop this workflow.",
 		);
 		// UUIDv7 puts the creation timestamp first, including across broker restarts.
 		if (latest && id < latest) throw superseded;
@@ -187,10 +187,7 @@ export class Broker {
 			true,
 		);
 		if (previous === target)
-			await this.#notify(
-				target,
-				`ChatGPT …${chatId.slice(-8)} initialized this Pi session.`,
-			);
+			await this.#notify(target, `ChatGPT ${chatId.slice(-4)} joined`);
 		const { inspection, inputs } = await this.#inspect(target, signal);
 		const globalAgents = await this.#readGlobalAgents();
 		await this.#ackInputs(target, inputs);
@@ -332,7 +329,7 @@ export class Broker {
 		await this.#state.addQuestion(question);
 		void this.#notify(
 			target,
-			`ChatGPT …${chatId.slice(-8)} asked: ${question.question}`,
+			`ChatGPT ${chatId.slice(-4)} asked: ${question.question}`,
 		).catch(() => {});
 		return questionView(question);
 	}
@@ -375,10 +372,10 @@ export class Broker {
 					.filter(Boolean)
 					.join(", ");
 				const message = question.answer?.skipped
-					? `ChatGPT …${chatId.slice(-8)} question skipped: ${question.question}`
+					? `Skipped in ChatGPT ${chatId.slice(-4)}: ${question.question}`
 					: previous
-						? `ChatGPT …${chatId.slice(-8)} answer updated: ${question.question} — ${response}`
-						: `ChatGPT …${chatId.slice(-8)} question answered: ${question.question} — ${response}`;
+						? `Answer updated in ChatGPT ${chatId.slice(-4)}: ${question.question} — ${response}`
+						: `Answered in ChatGPT ${chatId.slice(-4)}: ${question.question} — ${response}`;
 				void this.#notify(question.sessionId, message).catch(() => {});
 			}
 		}
@@ -430,15 +427,8 @@ export class Broker {
 					id: message.id,
 					sessionId: message.session.id,
 				});
-				if (!registered) {
-					const chats = this.#state.chats(message.session.id);
-					await this.#notify(
-						message.session.id,
-						chats.length
-							? `Chappie broker connected. Restored ChatGPT pairing ${chats.map((id) => `…${id.slice(-8)}`).join(", ")}.`
-							: "Chappie broker connected. Waiting for ChatGPT to pair.",
-					);
-				}
+				if (!registered)
+					await this.#notify(message.session.id, "Chappie connected");
 				this.#notifyChange();
 				break;
 			}
@@ -506,21 +496,12 @@ export class Broker {
 		await this.#state.setBinding(chatId, sessionId);
 		this.#notifyChange();
 		if (previous) {
-			await this.#notify(
-				previous,
-				`ChatGPT …${chatId.slice(-8)} selected another Pi session.`,
-			);
+			await this.#notify(previous, `ChatGPT ${chatId.slice(-4)} left`);
 			if (this.#state.chats(previous).length === 0) {
-				await this.#notify(
-					previous,
-					"Waiting for ChatGPT to pair with this Pi session.",
-				);
+				await this.#notify(previous, "Ready for ChatGPT");
 			}
 		}
-		await this.#notify(
-			sessionId,
-			`ChatGPT …${chatId.slice(-8)} paired with this Pi session.`,
-		);
+		await this.#notify(sessionId, `ChatGPT ${chatId.slice(-4)} joined`);
 	}
 
 	async #notify(sessionId: string, message: string): Promise<void> {

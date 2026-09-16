@@ -9,6 +9,7 @@ import type {
 	ExtensionContext,
 	SessionEntry,
 } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import type { DeliveryRecord } from "./delivery.ts";
 import {
 	type BrokerMessage,
@@ -22,6 +23,11 @@ import type { ProviderOutput } from "./provider.ts";
 import { readSessionResource, rememberImages } from "./resources.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
+
+interface Notice {
+	message: string;
+	type: "info" | "warning" | "error";
+}
 
 interface SyncRequest {
 	resolve(): void;
@@ -68,6 +74,17 @@ export class LocalSession {
 	}
 
 	install(): void {
+		this.#pi.registerEntryRenderer<Notice>(
+			"chappie.notice",
+			({ data }, _options, theme) => {
+				if (!data) return;
+				return new Text(
+					theme.fg(data.type === "info" ? "dim" : data.type, data.message),
+					1,
+					0,
+				);
+			},
+		);
 		this.#pi.on("session_start", (_event, context) => this.#update(context));
 		this.#pi.on("model_select", (event, context) =>
 			this.#update(context, event.model.provider === "chappie"),
@@ -97,6 +114,11 @@ export class LocalSession {
 			this.#dispatch();
 		});
 		this.#pi.on("session_shutdown", () => this.close());
+	}
+
+	#notify(message: string, type: Notice["type"] = "info"): void {
+		if (this.#context)
+			this.#pi.appendEntry<Notice>("chappie.notice", { message, type });
 	}
 
 	async start(output: ProviderOutput): Promise<void> {
@@ -158,7 +180,7 @@ export class LocalSession {
 			return;
 		}
 		if (!this.#connection) {
-			context.ui.notify("Connecting to Chappie broker…", "info");
+			this.#notify("Connecting to Chappie…");
 			this.#connection = new IpcClient(this.#agentDir, {
 				onOpen: async () => {
 					await this.#sync();
@@ -169,7 +191,7 @@ export class LocalSession {
 					this.#rejectSyncs(error);
 					this.#rejectStores(error);
 					if (this.#output && !this.#output.closed) this.#output.fail(error);
-					else this.#context?.ui.notify(error.message, "error");
+					else this.#notify(error.message, "error");
 					this.#active = undefined;
 					this.#queue.length = 0;
 					this.#starting = false;
@@ -227,7 +249,7 @@ export class LocalSession {
 				if (
 					message.sessionId === this.#context?.sessionManager.getSessionId()
 				) {
-					this.#context.ui.notify(message.message, "info");
+					this.#notify(message.message);
 				}
 				break;
 			case "inspect":
@@ -266,8 +288,8 @@ export class LocalSession {
 					request.type === "call"
 						? [...new Set(request.calls.map((call) => call.name))].join(", ")
 						: "chat";
-				this.#context?.ui.notify(
-					`Chappie ${name} cancelled by ChatGPT: ${message.reason}`,
+				this.#notify(
+					`${name} cancelled for ChatGPT ${request.chatId.slice(-4)}: ${message.reason}`,
 					"warning",
 				);
 				if (queued !== -1) {
@@ -470,10 +492,7 @@ export class LocalSession {
 					await connection.send({ type: "delivery", delivery });
 					await completion.promise;
 					this.#deliveries.delete(delivery.id);
-					this.#context?.ui.notify(
-						`Deferred Chappie result saved for ChatGPT …${delivery.chatId.slice(-8)}.`,
-						"info",
-					);
+					this.#notify(`Result saved for ChatGPT ${delivery.chatId.slice(-4)}`);
 				} finally {
 					this.#stores.delete(delivery.id);
 				}

@@ -282,7 +282,7 @@ export class IpcClient {
 
 	async #open(): Promise<void> {
 		const socket = createConnection(this.#endpoint);
-		let failure = new Error("Chappie broker connection ended");
+		let failure = new Error("Chappie disconnected");
 		await new Promise<void>((resolveOpen, rejectOpen) => {
 			socket.once("connect", resolveOpen);
 			socket.once("error", (error) => {
