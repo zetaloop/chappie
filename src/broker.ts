@@ -281,16 +281,27 @@ export class Broker {
 	): Promise<void> {
 		switch (message.type) {
 			case "sync": {
+				const registered =
+					this.#sessions.get(message.session.id)?.peer === peer;
 				this.#sessions.set(message.session.id, {
 					description: message.session,
 					peer,
 				});
-				this.#notifyChange();
 				await peer.send({
 					type: "synced",
 					id: message.id,
 					sessionId: message.session.id,
 				});
+				if (!registered) {
+					const chats = this.#state.chats(message.session.id);
+					await this.#notify(
+						message.session.id,
+						chats.length
+							? `Chappie broker connected. Restored ChatGPT pairing ${chats.map((id) => `…${id.slice(-8)}`).join(", ")}.`
+							: "Chappie broker connected. Waiting for ChatGPT to pair.",
+					);
+				}
+				this.#notifyChange();
 				break;
 			}
 			case "unregister": {
@@ -328,8 +339,7 @@ export class Broker {
 		if (requestedId) {
 			await this.#waitForSession(requestedId, signal);
 			if (bindRequested && this.#state.binding(chatId) !== requestedId) {
-				await this.#state.setBinding(chatId, requestedId);
-				this.#notifyChange();
+				await this.#bind(chatId, requestedId);
 			}
 			return { sessionId: requestedId, selection: "explicit" };
 		}
@@ -346,12 +356,39 @@ export class Broker {
 				(sessionId) => !occupied.has(sessionId),
 			);
 			if (candidate) {
-				await this.#state.setBinding(chatId, candidate);
-				this.#notifyChange();
+				await this.#bind(chatId, candidate);
 				return { sessionId: candidate, selection: "automatic" };
 			}
 			await this.#waitForChange(signal);
 		}
+	}
+
+	async #bind(chatId: string, sessionId: string): Promise<void> {
+		const previous = this.#state.binding(chatId);
+		await this.#state.setBinding(chatId, sessionId);
+		this.#notifyChange();
+		if (previous) {
+			await this.#notify(
+				previous,
+				`ChatGPT …${chatId.slice(-8)} selected another Pi session.`,
+			);
+			if (this.#state.chats(previous).length === 0) {
+				await this.#notify(
+					previous,
+					"Waiting for ChatGPT to pair with this Pi session.",
+				);
+			}
+		}
+		await this.#notify(
+			sessionId,
+			`ChatGPT …${chatId.slice(-8)} paired with this Pi session.`,
+		);
+	}
+
+	async #notify(sessionId: string, message: string): Promise<void> {
+		await this.#sessions
+			.get(sessionId)
+			?.peer.send({ type: "notice", sessionId, message });
 	}
 
 	async #waitForSession(sessionId: string, signal: AbortSignal): Promise<void> {
@@ -395,7 +432,14 @@ export class Broker {
 		const onAbort = (): void => {
 			const pending = this.#pending.get(id);
 			if (!pending) return;
-			void pending.peer.send({ type: "cancel", id, sessionId }).catch(() => {});
+			void pending.peer
+				.send({
+					type: "cancel",
+					id,
+					sessionId,
+					reason: abortError(signal).message,
+				})
+				.catch(() => {});
 			this.#finishRequest(id, pending);
 			pending.reject(abortError(signal));
 		};
@@ -477,5 +521,7 @@ export class Broker {
 function abortError(signal: AbortSignal): Error {
 	return signal.reason instanceof Error
 		? signal.reason
-		: new Error("Request cancelled");
+		: new Error(
+				typeof signal.reason === "string" ? signal.reason : "Request cancelled",
+			);
 }

@@ -63,6 +63,7 @@ export type SessionMessage =
 export type BrokerMessage =
 	| { type: "synced"; id: number; sessionId: string }
 	| { type: "stored"; id: string }
+	| { type: "notice"; sessionId: string; message: string }
 	| { type: "inspect"; id: number; sessionId: string }
 	| {
 			type: "chat";
@@ -78,7 +79,7 @@ export type BrokerMessage =
 			sessionId: string;
 			calls: ToolCall[];
 	  }
-	| { type: "cancel"; id: number; sessionId: string }
+	| { type: "cancel"; id: number; sessionId: string; reason: string }
 	| { type: "readResource"; id: number; sessionId: string; uri: string }
 	| { type: "ackInputs"; sessionId: string; ids: string[] };
 

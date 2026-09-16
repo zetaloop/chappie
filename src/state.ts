@@ -40,6 +40,12 @@ export class State {
 		return this.#bindings.get(chatId);
 	}
 
+	chats(sessionId: string): string[] {
+		return [...this.#bindings]
+			.filter(([, target]) => target === sessionId)
+			.map(([chatId]) => chatId);
+	}
+
 	bindingCounts(): Map<string, number> {
 		const counts = new Map<string, number>();
 		for (const sessionId of this.#bindings.values()) {

@@ -38,7 +38,7 @@ interface ActiveRequest {
 	session: SessionDescription;
 	message: AssistantMessage;
 	completed: boolean;
-	cancelled: boolean;
+	cancelled: string | undefined;
 	toolResults: ToolResultMessage[];
 }
 
@@ -156,6 +156,7 @@ export class LocalSession {
 			return;
 		}
 		if (!this.#connection) {
+			context.ui.notify("Connecting to Chappie broker…", "info");
 			this.#connection = new IpcClient(this.#agentDir, {
 				onOpen: async () => {
 					await this.#sync();
@@ -165,7 +166,8 @@ export class LocalSession {
 				onClose: (error) => {
 					this.#rejectSyncs(error);
 					this.#rejectStores(error);
-					this.#output?.fail(error);
+					if (this.#output && !this.#output.closed) this.#output.fail(error);
+					else this.#context?.ui.notify(error.message, "error");
 					this.#active = undefined;
 					this.#queue.length = 0;
 					this.#starting = false;
@@ -219,6 +221,13 @@ export class LocalSession {
 			case "stored":
 				this.#stores.get(message.id)?.resolve();
 				break;
+			case "notice":
+				if (
+					message.sessionId === this.#context?.sessionManager.getSessionId()
+				) {
+					this.#context.ui.notify(message.message, "info");
+				}
+				break;
 			case "inspect":
 				await this.#reply(message.id, message.sessionId, () => ({
 					type: "result",
@@ -245,13 +254,28 @@ export class LocalSession {
 				const queued = this.#queue.findIndex(
 					(request) => request.id === message.id,
 				);
+				const request =
+					this.#queue[queued] ??
+					(this.#active?.request.id === message.id
+						? this.#active.request
+						: undefined);
+				if (!request) break;
+				const name =
+					request.type === "call"
+						? [...new Set(request.calls.map((call) => call.name))].join(", ")
+						: "chat";
+				this.#context?.ui.notify(
+					`Chappie ${name} cancelled by ChatGPT: ${message.reason}`,
+					"warning",
+				);
 				if (queued !== -1) {
 					this.#queue.splice(queued, 1);
 					break;
 				}
-				if (this.#active?.request.id !== message.id) break;
-				this.#active.cancelled = true;
-				if (this.#active.completed) await this.#completeActive();
+				const active = this.#active;
+				if (!active) break;
+				active.cancelled = message.reason;
+				if (active.completed) await this.#completeActive();
 				else this.#context?.abort();
 				break;
 			}
@@ -302,7 +326,7 @@ export class LocalSession {
 			session: this.#description(),
 			message: output.message,
 			completed: false,
-			cancelled: false,
+			cancelled: undefined,
 			toolResults: [],
 		};
 		this.#status = "executing";
@@ -369,9 +393,7 @@ export class LocalSession {
 				...(sessionFile
 					? { sessionFile }
 					: { inlineResults: active.toolResults }),
-				...(active.message.errorMessage
-					? { error: active.message.errorMessage }
-					: { error: "Request cancelled" }),
+				error: active.cancelled,
 			};
 			this.#deliveries.set(delivery.id, delivery);
 			await this.#flushDeliveries().catch(() => {});
