@@ -86,6 +86,7 @@ export class Broker {
 	readonly #pending = new Map<number, PendingRequest>();
 	readonly #waiters = new Set<ChangeWaiter>();
 	readonly #workflows = new Map<string, Workflow>();
+	#ask = true;
 	#latestWorkflow = false;
 	#nextRequestId = 1;
 
@@ -101,6 +102,7 @@ export class Broker {
 
 	async start(): Promise<void> {
 		const config = await readConfig(this.#agentDir);
+		this.#ask = config.ask ?? true;
 		this.#latestWorkflow = config.latestWorkflow ?? false;
 		await this.#state.load();
 		await this.#ipc.start();
@@ -168,6 +170,10 @@ export class Broker {
 				...description,
 				bindingCount: counts.get(description.id) ?? 0,
 			}));
+	}
+
+	get askEnabled(): boolean {
+		return this.#ask;
 	}
 
 	binding(chatId: string): string | undefined {

@@ -20,7 +20,9 @@ import {
 const instructions = readFileSync(
 	new URL("./instructions.md", import.meta.url),
 	"utf8",
-).trim();
+)
+	.trim()
+	.split("\n\n");
 
 const outputSchema = z.object({
 	text: z
@@ -46,7 +48,13 @@ export function createServer(broker: Broker): McpServer {
 			name: "chappie",
 			version: packageJson.version,
 		},
-		{ instructions },
+		{
+			instructions: instructions
+				.filter(
+					(paragraph) => broker.askEnabled || !paragraph.startsWith("Use ask "),
+				)
+				.join("\n\n"),
+		},
 	);
 
 	function handle<Args, Result>(
@@ -131,7 +139,7 @@ export function createServer(broker: Broker): McpServer {
 		}),
 	);
 
-	server.registerTool(
+	const askTool = server.registerTool(
 		"ask",
 		{
 			title: "Ask in ChatGPT",
@@ -175,7 +183,7 @@ export function createServer(broker: Broker): McpServer {
 		}),
 	);
 
-	server.registerTool(
+	const askAssertTool = server.registerTool(
 		"ask_assert",
 		{
 			title: "Assert question display",
@@ -208,7 +216,7 @@ export function createServer(broker: Broker): McpServer {
 		}),
 	);
 
-	server.registerTool(
+	const answerTool = server.registerTool(
 		"answer",
 		{
 			title: "Question state",
@@ -252,7 +260,7 @@ export function createServer(broker: Broker): McpServer {
 		}),
 	);
 
-	server.registerResource(
+	const questionResource = server.registerResource(
 		"question",
 		questionTemplate,
 		{ title: "Chappie question", mimeType: "text/html;profile=mcp-app" },
@@ -277,6 +285,13 @@ export function createServer(broker: Broker): McpServer {
 			],
 		}),
 	);
+
+	if (!broker.askEnabled) {
+		askTool.remove();
+		askAssertTool.remove();
+		answerTool.remove();
+		questionResource.remove();
+	}
 
 	server.registerTool(
 		"tools",

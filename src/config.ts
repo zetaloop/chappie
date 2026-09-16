@@ -3,6 +3,7 @@ import { join } from "node:path";
 import * as z from "zod";
 
 const configSchema = z.object({
+	ask: z.boolean().optional(),
 	latestWorkflow: z.boolean().optional(),
 });
 
