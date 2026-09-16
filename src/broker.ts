@@ -179,12 +179,18 @@ export class Broker {
 		sessionId: string | undefined,
 		signal: AbortSignal,
 	): Promise<InitializedSession> {
+		const previous = this.#state.binding(chatId);
 		const { sessionId: target, selection } = await this.#selectSession(
 			chatId,
 			sessionId,
 			signal,
 			true,
 		);
+		if (previous === target)
+			await this.#notify(
+				target,
+				`ChatGPT …${chatId.slice(-8)} initialized this Pi session.`,
+			);
 		const { inspection, inputs } = await this.#inspect(target, signal);
 		const globalAgents = await this.#readGlobalAgents();
 		await this.#ackInputs(target, inputs);
@@ -324,6 +330,10 @@ export class Broker {
 			delivered: false,
 		};
 		await this.#state.addQuestion(question);
+		void this.#notify(
+			target,
+			`ChatGPT …${chatId.slice(-8)} asked: ${question.question}`,
+		).catch(() => {});
 		return questionView(question);
 	}
 
@@ -352,7 +362,26 @@ export class Broker {
 			await this.#state.addQuestion(question);
 			this.#notifyChange();
 		}
-		if (answer) question = await this.#state.answer(chatId, id, answer);
+		if (answer) {
+			const previous = question.answer;
+			question = await this.#state.answer(chatId, id, answer);
+			if (question.answer !== previous) {
+				const response = [
+					...(question.answer?.selections ?? []).map(
+						(index) => question.options[index]?.title,
+					),
+					question.answer?.text,
+				]
+					.filter(Boolean)
+					.join(", ");
+				const message = question.answer?.skipped
+					? `ChatGPT …${chatId.slice(-8)} question skipped: ${question.question}`
+					: previous
+						? `ChatGPT …${chatId.slice(-8)} answer updated: ${question.question} — ${response}`
+						: `ChatGPT …${chatId.slice(-8)} question answered: ${question.question} — ${response}`;
+				void this.#notify(question.sessionId, message).catch(() => {});
+			}
+		}
 		return questionView(question);
 	}
 

@@ -470,6 +470,10 @@ export class LocalSession {
 					await connection.send({ type: "delivery", delivery });
 					await completion.promise;
 					this.#deliveries.delete(delivery.id);
+					this.#context?.ui.notify(
+						`Deferred Chappie result saved for ChatGPT …${delivery.chatId.slice(-8)}.`,
+						"info",
+					);
 				} finally {
 					this.#stores.delete(delivery.id);
 				}

@@ -51,7 +51,7 @@ The optional `sessionId` on other tools selects a session for that operation. Fo
 
 Several chats can select the same Pi session, and one chat can address several sessions. Defaults are saved in `chappie.state.json` under Pi's agent directory. An existing binding waits for its Pi session to reconnect; `init` with another ID selects a different target.
 
-Pi displays connection, pairing, and disconnection events through its native notifications. Pairing notices abbreviate the connector's chat identifier and appear when a default changes or is restored. Cancelled calls show their tool names and the reason received from ChatGPT, including request timeouts.
+Pi displays connection, pairing, and disconnection events through its native notifications. Every successful `init` is visible: new or changed defaults report the pairing, while an existing default reports initialization. Pairing notices abbreviate the connector's chat identifier. Cancelled calls show their tool names and the reason received from ChatGPT, including request timeouts. Webpage questions notify Pi when they are created or answered, and cancelled work notifies again when its deferred result has been stored for ChatGPT.
 
 ## Tool calls
 
