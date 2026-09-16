@@ -141,7 +141,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Ask in ChatGPT",
 			description:
-				"Ask one focused question in ChatGPT with choices, custom input, or skipping. Returns immediately; continue independent work in the current response. Answers and skips accompany normal Chappie results.",
+				"Ask one focused question in ChatGPT with choices, custom input, or skipping. Returns immediately with a generated question ID; follow with ask_assert to confirm the widget is available in the ChatGPT UI. Answers and skips accompany normal Chappie results.",
 			inputSchema: questionInput.extend({
 				sessionId: z
 					.string()
@@ -167,9 +167,42 @@ export function createServer(broker: Broker): McpServer {
 				content: [
 					{
 						type: "text",
-						text: "Question displayed. Continue independent work; the answer will accompany a normal Chappie result.",
+						text: "Question created. Call ask_assert with question.id to confirm the widget is available. The answer will accompany a normal Chappie result.",
 					},
 				],
+			});
+			return {
+				...result,
+				structuredContent: { ...result.structuredContent, question },
+			};
+		}),
+	);
+
+	server.registerTool(
+		"ask_assert",
+		{
+			title: "Assert ChatGPT question",
+			description:
+				"Assert that a question created by ask becomes available in the ChatGPT UI. Call this immediately after ask with the returned question ID. Success confirms widget availability only; it does not wait for the user to answer. If the host cancels this call or its request deadline expires, the widget did not report loading during this call.",
+			inputSchema: z.object({
+				questionId: z.string().describe("Question ID returned by ask"),
+			}),
+			outputSchema: questionSchema,
+			annotations: {
+				readOnlyHint: true,
+				destructiveHint: false,
+				idempotentHint: true,
+				openWorldHint: false,
+			},
+		},
+		handle(async ({ questionId }, context) => {
+			const question = await broker.assertQuestion(
+				requireChatId(context),
+				questionId,
+				context.mcpReq.signal,
+			);
+			const result = await finishResult(broker, context, {
+				content: [{ type: "text", text: "Question widget loaded." }],
 			});
 			return {
 				...result,
@@ -183,10 +216,14 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Question answer",
 			description:
-				"Read the current question or save the user's answer from its widget.",
+				"Read the current question, report that its widget loaded, or save the user's answer from the widget.",
 			inputSchema: z.object({
 				questionId: z.string(),
 				answer: answerInput.optional(),
+				loaded: z
+					.literal(true)
+					.optional()
+					.describe("The question widget has loaded"),
 			}),
 			outputSchema: questionSchema,
 			annotations: {
@@ -197,11 +234,12 @@ export function createServer(broker: Broker): McpServer {
 			},
 			_meta: { ui: { visibility: ["app"] }, "openai/widgetAccessible": true },
 		},
-		handle(async ({ questionId, answer }, context) => {
+		handle(async ({ questionId, answer, loaded = false }, context) => {
 			const question = await broker.answer(
 				requireChatId(context),
 				questionId,
 				answer,
+				loaded,
 			);
 			const text = question.answer?.skipped
 				? "Question skipped."

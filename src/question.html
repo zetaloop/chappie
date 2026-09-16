@@ -301,7 +301,7 @@
 			message(copy.loading);
 			render(question);
 			try {
-				const snapshot = await request({ questionId: question.id });
+				const snapshot = await request({ questionId: question.id, loaded: true });
 				if (current.id !== question.id) return;
 				if (!local?.editing) {
 					selections = [...(snapshot.answer?.selections ?? [])];

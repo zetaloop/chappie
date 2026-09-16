@@ -54,6 +54,7 @@ export const questionOutput = questionInput.extend({
 	sessionId: z.string(),
 	cwd: z.string(),
 	answer: answerInput.optional(),
+	loaded: z.boolean().optional(),
 });
 
 export type QuestionInput = z.infer<typeof questionInput>;

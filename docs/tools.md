@@ -7,6 +7,7 @@
 | `tools` | Read complete definitions for selected active tools. |
 | `chat` | Display Markdown as an assistant message in Pi. |
 | `ask` | Display a persistent question in ChatGPT while work continues. |
+| `ask_assert` | Assert that an `ask` widget becomes available in the ChatGPT UI. |
 | `call` | Run one or more tools as a Pi batch. |
 | `read` | Read local text or images. |
 | `bash` | Execute a shell command. |
@@ -99,7 +100,7 @@ Host request deadlines include time spent in the queue. Use local facilities suc
 
 ## Webpage questions
 
-`ask` displays a question in the ChatGPT page and returns immediately. The assistant continues work that can proceed while the user considers the question:
+`ask` creates a question in the ChatGPT page and returns immediately. The returned question contains the generated ID used to check whether its widget actually loaded:
 
 ```json
 {
@@ -113,15 +114,23 @@ Host request deadlines include time spent in the queue. Use local facilities suc
 }
 ```
 
+Call `ask_assert` with `question.id` immediately after `ask` to confirm that the widget becomes available in the ChatGPT UI:
+
+```json
+{ "questionId": "7fb6b57e-..." }
+```
+
+`ask_assert` returns immediately when the widget already reported `loaded`; otherwise the call remains open until that report or the host ends the request. It asserts widget availability only and does not wait for the user's answer. A host cancellation or request deadline before the report means the assertion did not succeed during that call.
+
 Use `header` for a short topic label when useful. Put the recommended option first with `recommended: true`; the widget displays a badge separately from its title. Omit `options` for a text-only question, or set `allowMultiple: true` for multiple selections. Custom input and skipping are supplied by the widget. The optional `sessionId` associates the question with a particular Pi session without changing the chat's default.
 
 Submitting saves the answer directly in the broker, even while Pi is executing a tool. The next normal Chappie result carries a `webAnswer` with the question, selected options, free text, and original Pi session. A skipped question carries `skipped: true`; continue with the available information instead of asking the same question again. The assistant uses that result to continue the current response. The widget does not send a chat message, start another response, or poll for an answer.
 
 Single-choice options submit on click. Custom input submits with Enter; Shift+Enter adds a line. Multiple selections use the submit button and can include free text. Number keys choose options while focus is inside the card, and arrow keys move between choices. Submitted and skipped questions show a compact summary with an action to answer again. The close control folds the card without submitting; reopening it restores the draft.
 
-Questions and answers survive broker restarts in `chappie.state.json`. Reopening a widget reads its saved question once; drafts stay with that widget. An updated answer is delivered again, while repeated submission of an unchanged answer has no additional effect. The component-only `answer` tool handles reading and submission; its response confirms the saved state without consuming delivery to the model.
+Questions and answers survive broker restarts in `chappie.state.json`. Reopening a widget reads its saved question once; drafts stay with that widget. An updated answer is delivered again, while repeated submission of an unchanged answer has no additional effect. The component-only `answer` tool handles state reads, loading reports, and answer submission. Its initial state read includes `loaded: true` after the question from `toolOutput` has rendered. These replies confirm the saved state without consuming delivery to the model.
 
-Pi's installed interactive tools continue to use their own interface through `call`. The webpage question is independent of those tools and their request lifetime.
+Pi's installed interactive tools continue to use their own interface through `call`.
 
 ## Files
 

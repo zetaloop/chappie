@@ -327,16 +327,33 @@ export class Broker {
 		return questionView(question);
 	}
 
+	async assertQuestion(
+		chatId: string,
+		id: string,
+		signal: AbortSignal,
+	): Promise<Question> {
+		for (;;) {
+			signal.throwIfAborted();
+			const question = this.#state.question(chatId, id);
+			if (question.loaded) return questionView(question);
+			await this.#waitForChange(signal);
+		}
+	}
+
 	async answer(
 		chatId: string,
 		id: string,
 		answer?: QuestionAnswer,
+		loaded = false,
 	): Promise<Question> {
-		return questionView(
-			answer
-				? await this.#state.answer(chatId, id, answer)
-				: this.#state.question(chatId, id),
-		);
+		let question = this.#state.question(chatId, id);
+		if ((loaded || answer) && !question.loaded) {
+			question = { ...question, loaded: true };
+			await this.#state.addQuestion(question);
+			this.#notifyChange();
+		}
+		if (answer) question = await this.#state.answer(chatId, id, answer);
+		return questionView(question);
 	}
 
 	answers(chatId: string): QuestionRecord[] {
