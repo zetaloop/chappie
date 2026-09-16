@@ -5,6 +5,12 @@ import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
 import { deliveryContent } from "./delivery.ts";
 import {
+	answerContent,
+	answerInput,
+	questionInput,
+	questionOutput,
+} from "./questions.ts";
+import {
 	directTools,
 	inputContent,
 	type ToolInput,
@@ -20,9 +26,12 @@ const outputSchema = z.object({
 	text: z
 		.string()
 		.describe(
-			"Complete text output, including Pi user input and deferred results. Images and file resources accompany it as native content blocks.",
+			"Complete text output, including Pi user input, submitted webpage answers, and deferred results. Images and file resources accompany it as native content blocks.",
 		),
 });
+
+const questionTemplate = "ui://chappie/question.html";
+const questionSchema = outputSchema.extend({ question: questionOutput });
 
 interface RequestContext {
 	mcpReq: {
@@ -109,6 +118,107 @@ export function createServer(broker: Broker): McpServer {
 				textResult({ sessionId, cwd }, inputs),
 			);
 		},
+	);
+
+	server.registerTool(
+		"ask",
+		{
+			title: "Ask in ChatGPT",
+			description:
+				"Display a persistent question in ChatGPT and return immediately. Continue work that can proceed while the user considers it; submitted answers accompany normal Chappie tool results.",
+			inputSchema: questionInput.extend({
+				sessionId: z
+					.string()
+					.optional()
+					.describe("Pi session associated with this question only"),
+			}),
+			outputSchema: questionSchema,
+			annotations: {
+				readOnlyHint: false,
+				destructiveHint: false,
+				openWorldHint: false,
+			},
+			_meta: { ui: { resourceUri: questionTemplate } },
+		},
+		async ({ sessionId, ...input }, context) => {
+			const question = await broker.ask(
+				requireChatId(context),
+				sessionId,
+				input,
+				context.mcpReq.signal,
+			);
+			const result = await finishResult(broker, context, {
+				content: [
+					{
+						type: "text",
+						text: "Question displayed. Continue independent work; the answer will accompany a normal Chappie result.",
+					},
+				],
+			});
+			return {
+				...result,
+				structuredContent: { ...result.structuredContent, question },
+			};
+		},
+	);
+
+	server.registerTool(
+		"answer",
+		{
+			title: "Question answer",
+			description:
+				"Read the current question or save the user's answer from its widget.",
+			inputSchema: z.object({
+				questionId: z.string(),
+				answer: answerInput.optional(),
+			}),
+			outputSchema: questionSchema,
+			annotations: {
+				readOnlyHint: false,
+				destructiveHint: false,
+				idempotentHint: true,
+				openWorldHint: false,
+			},
+			_meta: { ui: { visibility: ["app"] }, "openai/widgetAccessible": true },
+		},
+		async ({ questionId, answer }, context) => {
+			const question = await broker.answer(
+				requireChatId(context),
+				questionId,
+				answer,
+			);
+			const text = question.answer ? "Answer saved." : "Awaiting an answer.";
+			return {
+				content: [{ type: "text", text }],
+				structuredContent: { text, question },
+			};
+		},
+	);
+
+	server.registerResource(
+		"question",
+		questionTemplate,
+		{ title: "Chappie question", mimeType: "text/html;profile=mcp-app" },
+		async () => ({
+			contents: [
+				{
+					uri: questionTemplate,
+					mimeType: "text/html;profile=mcp-app",
+					text: readFileSync(
+						new URL("./question.html", import.meta.url),
+						"utf8",
+					),
+					_meta: {
+						ui: {
+							prefersBorder: true,
+							csp: { connectDomains: [], resourceDomains: [] },
+						},
+						"openai/widgetDescription":
+							"A persistent question the user can answer while the assistant continues working.",
+					},
+				},
+			],
+		}),
 	);
 
 	server.registerTool(
@@ -325,13 +435,18 @@ async function finishResult<
 >(broker: Broker, context: RequestContext, result: T) {
 	const chatId = requestChatId(context);
 	const deliveries = chatId ? await broker.deliveries(chatId) : [];
-	const content = [...result.content, ...deliveryContent(deliveries)];
+	const answers = chatId ? broker.answers(chatId) : [];
+	const content = [
+		...result.content,
+		...deliveryContent(deliveries),
+		...answerContent(answers),
+	];
 	const structuredContent = {
 		text: content
 			.flatMap((block) => (block.type === "text" ? [block.text] : []))
 			.join("\n"),
 	};
-	await broker.acknowledgeDeliveries(deliveries, context.mcpReq.signal);
+	await broker.acknowledge(deliveries, answers, context.mcpReq.signal);
 	return { ...result, content, structuredContent };
 }
 

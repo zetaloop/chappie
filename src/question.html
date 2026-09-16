@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Chappie question</title>
+	<style>
+		:root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; color: var(--color-text-primary, CanvasText); }
+		* { box-sizing: border-box; }
+		body { margin: 0; padding: 16px; background: transparent; }
+		fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+		h2 { margin: 0; font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+		p { margin: 8px 0 12px; }
+		#context, .description { white-space: pre-wrap; overflow-wrap: anywhere; }
+		#context, .description, #status { color: var(--color-text-secondary, GrayText); }
+		#options { display: grid; gap: 8px; margin: 14px 0; }
+		.option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--color-border-primary, ButtonBorder); border-radius: 10px; cursor: pointer; }
+		.option:has(input:checked) { outline: 1px solid currentColor; }
+		.option input { margin: 4px 0 0; flex-shrink: 0; accent-color: currentColor; }
+		.option span { min-width: 0; }
+		.option strong, .description { display: block; }
+		.description { margin-top: 3px; font-size: 13px; }
+		#text-label { display: block; margin: 12px 0 6px; }
+		textarea { display: block; width: 100%; min-height: 80px; resize: vertical; padding: 10px 12px; font: inherit; color: inherit; background: var(--color-background-primary, Canvas); border: 1px solid var(--color-border-primary, ButtonBorder); border-radius: 10px; }
+		.actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+		button { font: inherit; padding: 7px 16px; border: 1px solid var(--color-border-primary, ButtonBorder); border-radius: 8px; color: inherit; background: var(--color-background-secondary, ButtonFace); cursor: pointer; }
+		button:disabled { opacity: .5; cursor: default; }
+		button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+		#clear { border-color: transparent; background: transparent; }
+		#status { margin-bottom: 0; font-size: 13px; }
+		[hidden] { display: none; }
+	</style>
+</head>
+<body>
+	<form id="form" hidden>
+		<fieldset id="fields">
+			<h2 id="question">Question</h2>
+			<p id="context" hidden></p>
+			<div id="options"></div>
+			<label id="text-label" for="answer-text">Answer or additional context</label>
+			<textarea id="answer-text" rows="3"></textarea>
+			<div class="actions">
+				<button id="submit" type="submit">Submit</button>
+				<button id="clear" type="button" hidden>Clear selection</button>
+			</div>
+		</fieldset>
+	</form>
+	<p id="status" role="status" aria-live="polite">Loading question…</p>
+	<button id="retry" type="button" hidden>Retry</button>
+	<script type="module">
+		const form = document.getElementById("form");
+		const fields = document.getElementById("fields");
+		const options = document.getElementById("options");
+		const text = document.getElementById("answer-text");
+		const status = document.getElementById("status");
+		const submit = document.getElementById("submit");
+		const clear = document.getElementById("clear");
+		const retry = document.getElementById("retry");
+		let current;
+		let copy;
+
+		function globals() {
+			const host = window.openai;
+			const chinese = (host?.locale ?? document.documentElement.lang).startsWith("zh");
+			copy = chinese ? {
+				label: "回答或补充说明", submit: "提交", update: "更新回答", clear: "清除选择", retry: "重试",
+				pending: "可以稍后回答，助手会继续工作。", saved: "已提交，答案会随正常工具结果送给助手。",
+				saving: "正在提交…", required: "请选择选项或填写回答。", missing: "工具未返回问题内容。",
+			} : {
+				label: "Answer or additional context", submit: "Submit", update: "Update answer", clear: "Clear selection", retry: "Retry",
+				pending: "You can answer later while the assistant keeps working.", saved: "Saved. Your answer will accompany a normal tool result to the assistant.",
+				saving: "Submitting…", required: "Select an option or enter an answer.", missing: "The tool returned no question.",
+			};
+			document.getElementById("text-label").textContent = copy.label;
+			submit.textContent = current?.answer ? copy.update : copy.submit;
+			clear.textContent = copy.clear;
+			retry.textContent = copy.retry;
+			if (host?.theme) document.documentElement.style.colorScheme = host.theme;
+			const question = host?.toolOutput?.question;
+			if (question && question.id !== current?.id) void load(question);
+		}
+
+		function draft() {
+			return {
+				selections: [...options.querySelectorAll("input:checked")].map((input) => Number(input.value)),
+				text: text.value,
+			};
+		}
+
+		function saveDraft() {
+			if (!current) return;
+			const answer = draft();
+			clear.hidden = answer.selections.length === 0;
+			window.openai.setWidgetState({ privateContent: { questionId: current.id, ...answer } });
+		}
+
+		function render(question) {
+			current = question;
+			document.getElementById("question").textContent = question.question;
+			const context = document.getElementById("context");
+			context.textContent = question.context ?? "";
+			context.hidden = !question.context;
+			const saved = window.openai.widgetState?.privateContent;
+			const answer = saved?.questionId === question.id ? saved : question.answer;
+			options.replaceChildren();
+			for (const [index, option] of question.options.entries()) {
+				const label = document.createElement("label");
+				label.className = "option";
+				const input = document.createElement("input");
+				input.type = question.allowMultiple ? "checkbox" : "radio";
+				input.name = "choice";
+				input.value = String(index);
+				input.checked = answer?.selections?.includes(index) ?? false;
+				const detail = document.createElement("span");
+				const title = document.createElement("strong");
+				title.textContent = option.title;
+				detail.append(title);
+				if (option.description) {
+					const description = document.createElement("span");
+					description.className = "description";
+					description.textContent = option.description;
+					detail.append(description);
+				}
+				label.append(input, detail);
+				options.append(label);
+			}
+			text.value = answer?.text ?? "";
+			submit.textContent = question.answer ? copy.update : copy.submit;
+			clear.hidden = !answer?.selections?.length;
+			form.hidden = false;
+		}
+
+		async function request(args) {
+			const result = await window.openai.callTool("answer", args);
+			if (result.isError) throw new Error(result.content?.filter((part) => part.type === "text").map((part) => part.text).join("\n") || result.structuredContent?.text);
+			const question = result.structuredContent?.question;
+			if (!question) throw new Error(copy.missing);
+			return question;
+		}
+
+		async function load(question) {
+			render(question);
+			fields.disabled = true;
+			retry.hidden = true;
+			try {
+				const snapshot = await request({ questionId: question.id });
+				render(snapshot);
+				status.textContent = snapshot.answer ? copy.saved : copy.pending;
+			} catch (error) {
+				status.textContent = error instanceof Error ? error.message : String(error);
+				retry.hidden = false;
+			} finally {
+				fields.disabled = false;
+			}
+		}
+
+		form.addEventListener("input", saveDraft);
+		clear.addEventListener("click", () => {
+			for (const input of options.querySelectorAll("input")) input.checked = false;
+			saveDraft();
+		});
+		retry.addEventListener("click", () => { if (current) void load(current); });
+		form.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			if (!current) return;
+			const answer = draft();
+			if (!answer.selections.length && !answer.text.trim()) {
+				status.textContent = copy.required;
+				return;
+			}
+			fields.disabled = true;
+			retry.hidden = true;
+			status.textContent = copy.saving;
+			try {
+				current = await request({ questionId: current.id, answer });
+				saveDraft();
+				submit.textContent = copy.update;
+				status.textContent = copy.saved;
+			} catch (error) {
+				status.textContent = error instanceof Error ? error.message : String(error);
+			} finally {
+				fields.disabled = false;
+			}
+		});
+		window.addEventListener("openai:set_globals", globals);
+		new ResizeObserver(() => window.openai?.notifyIntrinsicHeight?.(document.body.scrollHeight)).observe(document.body);
+		globals();
+	</script>
+</body>
+</html>

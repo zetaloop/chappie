@@ -1,10 +1,12 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { DeliveryRecord } from "./delivery.ts";
+import type { QuestionAnswer, QuestionRecord } from "./questions.ts";
 
 interface StateFile {
 	bindings?: Record<string, string>;
 	deliveries?: DeliveryRecord[];
+	questions?: QuestionRecord[];
 }
 
 export class State {
@@ -12,6 +14,7 @@ export class State {
 	readonly #temporaryPath: string;
 	readonly #bindings = new Map<string, string>();
 	readonly #deliveries = new Map<string, DeliveryRecord>();
+	readonly #questions = new Map<string, QuestionRecord>();
 	#writes = Promise.resolve();
 
 	constructor(agentDir: string) {
@@ -34,6 +37,8 @@ export class State {
 		for (const delivery of state.deliveries ?? []) {
 			if (delivery?.id) this.#deliveries.set(delivery.id, delivery);
 		}
+		for (const question of state.questions ?? [])
+			this.#questions.set(question.id, question);
 	}
 
 	binding(chatId: string): string | undefined {
@@ -70,15 +75,74 @@ export class State {
 		return this.#save();
 	}
 
-	removeDeliveries(ids: string[]): Promise<void> {
-		for (const id of ids) this.#deliveries.delete(id);
-		return this.#save();
+	question(chatId: string, id: string): QuestionRecord {
+		const question = this.#questions.get(id);
+		if (!question || question.chatId !== chatId)
+			throw new Error("Question not found in this ChatGPT conversation");
+		return question;
 	}
 
-	async restoreDeliveries(deliveries: DeliveryRecord[]): Promise<void> {
-		for (const delivery of deliveries)
-			this.#deliveries.set(delivery.id, delivery);
+	async addQuestion(question: QuestionRecord): Promise<void> {
+		this.#questions.set(question.id, question);
 		await this.#save();
+	}
+
+	async answer(
+		chatId: string,
+		id: string,
+		answer: QuestionAnswer,
+	): Promise<QuestionRecord> {
+		const question = this.question(chatId, id);
+		const selections = [...new Set(answer.selections)].sort((a, b) => a - b);
+		if (selections.some((index) => !question.options[index]))
+			throw new Error("Unknown question option");
+		if (!question.allowMultiple && selections.length > 1)
+			throw new Error("Select one option");
+		if (selections.length === 0 && !answer.text)
+			throw new Error("Select an option or enter an answer");
+		const value = { selections, text: answer.text };
+		if (JSON.stringify(question.answer) === JSON.stringify(value))
+			return question;
+		const updated = { ...question, answer: value, delivered: false };
+		await this.addQuestion(updated);
+		return updated;
+	}
+
+	answers(chatId: string): QuestionRecord[] {
+		return [...this.#questions.values()].filter(
+			(question) =>
+				question.chatId === chatId && question.answer && !question.delivered,
+		);
+	}
+
+	async acknowledge(
+		deliveries: DeliveryRecord[],
+		answers: QuestionRecord[],
+		signal: AbortSignal,
+	): Promise<void> {
+		if (deliveries.length === 0 && answers.length === 0) return;
+		signal.throwIfAborted();
+		const delivered = new Map(
+			answers.map((question) => [question, { ...question, delivered: true }]),
+		);
+		for (const delivery of deliveries) this.#deliveries.delete(delivery.id);
+		for (const [question, updated] of delivered) {
+			if (this.#questions.get(question.id) === question)
+				this.#questions.set(question.id, updated);
+		}
+		try {
+			await this.#save();
+			signal.throwIfAborted();
+		} catch (error) {
+			for (const delivery of deliveries)
+				this.#deliveries.set(delivery.id, delivery);
+			for (const [question, updated] of delivered) {
+				if (this.#questions.get(question.id) === updated)
+					this.#questions.set(question.id, question);
+			}
+			await this.#save();
+			throw error;
+		}
 	}
 
 	#save(): Promise<void> {
@@ -86,7 +150,7 @@ export class State {
 			const bindings = Object.fromEntries(this.#bindings);
 			await writeFile(
 				this.#temporaryPath,
-				`${JSON.stringify({ bindings, deliveries: [...this.#deliveries.values()] }, null, 2)}\n`,
+				`${JSON.stringify({ bindings, deliveries: [...this.#deliveries.values()], questions: [...this.#questions.values()] }, null, 2)}\n`,
 				{
 					mode: 0o600,
 				},

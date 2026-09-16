@@ -17,6 +17,13 @@ import {
 	type SessionMessage,
 	type SessionResult,
 } from "./ipc.ts";
+import {
+	type Question,
+	type QuestionAnswer,
+	type QuestionInput,
+	type QuestionRecord,
+	questionView,
+} from "./questions.ts";
 import { type ResourceData, resourceSessionId } from "./resources.ts";
 import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
@@ -247,6 +254,48 @@ export class Broker {
 		return inputs;
 	}
 
+	async ask(
+		chatId: string,
+		sessionId: string | undefined,
+		input: QuestionInput,
+		signal: AbortSignal,
+	): Promise<Question> {
+		const { sessionId: target } = await this.#selectSession(
+			chatId,
+			sessionId,
+			signal,
+			false,
+		);
+		const session = this.#sessions.get(target);
+		if (!session) throw new Error(`Pi session ${target} is offline`);
+		const question: QuestionRecord = {
+			...input,
+			id: randomUUID(),
+			chatId,
+			sessionId: target,
+			cwd: session.description.cwd,
+			delivered: false,
+		};
+		await this.#state.addQuestion(question);
+		return questionView(question);
+	}
+
+	async answer(
+		chatId: string,
+		id: string,
+		answer?: QuestionAnswer,
+	): Promise<Question> {
+		return questionView(
+			answer
+				? await this.#state.answer(chatId, id, answer)
+				: this.#state.question(chatId, id),
+		);
+	}
+
+	answers(chatId: string): QuestionRecord[] {
+		return this.#state.answers(chatId);
+	}
+
 	async readResource(uri: string, signal: AbortSignal): Promise<ResourceData> {
 		const sessionId = resourceSessionId(uri);
 		await this.#waitForSession(sessionId, signal);
@@ -263,16 +312,12 @@ export class Broker {
 		return Promise.all(this.#state.deliveries(chatId).map(resolveDelivery));
 	}
 
-	async acknowledgeDeliveries(
+	acknowledge(
 		deliveries: DeliveryRecord[],
+		answers: QuestionRecord[],
 		signal: AbortSignal,
 	): Promise<void> {
-		if (deliveries.length === 0) return;
-		if (signal.aborted) throw abortError(signal);
-		await this.#state.removeDeliveries(deliveries.map(({ id }) => id));
-		if (!signal.aborted) return;
-		await this.#state.restoreDeliveries(deliveries);
-		throw abortError(signal);
+		return this.#state.acknowledge(deliveries, answers, signal);
 	}
 
 	async #receive(

@@ -6,6 +6,7 @@
 | `sessions` | List connected Pi sessions and the chat's default session. |
 | `tools` | Read complete definitions for selected active tools. |
 | `chat` | Display Markdown as an assistant message in Pi. |
+| `ask` | Display a persistent question in ChatGPT while work continues. |
 | `call` | Run one or more tools as a Pi batch. |
 | `read` | Read local text or images. |
 | `bash` | Execute a shell command. |
@@ -74,7 +75,7 @@ Each batch returns its results together. Pi determines how its tools run within 
 
 Extension tools execute through Pi, including their interactive prompts. Each batch starts with its executing `sessionId` and Pi `cwd`, followed by each tool's name, call ID, error status, and original text or image content. The directory is captured when the batch starts; a shell `cd` changes that command's working directory, while the operation stays in the same Pi session.
 
-Every tool declares a `{ text: string }` output. `structuredContent.text` contains the complete text in result order, including Pi input, deferred results, and image references. The same text remains in `content` alongside native images and resource links.
+Tool results include `structuredContent.text` with complete text in result order, including Pi input, submitted webpage answers, deferred results, and image references. The same text remains in `content` alongside native images and resource links. Question tools also return the structured question for their widget.
 
 ChatGPT file inputs use the direct `transfer` tool. Its top-level `files` parameter lets the host prepare the files before sending them to Pi.
 
@@ -93,6 +94,29 @@ User messages consumed by Pi accompany later Chappie replies, including images. 
 Explicit cancellation removes a queued request or asks Pi to stop its active batch. Available results from that batch accompany a later reply to the originating chat, with the original session ID and working directory. `sessions` can retrieve them before another tool call. When ChatGPT stops without sending cancellation, local execution continues.
 
 Host request deadlines include time spent in the queue. Use local facilities such as tmux for work intended to outlive one call.
+
+## Webpage questions
+
+`ask` displays a question in the ChatGPT page and returns immediately. The assistant continues work that can proceed while the user considers the question:
+
+```json
+{
+  "question": "Which export format should the command use?",
+  "context": "Both formats preserve the required data. The shared export code can proceed independently of this choice.",
+  "options": [
+    { "title": "JSON", "description": "Convenient for downstream programs." },
+    { "title": "CSV", "description": "Convenient for spreadsheet software." }
+  ]
+}
+```
+
+Omit `options` for a text-only question, or set `allowMultiple: true` for multiple selections. The widget always includes a free-text field for an answer or additional context. The optional `sessionId` associates the question with a particular Pi session without changing the chat's default.
+
+Submitting saves the answer directly in the broker, even while Pi is executing a tool. The next normal Chappie result carries a `webAnswer` with the question, selected options, free text, and original Pi session. The assistant uses that result to continue the current response. The widget does not send a chat message, start another response, or poll for an answer.
+
+Questions and answers survive broker restarts in `chappie.state.json`. Reopening a widget reads its saved question once; drafts stay with that widget. An updated answer is delivered again, while repeated submission of an unchanged answer has no additional effect. The component-only `answer` tool handles reading and submission; its response confirms the saved state without consuming delivery to the model.
+
+Pi's installed interactive tools continue to use their own interface through `call`. The webpage question is independent of those tools and their request lifetime.
 
 ## Files
 
