@@ -103,18 +103,19 @@ Host request deadlines include time spent in the queue. Use local facilities suc
 
 ```json
 {
+  "header": "Export format",
   "question": "Which export format should the command use?",
   "context": "Both formats preserve the required data. The shared export code can proceed independently of this choice.",
   "options": [
-    { "title": "JSON", "description": "Convenient for downstream programs." },
+    { "title": "JSON", "description": "Convenient for downstream programs.", "recommended": true },
     { "title": "CSV", "description": "Convenient for spreadsheet software." }
   ]
 }
 ```
 
-Omit `options` for a text-only question, or set `allowMultiple: true` for multiple selections. The widget always includes a free-text field for an answer or additional context. The optional `sessionId` associates the question with a particular Pi session without changing the chat's default.
+Use `header` for a short topic label when useful. Put the recommended option first with `recommended: true`; the widget displays a badge separately from its title. Omit `options` for a text-only question, or set `allowMultiple: true` for multiple selections. Custom input and skipping are supplied by the widget. The optional `sessionId` associates the question with a particular Pi session without changing the chat's default.
 
-Submitting saves the answer directly in the broker, even while Pi is executing a tool. The next normal Chappie result carries a `webAnswer` with the question, selected options, free text, and original Pi session. The assistant uses that result to continue the current response. The widget does not send a chat message, start another response, or poll for an answer.
+Submitting saves the answer directly in the broker, even while Pi is executing a tool. The next normal Chappie result carries a `webAnswer` with the question, selected options, free text, and original Pi session. A skipped question carries `skipped: true`; continue with the available information instead of asking the same question again. The assistant uses that result to continue the current response. The widget does not send a chat message, start another response, or poll for an answer.
 
 Questions and answers survive broker restarts in `chappie.state.json`. Reopening a widget reads its saved question once; drafts stay with that widget. An updated answer is delivered again, while repeated submission of an unchanged answer has no additional effect. The component-only `answer` tool handles reading and submission; its response confirms the saved state without consuming delivery to the model.
 

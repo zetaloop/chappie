@@ -98,9 +98,15 @@ export class State {
 			throw new Error("Unknown question option");
 		if (!question.allowMultiple && selections.length > 1)
 			throw new Error("Select one option");
-		if (selections.length === 0 && !answer.text)
+		if (answer.skipped && (selections.length > 0 || answer.text))
+			throw new Error("A skipped question cannot include an answer");
+		if (!answer.skipped && selections.length === 0 && !answer.text)
 			throw new Error("Select an option or enter an answer");
-		const value = { selections, text: answer.text };
+		const value: QuestionAnswer = {
+			selections,
+			text: answer.text,
+			...(answer.skipped ? { skipped: true } : {}),
+		};
 		if (JSON.stringify(question.answer) === JSON.stringify(value))
 			return question;
 		const updated = { ...question, answer: value, delivered: false };

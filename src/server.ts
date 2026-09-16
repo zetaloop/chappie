@@ -125,7 +125,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Ask in ChatGPT",
 			description:
-				"Display a persistent question in ChatGPT and return immediately. Continue work that can proceed while the user considers it; submitted answers accompany normal Chappie tool results.",
+				"Ask one focused question in ChatGPT with choices, custom input, or skipping. Returns immediately; continue independent work in the current response. Answers and skips accompany normal Chappie results.",
 			inputSchema: questionInput.extend({
 				sessionId: z
 					.string()
@@ -187,7 +187,11 @@ export function createServer(broker: Broker): McpServer {
 				questionId,
 				answer,
 			);
-			const text = question.answer ? "Answer saved." : "Awaiting an answer.";
+			const text = question.answer?.skipped
+				? "Question skipped."
+				: question.answer
+					? "Answer saved."
+					: "Awaiting an answer.";
 			return {
 				content: [{ type: "text", text }],
 				structuredContent: { text, question },
