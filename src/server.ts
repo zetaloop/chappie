@@ -96,6 +96,7 @@ export function createServer(broker: Broker): McpServer {
 			const { inputs, ...initialized } = await broker.initialize(
 				chatId,
 				args.sessionId,
+				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);
 			return finishResult(broker, context, textResult(initialized, inputs));

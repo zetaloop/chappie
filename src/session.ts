@@ -194,7 +194,6 @@ export class LocalSession {
 			this.#resetInputs(context);
 		}
 		if (!this.#connection) {
-			this.#notify("Connecting to Chappie…");
 			this.#connection = new IpcClient(this.#agentDir, this.#connect, {
 				onOpen: async () => {
 					await this.#sync();

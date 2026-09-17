@@ -127,12 +127,7 @@ export class Broker {
 		signal: AbortSignal,
 	): Promise<AbortSignal> {
 		if (!this.#latestWorkflow || !chatId) return signal;
-		const id =
-			typeof requestId === "string"
-				? /^wfr_[0-9a-f]{12}7[0-9a-f]{3}[89ab][0-9a-f]{15}(?=\/|$)/i
-						.exec(requestId)?.[0]
-						.toLowerCase()
-				: undefined;
+		const id = workflowId(requestId);
 		if (!id) return signal;
 		signal.throwIfAborted();
 		const latest = this.#state.workflow(chatId);
@@ -177,17 +172,20 @@ export class Broker {
 	async initialize(
 		chatId: string,
 		sessionId: string | undefined,
+		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<InitializedSession> {
-		const previous = this.#state.binding(chatId);
 		const { sessionId: target, selection } = await this.#selectSession(
 			chatId,
 			sessionId,
 			signal,
 			true,
 		);
-		if (previous === target)
-			await this.#notify(target, `ChatGPT ${chatId.slice(-4)} joined`);
+		const workflow = workflowId(requestId);
+		await this.#notify(
+			target,
+			`ChatGPT ${chatId.slice(-4)}${workflow ? ` (${workflow.slice(-4)})` : ""} joined`,
+		);
 		const { inspection, inputs, globalAgents } = await this.#inspect(
 			target,
 			signal,
@@ -503,7 +501,6 @@ export class Broker {
 				await this.#notify(previous, "Ready for ChatGPT");
 			}
 		}
-		await this.#notify(sessionId, `ChatGPT ${chatId.slice(-4)} joined`);
 	}
 
 	async #notify(sessionId: string, message: string): Promise<void> {
@@ -628,6 +625,14 @@ export class Broker {
 		this.#sessions.delete(sessionId);
 		this.#notifyChange();
 	}
+}
+
+function workflowId(requestId: unknown): string | undefined {
+	return typeof requestId === "string"
+		? /^wfr_[0-9a-f]{12}7[0-9a-f]{3}[89ab][0-9a-f]{15}(?=\/|$)/i
+				.exec(requestId)?.[0]
+				.toLowerCase()
+		: undefined;
 }
 
 function abortError(signal: AbortSignal): Error {
