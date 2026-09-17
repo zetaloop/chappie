@@ -1,6 +1,6 @@
 {
 	"name": "@zetaloop/chappie",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"description": "Connect ChatGPT to Pi",
 	"devDependencies": {
 		"@earendil-works/pi-ai": "^0.85.1",
