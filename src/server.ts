@@ -8,6 +8,7 @@ import {
 	answerContent,
 	answerInput,
 	questionInput,
+	questionInstructions,
 	questionOutput,
 } from "./questions.ts";
 import {
@@ -20,9 +21,7 @@ import {
 const instructions = readFileSync(
 	new URL("./instructions.md", import.meta.url),
 	"utf8",
-)
-	.trim()
-	.split("\n\n");
+).trim();
 
 const outputSchema = z.object({
 	text: z
@@ -55,11 +54,9 @@ export function createServer(broker: Broker): McpServer {
 			version: packageJson.version,
 		},
 		{
-			instructions: instructions
-				.filter(
-					(paragraph) => broker.askEnabled || !paragraph.startsWith("Use ask "),
-				)
-				.join("\n\n"),
+			instructions: broker.askEnabled
+				? `${instructions}\n\n${questionInstructions}`
+				: instructions,
 		},
 	);
 
@@ -137,144 +134,139 @@ export function createServer(broker: Broker): McpServer {
 		}),
 	);
 
-	const askTool = server.registerTool(
-		"ask",
-		{
-			title: "Ask in ChatGPT",
-			description:
-				"Create a question in ChatGPT and return its ID immediately. Call ask_assert next with question.id. Answers, revisions, and skips arrive as webAnswer in later tool results.",
-			inputSchema: questionInput.extend({
-				sessionId: z
-					.string()
-					.optional()
-					.describe(
-						"Pi session for this question; defaults to this chat's session",
-					),
+	if (broker.askEnabled) {
+		server.registerTool(
+			"ask",
+			{
+				title: "Ask in ChatGPT",
+				description:
+					"Create a question in ChatGPT and return its ID immediately. Call ask_assert next with question.id. Answers, revisions, and skips arrive as webAnswer in later tool results.",
+				inputSchema: questionInput.extend({
+					sessionId: z
+						.string()
+						.optional()
+						.describe(
+							"Pi session for this question; defaults to this chat's session",
+						),
+				}),
+				outputSchema: questionSchema,
+				annotations: toolAnnotations,
+				_meta: { ui: { resourceUri: questionTemplate } },
+			},
+			handle(async ({ sessionId, ...input }, context) => {
+				const question = await broker.ask(
+					requireChatId(context),
+					sessionId,
+					input,
+					context.mcpReq.signal,
+				);
+				const result = await finishResult(broker, context, {
+					content: [
+						{
+							type: "text",
+							text: `Question created. Call ask_assert({"questionId":"${question.id}"}) next.`,
+						},
+					],
+				});
+				return {
+					...result,
+					structuredContent: { ...result.structuredContent, question },
+				};
 			}),
-			outputSchema: questionSchema,
-			annotations: toolAnnotations,
-			_meta: { ui: { resourceUri: questionTemplate } },
-		},
-		handle(async ({ sessionId, ...input }, context) => {
-			const question = await broker.ask(
-				requireChatId(context),
-				sessionId,
-				input,
-				context.mcpReq.signal,
-			);
-			const result = await finishResult(broker, context, {
-				content: [
+		);
+
+		server.registerTool(
+			"ask_assert",
+			{
+				title: "Assert question display",
+				description:
+					"Assert that an ask widget loaded in ChatGPT. Call immediately after ask with question.id. Returns when the widget reports loaded; times out if it fails to load. User answers arrive separately as webAnswer.",
+				inputSchema: z.object({
+					questionId: z.string().describe("question.id returned by ask"),
+				}),
+				outputSchema: questionSchema,
+				annotations: toolAnnotations,
+			},
+			handle(async ({ questionId }, context) => {
+				const question = await broker.assertQuestion(
+					requireChatId(context),
+					questionId,
+					context.mcpReq.signal,
+				);
+				const result = await finishResult(broker, context, {
+					content: [{ type: "text", text: "Question widget loaded." }],
+				});
+				return {
+					...result,
+					structuredContent: { ...result.structuredContent, question },
+				};
+			}),
+		);
+
+		server.registerTool(
+			"answer",
+			{
+				title: "Question state",
+				description:
+					"Read a saved question, report widget loading, or save an answer, revision, or skip.",
+				inputSchema: z.object({
+					questionId: z.string(),
+					answer: answerInput.optional(),
+					loaded: z
+						.literal(true)
+						.optional()
+						.describe("The question widget has loaded"),
+				}),
+				outputSchema: questionSchema,
+				annotations: toolAnnotations,
+				_meta: { ui: { visibility: ["app"] }, "openai/widgetAccessible": true },
+			},
+			handle(async ({ questionId, answer, loaded = false }, context) => {
+				const question = await broker.answer(
+					requireChatId(context),
+					questionId,
+					answer,
+					loaded,
+				);
+				const text = answer
+					? answer.skipped
+						? "Question skipped."
+						: "Answer saved."
+					: loaded
+						? "Question widget loaded."
+						: "Question state.";
+				return {
+					content: [{ type: "text", text }],
+					structuredContent: { text, question },
+				};
+			}),
+		);
+
+		server.registerResource(
+			"question",
+			questionTemplate,
+			{ title: "Chappie question", mimeType: "text/html;profile=mcp-app" },
+			async () => ({
+				contents: [
 					{
-						type: "text",
-						text: `Question created. Call ask_assert({"questionId":"${question.id}"}) next.`,
+						uri: questionTemplate,
+						mimeType: "text/html;profile=mcp-app",
+						text: readFileSync(
+							new URL("./question.html", import.meta.url),
+							"utf8",
+						),
+						_meta: {
+							ui: {
+								prefersBorder: true,
+								csp: { connectDomains: [], resourceDomains: [] },
+							},
+							"openai/widgetDescription":
+								"A persistent question the user can answer while the assistant continues working.",
+						},
 					},
 				],
-			});
-			return {
-				...result,
-				structuredContent: { ...result.structuredContent, question },
-			};
-		}),
-	);
-
-	const askAssertTool = server.registerTool(
-		"ask_assert",
-		{
-			title: "Assert question display",
-			description:
-				"Assert that an ask widget loaded in ChatGPT. Call immediately after ask with question.id. Returns when the widget reports loaded; times out if it fails to load. User answers arrive separately as webAnswer.",
-			inputSchema: z.object({
-				questionId: z.string().describe("question.id returned by ask"),
 			}),
-			outputSchema: questionSchema,
-			annotations: toolAnnotations,
-		},
-		handle(async ({ questionId }, context) => {
-			const question = await broker.assertQuestion(
-				requireChatId(context),
-				questionId,
-				context.mcpReq.signal,
-			);
-			const result = await finishResult(broker, context, {
-				content: [{ type: "text", text: "Question widget loaded." }],
-			});
-			return {
-				...result,
-				structuredContent: { ...result.structuredContent, question },
-			};
-		}),
-	);
-
-	const answerTool = server.registerTool(
-		"answer",
-		{
-			title: "Question state",
-			description:
-				"Read a saved question, report widget loading, or save an answer, revision, or skip.",
-			inputSchema: z.object({
-				questionId: z.string(),
-				answer: answerInput.optional(),
-				loaded: z
-					.literal(true)
-					.optional()
-					.describe("The question widget has loaded"),
-			}),
-			outputSchema: questionSchema,
-			annotations: toolAnnotations,
-			_meta: { ui: { visibility: ["app"] }, "openai/widgetAccessible": true },
-		},
-		handle(async ({ questionId, answer, loaded = false }, context) => {
-			const question = await broker.answer(
-				requireChatId(context),
-				questionId,
-				answer,
-				loaded,
-			);
-			const text = answer
-				? answer.skipped
-					? "Question skipped."
-					: "Answer saved."
-				: loaded
-					? "Question widget loaded."
-					: "Question state.";
-			return {
-				content: [{ type: "text", text }],
-				structuredContent: { text, question },
-			};
-		}),
-	);
-
-	const questionResource = server.registerResource(
-		"question",
-		questionTemplate,
-		{ title: "Chappie question", mimeType: "text/html;profile=mcp-app" },
-		async () => ({
-			contents: [
-				{
-					uri: questionTemplate,
-					mimeType: "text/html;profile=mcp-app",
-					text: readFileSync(
-						new URL("./question.html", import.meta.url),
-						"utf8",
-					),
-					_meta: {
-						ui: {
-							prefersBorder: true,
-							csp: { connectDomains: [], resourceDomains: [] },
-						},
-						"openai/widgetDescription":
-							"A persistent question the user can answer while the assistant continues working.",
-					},
-				},
-			],
-		}),
-	);
-
-	if (!broker.askEnabled) {
-		askTool.remove();
-		askAssertTool.remove();
-		answerTool.remove();
-		questionResource.remove();
+		);
 	}
 
 	server.registerTool(
