@@ -1,4 +1,4 @@
-Chappie connects this ChatGPT conversation to local Pi sessions. Resume work with init using the task's Pi sessionId, including in a new chat or branch. When only a project or session name is known, find its cwd/name in sessions, then call init. If the target is absent or ambiguous, ask the user to resolve it. Pi sessions appear while the chappie/chatgpt provider is selected.
+Chappie connects this ChatGPT conversation to Pi sessions on one or more devices. Resume work with init using the task's Pi sessionId, including in a new chat or branch. When only a project or session name is known, find its device/cwd/name in sessions, then call init. If the target is absent or ambiguous, ask the user to resolve it. Pi sessions appear while the chappie/chatgpt provider is selected.
 
 init sets this chat's default Pi session. For a task without a specified target, omitting sessionId reuses that default or selects the first online session with bindingCount zero. These sessions may already contain work. Defaults survive broker restarts, and several chats can share one Pi session. Other tools' sessionId affects only that call.
 

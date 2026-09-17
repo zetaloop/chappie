@@ -1,13 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { readConfig } from "./config.ts";
-import {
-	type DeliveryRecord,
-	type ResolvedDelivery,
-	resolveDelivery,
-} from "./delivery.ts";
+import type { DeliveryRecord } from "./delivery.ts";
 import {
 	type BrokerMessage,
 	IpcServer,
@@ -105,7 +99,7 @@ export class Broker {
 		this.#ask = config.ask ?? true;
 		this.#latestWorkflow = config.latestWorkflow ?? false;
 		await this.#state.load();
-		await this.#ipc.start();
+		await this.#ipc.start(config.listen ?? false);
 	}
 
 	async close(): Promise<void> {
@@ -194,8 +188,10 @@ export class Broker {
 		);
 		if (previous === target)
 			await this.#notify(target, `ChatGPT ${chatId.slice(-4)} joined`);
-		const { inspection, inputs } = await this.#inspect(target, signal);
-		const globalAgents = await this.#readGlobalAgents();
+		const { inspection, inputs, globalAgents } = await this.#inspect(
+			target,
+			signal,
+		);
 		await this.#ackInputs(target, inputs);
 		return {
 			selection,
@@ -404,8 +400,8 @@ export class Broker {
 		throw new Error("Pi session returned no resource");
 	}
 
-	async deliveries(chatId: string): Promise<ResolvedDelivery[]> {
-		return Promise.all(this.#state.deliveries(chatId).map(resolveDelivery));
+	deliveries(chatId: string): DeliveryRecord[] {
+		return this.#state.deliveries(chatId);
 	}
 
 	acknowledge(
@@ -631,15 +627,6 @@ export class Broker {
 	#removeSession(sessionId: string): void {
 		this.#sessions.delete(sessionId);
 		this.#notifyChange();
-	}
-
-	async #readGlobalAgents(): Promise<string | undefined> {
-		try {
-			return await readFile(join(this.#agentDir, "AGENTS.md"), "utf8");
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-			throw error;
-		}
 	}
 }
 

@@ -20,13 +20,15 @@ import type {
 import type { DeliveryRecord } from "./delivery.ts";
 import type { ResourceData } from "./resources.ts";
 
+const defaultPort = 24274;
+
 export type SessionStatus = "idle" | "ready" | "executing";
 
 export interface SessionDescription {
 	id: string;
 	cwd: string;
+	device: string;
 	name?: string;
-	sessionFile?: string;
 	status: SessionStatus;
 }
 
@@ -43,7 +45,11 @@ export interface SessionInput {
 }
 
 export type SessionResult =
-	| { inspection: SessionInspection; inputs: SessionInput[] }
+	| {
+			inspection: SessionInspection;
+			inputs: SessionInput[];
+			globalAgents?: string;
+	  }
 	| { message: AssistantMessage; cwd: string; inputs: SessionInput[] }
 	| {
 			message: AssistantMessage;
@@ -173,7 +179,7 @@ export class IpcServer {
 		peer: JsonLinePeer<SessionMessage, BrokerMessage>,
 	) => void;
 	readonly #peers = new Set<JsonLinePeer<SessionMessage, BrokerMessage>>();
-	#server: Server | undefined;
+	readonly #servers = new Set<Server>();
 
 	constructor(
 		agentDir: string,
@@ -188,10 +194,34 @@ export class IpcServer {
 		this.#onClose = onClose;
 	}
 
-	async start(): Promise<void> {
-		if (this.#server) return;
+	async start(network: boolean | number = false): Promise<void> {
+		if (this.#servers.size > 0) return;
 		if (process.platform !== "win32") await prepareUnixSocket(this.#endpoint);
-		const server = createServer((socket) => {
+		try {
+			const local = this.#createServer();
+			await listenServer(local, this.#endpoint);
+			this.#servers.add(local);
+			if (!network) return;
+
+			const remote = this.#createServer();
+			await listenServer(remote, network === true ? defaultPort : network);
+			this.#servers.add(remote);
+		} catch (error) {
+			await this.close();
+			throw error;
+		}
+	}
+
+	async close(): Promise<void> {
+		for (const peer of this.#peers) peer.close();
+		this.#peers.clear();
+		const servers = [...this.#servers];
+		this.#servers.clear();
+		await Promise.all(servers.map(closeServer));
+	}
+
+	#createServer(): Server {
+		return createServer((socket) => {
 			let peer: JsonLinePeer<SessionMessage, BrokerMessage>;
 			peer = new JsonLinePeer(
 				socket,
@@ -203,25 +233,6 @@ export class IpcServer {
 			);
 			this.#peers.add(peer);
 		});
-		await new Promise<void>((resolveListen, rejectListen) => {
-			server.once("error", rejectListen);
-			server.listen(this.#endpoint, () => {
-				server.off("error", rejectListen);
-				resolveListen();
-			});
-		});
-		this.#server = server;
-	}
-
-	async close(): Promise<void> {
-		for (const peer of this.#peers) peer.close();
-		this.#peers.clear();
-		const server = this.#server;
-		this.#server = undefined;
-		if (!server) return;
-		await new Promise<void>((resolveClose, rejectClose) =>
-			server.close((error) => (error ? rejectClose(error) : resolveClose())),
-		);
 	}
 }
 
@@ -233,14 +244,21 @@ interface ConnectionCallbacks {
 
 export class IpcClient {
 	readonly #endpoint: string;
+	readonly #remote: string | undefined;
 	readonly #callbacks: ConnectionCallbacks;
 	#peer: JsonLinePeer<BrokerMessage, SessionMessage> | undefined;
 	#opening: Promise<void> | undefined;
+	#controller: AbortController | undefined;
 	#retry: NodeJS.Timeout | undefined;
 	#closed = false;
 
-	constructor(agentDir: string, callbacks: ConnectionCallbacks) {
+	constructor(
+		agentDir: string,
+		remote: string | undefined,
+		callbacks: ConnectionCallbacks,
+	) {
 		this.#endpoint = ipcEndpoint(agentDir);
+		this.#remote = remote;
 		this.#callbacks = callbacks;
 	}
 
@@ -259,8 +277,11 @@ export class IpcClient {
 		if (this.#opening) return this.#opening;
 		clearTimeout(this.#retry);
 		this.#retry = undefined;
-		this.#opening = this.#open().finally(() => {
+		const controller = new AbortController();
+		this.#controller = controller;
+		this.#opening = this.#open(controller.signal).finally(() => {
 			this.#opening = undefined;
+			if (this.#controller === controller) this.#controller = undefined;
 		});
 		return this.#opening;
 	}
@@ -276,24 +297,25 @@ export class IpcClient {
 		this.#closed = true;
 		clearTimeout(this.#retry);
 		this.#retry = undefined;
+		this.#controller?.abort(new Error("Chappie IPC client is closed"));
+		this.#controller = undefined;
 		this.#peer?.close();
 		this.#peer = undefined;
 	}
 
-	async #open(): Promise<void> {
-		const socket = createConnection(this.#endpoint);
+	async #open(signal: AbortSignal): Promise<void> {
+		let socket: Socket | undefined;
 		let failure = new Error("Chappie disconnected");
-		await new Promise<void>((resolveOpen, rejectOpen) => {
-			socket.once("connect", resolveOpen);
-			socket.once("error", (error) => {
-				failure = error;
-				rejectOpen(error);
-			});
-		}).catch((error: unknown) => {
-			socket.destroy();
+		try {
+			socket = this.#remote
+				? createConnection(networkEndpoint(this.#remote))
+				: createConnection(this.#endpoint);
+			await connectSocket(socket, signal);
+		} catch (error) {
+			socket?.destroy();
 			this.#scheduleReconnect();
 			throw error;
-		});
+		}
 
 		let peer: JsonLinePeer<BrokerMessage, SessionMessage>;
 		peer = new JsonLinePeer(
@@ -326,6 +348,86 @@ export class IpcClient {
 		}, 500);
 		this.#retry.unref();
 	}
+}
+
+function listenServer(
+	server: Server,
+	endpoint: string | number,
+): Promise<void> {
+	return new Promise<void>((resolveListen, rejectListen) => {
+		const onError = (error: Error): void => {
+			server.off("listening", onListening);
+			rejectListen(error);
+		};
+		const onListening = (): void => {
+			server.off("error", onError);
+			resolveListen();
+		};
+		server.once("error", onError);
+		server.once("listening", onListening);
+		if (typeof endpoint === "number") server.listen(endpoint);
+		else server.listen(endpoint);
+	});
+}
+
+function closeServer(server: Server): Promise<void> {
+	return new Promise<void>((resolveClose, rejectClose) =>
+		server.close((error) => (error ? rejectClose(error) : resolveClose())),
+	);
+}
+
+interface NetworkEndpoint {
+	host: string;
+	port: number;
+}
+
+function networkEndpoint(value: string): NetworkEndpoint {
+	const url = new URL(`tcp://${value}`);
+	if (url.username || url.password || url.pathname || url.search || url.hash)
+		throw new Error(`Invalid Chappie broker address: ${value}`);
+	const host = url.hostname.startsWith("[")
+		? url.hostname.slice(1, -1)
+		: url.hostname;
+	if (!host) throw new Error(`Invalid Chappie broker address: ${value}`);
+	return { host, port: url.port ? Number(url.port) : defaultPort };
+}
+
+function connectSocket(socket: Socket, signal: AbortSignal): Promise<void> {
+	return new Promise<void>((resolveConnect, rejectConnect) => {
+		const cleanup = (): void => {
+			signal.removeEventListener("abort", onAbort);
+			socket.off("connect", onConnect);
+			socket.off("error", onError);
+		};
+		const onConnect = (): void => {
+			cleanup();
+			resolveConnect();
+		};
+		const onError = (error: Error): void => {
+			cleanup();
+			rejectConnect(error);
+		};
+		const onAbort = (): void => {
+			cleanup();
+			socket.destroy();
+			rejectConnect(abortError(signal));
+		};
+		if (signal.aborted) {
+			onAbort();
+			return;
+		}
+		signal.addEventListener("abort", onAbort, { once: true });
+		socket.once("connect", onConnect);
+		socket.once("error", onError);
+	});
+}
+
+function abortError(signal: AbortSignal): Error {
+	return signal.reason instanceof Error
+		? signal.reason
+		: new Error(
+				typeof signal.reason === "string" ? signal.reason : "Request cancelled",
+			);
 }
 
 async function prepareUnixSocket(endpoint: string): Promise<void> {

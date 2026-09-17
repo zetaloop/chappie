@@ -29,7 +29,7 @@ Use `chat` for progress or results that should appear in Pi. When a Pi user deci
 
 For a new task without a specific target, call `init` with `{}` to reuse this chat's default or allocate the first online, unbound Pi session. Sessions register while `chappie/chatgpt` is selected. They can be blank or already contain a task; a remote operation starts a turn when Pi is idle.
 
-`sessions` lists session IDs, working directories, names, status, and `bindingCount`, the number of saved chat defaults pointing to each session. Zero means the session can be allocated automatically. The count includes closed chats; execution status describes Pi activity: `ready` accepts provider output, `executing` handles an operation, and `idle` starts a turn on the next operation.
+`sessions` lists session IDs, devices, working directories, names, status, and `bindingCount`, the number of saved chat defaults pointing to each session. Zero means the session can be allocated automatically. The count includes closed chats; execution status describes Pi activity: `ready` accepts provider output, `executing` handles an operation, and `idle` starts a turn on the next operation.
 
 `init.selection` reports how the target was chosen: `existing` reuses this chat's default, `explicit` uses the supplied session ID, and `automatic` allocates the first online session with no saved bindings. Explicit selection also accepts sessions already used by other chats.
 
@@ -50,6 +50,8 @@ The optional `sessionId` on other tools selects a session for that operation. Fo
 `sessions({ sessionId })` filters the online list and retrieves available input when that session is connected. The call returns immediately when the selected or bound session is offline; the saved binding is still shown, and deferred results remain available.
 
 Several chats can select the same Pi session, and one chat can address several sessions. Defaults are saved in `chappie.state.json` under Pi's agent directory. An existing binding waits for its Pi session to reconnect; `init` with another ID selects a different target.
+
+A broker configured with `listen: true` also accepts Pi sessions from other devices on TCP port `24274`. A remote device uses `connect: "<host>.local"`; numeric `listen` values and `host:port` select another port. Remote sessions use their own global `AGENTS.md`, files, images, and interrupted-call results while appearing in the broker's normal session list.
 
 Pi displays Chappie activity as individual session entries in arrival order. Each `init` reports that the chat joined; selecting another session reports that it left the previous one. Chat labels use the last four characters of the connector's identifier. Connection changes, cancelled calls with their tool names and reasons, webpage questions and answers, and stored deferred results appear in the same history. Entries use Pi's theme colors, survive reopening the session, and remain separate from model messages.
 

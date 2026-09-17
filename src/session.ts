@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { hostname } from "node:os";
+import { join } from "node:path";
 import type {
 	AssistantMessage,
 	ToolResultMessage,
@@ -51,6 +54,7 @@ interface ActiveRequest {
 export class LocalSession {
 	readonly #pi: ExtensionAPI;
 	readonly #agentDir: string;
+	readonly #connect: string | undefined;
 	readonly #syncs = new Map<number, SyncRequest>();
 	readonly #stores = new Map<string, StoreRequest>();
 	readonly #queue: RemoteRequest[] = [];
@@ -68,9 +72,10 @@ export class LocalSession {
 	#inputCursor: string | null = null;
 	#flushing = Promise.resolve();
 
-	constructor(pi: ExtensionAPI, agentDir: string) {
+	constructor(pi: ExtensionAPI, agentDir: string, connect?: string) {
 		this.#pi = pi;
 		this.#agentDir = agentDir;
+		this.#connect = connect;
 	}
 
 	install(): void {
@@ -181,7 +186,7 @@ export class LocalSession {
 		}
 		if (!this.#connection) {
 			this.#notify("Connecting to Chappie…");
-			this.#connection = new IpcClient(this.#agentDir, {
+			this.#connection = new IpcClient(this.#agentDir, this.#connect, {
 				onOpen: async () => {
 					await this.#sync();
 					await this.#flushDeliveries();
@@ -208,13 +213,12 @@ export class LocalSession {
 		const context = this.#context;
 		if (!context) throw new Error("Chappie session is not available");
 		const name = this.#pi.getSessionName();
-		const sessionFile = context.sessionManager.getSessionFile();
 		return {
 			id: context.sessionManager.getSessionId(),
 			cwd: context.cwd,
+			device: hostname(),
 			status: this.#status,
 			...(name ? { name } : {}),
-			...(sessionFile ? { sessionFile } : {}),
 		};
 	}
 
@@ -253,12 +257,16 @@ export class LocalSession {
 				}
 				break;
 			case "inspect":
-				await this.#reply(message.id, message.sessionId, () => ({
-					type: "result",
-					id: message.id,
-					inspection: this.#inspection(),
-					inputs: this.#inputs(),
-				}));
+				await this.#reply(message.id, message.sessionId, async () => {
+					const globalAgents = await this.#readGlobalAgents();
+					return {
+						type: "result",
+						id: message.id,
+						inspection: this.#inspection(),
+						inputs: this.#inputs(),
+						...(globalAgents ? { globalAgents } : {}),
+					};
+				});
 				break;
 			case "ackInputs":
 				if (
@@ -334,6 +342,15 @@ export class LocalSession {
 		};
 	}
 
+	async #readGlobalAgents(): Promise<string | undefined> {
+		try {
+			return await readFile(join(this.#agentDir, "AGENTS.md"), "utf8");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+			throw error;
+		}
+	}
+
 	#dispatch(): void {
 		if (this.#active) return;
 		const request = this.#queue[0];
@@ -404,19 +421,12 @@ export class LocalSession {
 		this.#collectInputs();
 		const inputs = this.#inputs();
 		if (active.cancelled !== undefined) {
-			const sessionFile = active.session.sessionFile;
 			const delivery: DeliveryRecord = {
 				id: randomUUID(),
 				chatId: active.request.chatId,
 				sessionId: active.session.id,
 				cwd: active.session.cwd,
-				toolCallIds:
-					active.request.type === "call"
-						? active.request.calls.map(({ id }) => id)
-						: [],
-				...(sessionFile
-					? { sessionFile }
-					: { inlineResults: active.toolResults }),
+				toolResults: active.toolResults,
 				error: active.cancelled,
 			};
 			this.#deliveries.set(delivery.id, delivery);

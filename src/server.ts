@@ -403,7 +403,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Local sessions",
 			description:
-				"List online Pi sessions with their IDs, cwd, names, execution status, and saved binding counts. Also returns this chat's default.",
+				"List online Pi sessions with their IDs, devices, cwd, names, execution status, and saved binding counts. Also returns this chat's default.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z

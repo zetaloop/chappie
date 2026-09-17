@@ -1,6 +1,6 @@
 # Chappie
 
-Use ChatGPT to edit files, run commands, and work with [Pi](https://github.com/earendil-works/pi) extensions. Supports multiple Pi sessions, images, and two-way file transfers.
+Use ChatGPT to edit files, run commands, and work with [Pi](https://github.com/earendil-works/pi) extensions across multiple devices and sessions. Supports images and two-way file transfers.
 
 ## Setup
 
@@ -35,14 +35,19 @@ See the [tool guide](docs/tools.md) for session selection, batch calls, question
 
 ## Configuration
 
-`chappie.json` in Pi's agent directory configures the broker:
+`chappie.json` in Pi's agent directory configures the broker. To expose one broker to other devices on the local network:
 
 ```json
-{
-  "ask": false,
-  "latestWorkflow": true
-}
+{ "listen": true }
 ```
+
+On another device, connect its Pi sessions to that broker through the host's mDNS name:
+
+```json
+{ "connect": "<broker>.local" }
+```
+
+The default port is `24274`, the telephone-keypad digits for `CHAPI`. Use a numeric `listen` value or append `:port` to `connect` to choose another port. Only the broker device needs otunnel; local and remote Pi sessions appear together and report their device names.
 
 `ask` is enabled by default. Setting it to `false` removes the webpage question tools and component.
 
