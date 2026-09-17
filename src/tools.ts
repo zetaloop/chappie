@@ -6,11 +6,9 @@ import {
 	createWriteToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
+import { toolResultsContent } from "./delivery.ts";
 import type { SessionInput } from "./ipc.ts";
-import {
-	contentWithImageReferences,
-	resourceDescriptors,
-} from "./resources.ts";
+import { contentWithImageReferences } from "./resources.ts";
 import { transfer } from "./transfer.ts";
 
 export interface ToolInput {
@@ -44,24 +42,7 @@ export function toolResult(
 	return {
 		content: [
 			{ type: "text" as const, text: JSON.stringify({ sessionId, cwd }) },
-			...toolResults.flatMap((result) => [
-				{
-					type: "text" as const,
-					text: JSON.stringify({
-						toolCallId: result.toolCallId,
-						toolName: result.toolName,
-						isError: result.isError,
-					}),
-				},
-				...contentWithImageReferences(sessionId, result.content),
-				...resourceDescriptors(result.details).map((resource) => ({
-					type: "resource_link" as const,
-					uri: resource.uri,
-					name: resource.name,
-					mimeType: resource.mimeType,
-					size: resource.size,
-				})),
-			]),
+			...toolResultsContent(toolResults, sessionId),
 			...inputContent(inputs),
 		],
 		isError: toolResults.some((result) => result.isError),
