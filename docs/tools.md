@@ -19,7 +19,7 @@
 
 Call `init` at the start of local work. Without `sessionId`, it reuses the conversation's saved default or selects an online Pi session with no saved ChatGPT binding. Pass a Pi session ID to resume a specific task, including from another ChatGPT conversation or branch.
 
-`sessions` lists connected sessions with their ID, device, working directory, name, execution status, and binding count. A conversation can address another session for one operation by supplying that tool's optional `sessionId`; only `init({ sessionId })` changes the saved default.
+`sessions` lists connected sessions with their ID, device, working directory, name, execution status, and binding count. The first session tool call establishes the default using its `sessionId` or an online session with no saved bindings. Once a default exists, another tool's `sessionId` selects only that operation's target; `init({ sessionId })` changes the default.
 
 Several ChatGPT conversations can use the same Pi session. One conversation can also operate on several Pi sessions explicitly. Requests already assigned to a session continue there even if the conversation later changes its default.
 
@@ -82,7 +82,7 @@ Call `ask_assert` with the returned ID to confirm that the widget loaded:
 { "questionId": "<question-id>" }
 ```
 
-Answers, revisions, and skips arrive later as `webAnswer` in normal Chappie results. `options` can be omitted for a text answer, and `allowMultiple: true` allows several choices. `sessionId` associates the question with a Pi session without changing the conversation's default.
+Answers, revisions, and skips arrive later as `webAnswer` in normal Chappie results. `options` can be omitted for a text answer, and `allowMultiple: true` allows several choices. `sessionId` associates the question with a Pi session using the session selection rules above.
 
 Questions remain available after the assistant response and across broker restarts. Pi's own interactive tools remain ordinary Pi tools and can be invoked through `call`.
 

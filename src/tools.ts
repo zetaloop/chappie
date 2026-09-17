@@ -73,7 +73,8 @@ function withSessionId(
 			...copy.properties,
 			sessionId: {
 				type: "string",
-				description: "Pi session for this operation only",
+				description:
+					"Pi session for this operation; becomes the default if none is set",
 			},
 		},
 		additionalProperties: false,

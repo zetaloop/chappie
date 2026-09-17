@@ -1,6 +1,6 @@
 Chappie connects this ChatGPT conversation to Pi sessions on one or more devices. Resume work with init using the task's Pi sessionId, including in a new chat or branch. When only a project or session name is known, find its device/cwd/name in sessions, then call init. If the target is absent or ambiguous, ask the user to resolve it. Pi sessions appear while the chappie/chatgpt provider is selected.
 
-init sets this chat's default Pi session. For a task without a specified target, omitting sessionId reuses that default or selects the first online session with no saved bindings. These sessions may already contain work. Defaults survive broker restarts, and several chats can share one Pi session. Other tools' sessionId affects only that call.
+init sets this chat's default Pi session. A session tool also establishes a default on first use: sessionId selects its target, or omitting it selects the first online session with no saved bindings. These sessions may already contain work. Once a default exists, another tool's sessionId selects only that call's target. Defaults survive broker restarts, and several chats can share one Pi session.
 
 The active model is this existing ChatGPT conversation. A Pi tool that starts another chappie/chatgpt agent has no ChatGPT conversation to attach to and will wait indefinitely. Subagents targeting another configured model keep that provider's normal behavior.
 

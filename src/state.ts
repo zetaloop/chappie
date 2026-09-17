@@ -5,6 +5,7 @@ import type { QuestionAnswer, QuestionRecord } from "./questions.ts";
 
 interface StateFile {
 	bindings?: Record<string, string>;
+	joins?: Record<string, string[]>;
 	workflows?: Record<string, string>;
 	deliveries?: DeliveryRecord[];
 	questions?: QuestionRecord[];
@@ -14,6 +15,7 @@ export class State {
 	readonly #path: string;
 	readonly #temporaryPath: string;
 	readonly #bindings = new Map<string, string>();
+	readonly #joins = new Map<string, Set<string>>();
 	readonly #workflows = new Map<string, string>();
 	readonly #deliveries = new Map<string, DeliveryRecord>();
 	readonly #questions = new Map<string, QuestionRecord>();
@@ -35,6 +37,9 @@ export class State {
 		const state = JSON.parse(contents) as StateFile;
 		for (const [chatId, sessionId] of Object.entries(state.bindings ?? {})) {
 			if (typeof sessionId === "string") this.#bindings.set(chatId, sessionId);
+		}
+		for (const [chatId, ids] of Object.entries(state.joins ?? {})) {
+			this.#joins.set(chatId, new Set(ids));
 		}
 		for (const [chatId, id] of Object.entries(state.workflows ?? {})) {
 			this.#workflows.set(chatId, id);
@@ -59,12 +64,6 @@ export class State {
 		return this.#bindings.get(chatId);
 	}
 
-	chats(sessionId: string): string[] {
-		return [...this.#bindings]
-			.filter(([, target]) => target === sessionId)
-			.map(([chatId]) => chatId);
-	}
-
 	bindingCounts(): Map<string, number> {
 		const counts = new Map<string, number>();
 		for (const sessionId of this.#bindings.values()) {
@@ -73,9 +72,21 @@ export class State {
 		return counts;
 	}
 
-	setBinding(chatId: string, sessionId: string): Promise<void> {
+	async join(
+		chatId: string,
+		sessionId: string,
+		workflowId: string | undefined,
+	): Promise<boolean> {
+		const changed = this.#bindings.get(chatId) !== sessionId;
+		const workflows = changed
+			? new Set<string>()
+			: (this.#joins.get(chatId) ?? new Set<string>());
+		if (!changed && (!workflowId || workflows.has(workflowId))) return false;
 		this.#bindings.set(chatId, sessionId);
-		return this.#save();
+		if (workflowId) workflows.add(workflowId);
+		this.#joins.set(chatId, workflows);
+		await this.#save();
+		return true;
 	}
 
 	deliveries(chatId: string): DeliveryRecord[] {
@@ -168,10 +179,13 @@ export class State {
 	#save(): Promise<void> {
 		const saved = this.#writes.then(async () => {
 			const bindings = Object.fromEntries(this.#bindings);
+			const joins = Object.fromEntries(
+				[...this.#joins].map(([chatId, ids]) => [chatId, [...ids]]),
+			);
 			const workflows = Object.fromEntries(this.#workflows);
 			await writeFile(
 				this.#temporaryPath,
-				`${JSON.stringify({ bindings, workflows, deliveries: [...this.#deliveries.values()], questions: [...this.#questions.values()] }, null, 2)}\n`,
+				`${JSON.stringify({ bindings, joins, workflows, deliveries: [...this.#deliveries.values()], questions: [...this.#questions.values()] }, null, 2)}\n`,
 				{
 					mode: 0o600,
 				},

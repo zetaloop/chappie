@@ -178,13 +178,9 @@ export class Broker {
 		const { sessionId: target, selection } = await this.#selectSession(
 			chatId,
 			sessionId,
+			requestId,
 			signal,
 			true,
-		);
-		const workflow = workflowId(requestId);
-		await this.#notify(
-			target,
-			`ChatGPT ${chatId.slice(-4)}${workflow ? ` (${workflow.slice(-4)})` : ""} joined`,
 		);
 		const { inspection, inputs, globalAgents } = await this.#inspect(
 			target,
@@ -207,13 +203,14 @@ export class Broker {
 		chatId: string,
 		sessionId: string | undefined,
 		text: string,
+		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<ChatResult> {
 		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
+			requestId,
 			signal,
-			false,
 		);
 		const result = await this.#request(
 			target,
@@ -231,13 +228,14 @@ export class Broker {
 		chatId: string,
 		sessionId: string | undefined,
 		names: string[] | undefined,
+		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<InspectedSession> {
 		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
+			requestId,
 			signal,
-			false,
 		);
 		const { inspection, inputs } = await this.#inspect(target, signal);
 		await this.#ackInputs(target, inputs);
@@ -255,13 +253,14 @@ export class Broker {
 		chatId: string,
 		sessionId: string | undefined,
 		calls: ToolInput[],
+		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<CallResult> {
 		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
+			requestId,
 			signal,
-			false,
 		);
 		const toolCalls: ToolCall[] = calls.map((call) => ({
 			type: "toolCall",
@@ -295,10 +294,14 @@ export class Broker {
 	async inputs(
 		chatId: string,
 		sessionId: string | undefined,
+		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<SessionInput[]> {
-		const target = sessionId ?? this.#state.binding(chatId);
+		const boundId = this.#state.binding(chatId);
+		const target = sessionId ?? boundId;
 		if (!target || !this.#sessions.has(target)) return [];
+		signal.throwIfAborted();
+		if (target === boundId) await this.#join(chatId, target, requestId);
 		const { inputs } = await this.#inspect(target, signal);
 		await this.#ackInputs(target, inputs);
 		return inputs;
@@ -308,13 +311,14 @@ export class Broker {
 		chatId: string,
 		sessionId: string | undefined,
 		input: QuestionInput,
+		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<Question> {
 		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
+			requestId,
 			signal,
-			false,
 		);
 		const session = this.#sessions.get(target);
 		if (!session) throw new Error(`Pi session ${target} is offline`);
@@ -458,48 +462,65 @@ export class Broker {
 	async #selectSession(
 		chatId: string,
 		requestedId: string | undefined,
+		requestId: unknown,
 		signal: AbortSignal,
-		bindRequested: boolean,
+		bindRequested = false,
 	): Promise<{
 		sessionId: string;
 		selection: InitializedSession["selection"];
 	}> {
 		if (requestedId) {
 			await this.#waitForSession(requestedId, signal);
-			if (bindRequested && this.#state.binding(chatId) !== requestedId) {
-				await this.#bind(chatId, requestedId);
+			signal.throwIfAborted();
+			const boundId = this.#state.binding(chatId);
+			if (bindRequested || !boundId || boundId === requestedId) {
+				await this.#join(chatId, requestedId, requestId, bindRequested);
 			}
 			return { sessionId: requestedId, selection: "explicit" };
 		}
 
-		const boundId = this.#state.binding(chatId);
-		if (boundId) {
-			await this.#waitForSession(boundId, signal);
-			return { sessionId: boundId, selection: "existing" };
-		}
-
 		for (;;) {
+			signal.throwIfAborted();
+			const boundId = this.#state.binding(chatId);
+			if (boundId) {
+				await this.#waitForSession(boundId, signal);
+				signal.throwIfAborted();
+				if (bindRequested || this.#state.binding(chatId) === boundId) {
+					await this.#join(chatId, boundId, requestId, bindRequested);
+				}
+				return { sessionId: boundId, selection: "existing" };
+			}
 			const occupied = this.#state.bindingCounts();
 			const candidate = [...this.#sessions.keys()].find(
 				(sessionId) => !occupied.has(sessionId),
 			);
 			if (candidate) {
-				await this.#bind(chatId, candidate);
+				await this.#join(chatId, candidate, requestId, bindRequested);
 				return { sessionId: candidate, selection: "automatic" };
 			}
 			await this.#waitForChange(signal);
 		}
 	}
 
-	async #bind(chatId: string, sessionId: string): Promise<void> {
+	async #join(
+		chatId: string,
+		sessionId: string,
+		requestId: unknown,
+		explicit = false,
+	): Promise<void> {
 		const previous = this.#state.binding(chatId);
-		await this.#state.setBinding(chatId, sessionId);
-		this.#notifyChange();
-		if (previous) {
-			await this.#notify(previous, `ChatGPT ${chatId.slice(-4)} left`);
-			if (this.#state.chats(previous).length === 0) {
-				await this.#notify(previous, "Ready for ChatGPT");
-			}
+		const workflow = workflowId(requestId);
+		const joined = await this.#state.join(chatId, sessionId, workflow);
+		if (previous !== sessionId) {
+			this.#notifyChange();
+			if (previous)
+				await this.#notify(previous, `ChatGPT ${chatId.slice(-4)} left`);
+		}
+		if (joined || explicit) {
+			await this.#notify(
+				sessionId,
+				`ChatGPT ${chatId.slice(-4)}${workflow ? ` (${workflow.slice(-4)})` : ""} joined`,
+			);
 		}
 	}
 

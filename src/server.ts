@@ -115,7 +115,9 @@ export function createServer(broker: Broker): McpServer {
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Pi session for this operation only"),
+					.describe(
+						"Pi session for this operation; becomes the default if none is set",
+					),
 			}),
 			annotations: toolAnnotations,
 		},
@@ -125,6 +127,7 @@ export function createServer(broker: Broker): McpServer {
 				chatId,
 				args.sessionId,
 				args.text,
+				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);
 			return finishResult(
@@ -159,6 +162,7 @@ export function createServer(broker: Broker): McpServer {
 					requireChatId(context),
 					sessionId,
 					input,
+					context.mcpReq._meta?.["otunnel/requestId"],
 					context.mcpReq.signal,
 				);
 				const result = await finishResult(broker, context, {
@@ -286,7 +290,9 @@ export function createServer(broker: Broker): McpServer {
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Pi session for this operation only"),
+					.describe(
+						"Pi session for this operation; becomes the default if none is set",
+					),
 			}),
 			annotations: toolAnnotations,
 		},
@@ -295,6 +301,7 @@ export function createServer(broker: Broker): McpServer {
 				requireChatId(context),
 				args.sessionId,
 				args.names,
+				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);
 			return finishResult(
@@ -327,7 +334,9 @@ export function createServer(broker: Broker): McpServer {
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Pi session for this operation only"),
+					.describe(
+						"Pi session for this operation; becomes the default if none is set",
+					),
 			}),
 			annotations: toolAnnotations,
 		},
@@ -336,6 +345,7 @@ export function createServer(broker: Broker): McpServer {
 				requireChatId(context),
 				args.sessionId,
 				args.calls,
+				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);
 			return finishResult(
@@ -375,6 +385,7 @@ export function createServer(broker: Broker): McpServer {
 					requireChatId(context),
 					sessionId,
 					calls,
+					context.mcpReq._meta?.["otunnel/requestId"],
 					context.mcpReq.signal,
 				);
 				return finishResult(
@@ -409,7 +420,12 @@ export function createServer(broker: Broker): McpServer {
 		handle(async (args, context) => {
 			const chatId = requestChatId(context);
 			const inputs = chatId
-				? await broker.inputs(chatId, args.sessionId, context.mcpReq.signal)
+				? await broker.inputs(
+						chatId,
+						args.sessionId,
+						context.mcpReq._meta?.["otunnel/requestId"],
+						context.mcpReq.signal,
+					)
 				: [];
 			const result = textResult(
 				{
