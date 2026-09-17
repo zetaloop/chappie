@@ -3,6 +3,7 @@
 | Tool | Purpose |
 |---|---|
 | `init` | Select this ChatGPT conversation's default Pi session and read its environment. |
+| `history` | Read the current Pi branch with timestamps and entry IDs. |
 | `sessions` | List connected Pi sessions and the current default. |
 | `tools` | Read full definitions of active Pi tools for `call`. |
 | `chat` | Send an assistant message to Pi. |
@@ -17,13 +18,25 @@
 
 ## Sessions
 
-Call `init` at the start of local work. Without `sessionId`, it reuses the conversation's saved default or selects an online Pi session with no saved ChatGPT binding. Pass a Pi session ID to resume a specific task, including from another ChatGPT conversation or branch.
+Call `init` at the start of local work. Without `sessionId`, it reuses the conversation's saved default or selects an online Pi session with no saved ChatGPT binding. Pass a Pi session ID to resume a specific task, including from another ChatGPT conversation or branch. Read recent `history` to recover progress before continuing the current task.
 
 `sessions` lists connected sessions with their ID, device, working directory, name, execution status, and binding count. The first session tool call establishes the default using its `sessionId` or an online session with no saved bindings. Once a default exists, another tool's `sessionId` selects only that operation's target; `init({ sessionId })` changes the default.
 
 Several ChatGPT conversations can use the same Pi session. One conversation can also operate on several Pi sessions explicitly. Requests already assigned to a session continue there even if the conversation later changes its default.
 
 Remote Pi sessions appear in the same list when they connect to a broker exposed through `listen` and `connect`. Their tools, global `AGENTS.md`, files, images, and Pi interfaces come from the remote device.
+
+## History
+
+`history` reads the current branch of a Pi session. It uses the saved default or an explicit `sessionId`, independently of default-session selection.
+
+```json
+{ "sessionId": "<session-id>", "limit": 20, "before": "<entry-id>" }
+```
+
+Omit `before` for the latest entries. Use `after` to read forward from an entry. Both fields can delimit a range, with the named entries outside the returned range. The default limit is 20 readable entries. Results follow branch order and contain each entry's original ID and timestamp. `hasMore` indicates additional entries in the requested direction.
+
+Messages, tool calls and results, summaries, images, file links, and Chappie activity records use their saved contents, including Pi's existing truncation notices and full-output paths. Activity records contain conversation and optional request IDs for log correlation. Reading leaves a short notice in Pi; the returned history remains separate from new input and pending result delivery.
 
 ## Pi tools
 

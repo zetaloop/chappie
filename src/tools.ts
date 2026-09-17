@@ -6,6 +6,7 @@ import {
 	createWriteToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
+import type { Initialization } from "./broker.ts";
 import { toolResultsContent } from "./delivery.ts";
 import type { SessionInput } from "./ipc.ts";
 import { contentWithImageReferences } from "./resources.ts";
@@ -38,10 +39,18 @@ export function toolResult(
 	sessionId: string,
 	cwd: string,
 	inputs: SessionInput[] = [],
+	initialization?: Initialization,
 ) {
 	return {
 		content: [
-			{ type: "text" as const, text: JSON.stringify({ sessionId, cwd }) },
+			{
+				type: "text" as const,
+				text: JSON.stringify({
+					sessionId,
+					cwd,
+					...(initialization ? { initialization } : {}),
+				}),
+			},
 			...toolResultsContent(toolResults, sessionId),
 			...inputContent(inputs),
 		],

@@ -18,6 +18,7 @@ import type {
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { DeliveryRecord } from "./delivery.ts";
+import type { HistoryRange, HistoryResult } from "./history.ts";
 import type { ResourceData } from "./resources.ts";
 
 const defaultPort = 24274;
@@ -64,6 +65,7 @@ export type SessionResult =
 			toolResults: ToolResultMessage[];
 			inputs: SessionInput[];
 	  }
+	| { history: HistoryResult; cwd: string }
 	| { resource: ResourceData }
 	| { error: string };
 
@@ -78,6 +80,13 @@ export type BrokerMessage =
 	| { type: "stored"; id: string }
 	| { type: "notice"; sessionId: string; message: string; activity?: Activity }
 	| { type: "inspect"; id: number; sessionId: string }
+	| {
+			type: "history";
+			id: number;
+			sessionId: string;
+			range: HistoryRange;
+			chatId: string;
+	  }
 	| {
 			type: "chat";
 			id: number;

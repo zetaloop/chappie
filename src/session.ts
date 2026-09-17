@@ -14,6 +14,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { DeliveryRecord } from "./delivery.ts";
+import { historyResult } from "./history.ts";
 import {
 	type Activity,
 	type BrokerMessage,
@@ -283,6 +284,23 @@ export class LocalSession {
 						inputs: this.#inputs(),
 						...(globalAgents ? { globalAgents } : {}),
 					};
+				});
+				break;
+			case "history":
+				await this.#reply(message.id, message.sessionId, () => {
+					const context = this.#context;
+					if (!context) throw new Error("Chappie session is not available");
+					const history = historyResult(
+						context.sessionManager.getBranch(),
+						message.sessionId,
+						message.range,
+					);
+					this.#notify(
+						`ChatGPT ${message.chatId.slice(-4)} read history: ${history.count} entries`,
+						"info",
+						{ event: "history", chatId: message.chatId },
+					);
+					return { type: "result", id: message.id, cwd: context.cwd, history };
 				});
 				break;
 			case "ackInputs":

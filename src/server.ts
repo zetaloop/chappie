@@ -4,6 +4,7 @@ import * as z from "zod";
 import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
 import { deliveryContent } from "./delivery.ts";
+import { historyInput } from "./history.ts";
 import {
 	answerContent,
 	answerInput,
@@ -81,7 +82,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Connect to Pi",
 			description:
-				"Select this chat's default Pi session and return its environment and tool catalog. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session.",
+				"Select this chat's default Pi session and return its environment and tool catalog. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session. Read recent history when resuming work.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
@@ -123,7 +124,7 @@ export function createServer(broker: Broker): McpServer {
 		},
 		handle(async (args, context) => {
 			const chatId = requireChatId(context);
-			const { sessionId, cwd, inputs } = await broker.chat(
+			const { sessionId, cwd, inputs, initialization } = await broker.chat(
 				chatId,
 				args.sessionId,
 				args.text,
@@ -133,7 +134,10 @@ export function createServer(broker: Broker): McpServer {
 			return finishResult(
 				broker,
 				context,
-				textResult({ sessionId, cwd }, inputs),
+				textResult(
+					{ sessionId, cwd, ...(initialization ? { initialization } : {}) },
+					inputs,
+				),
 			);
 		}),
 	);
@@ -158,7 +162,7 @@ export function createServer(broker: Broker): McpServer {
 				_meta: { ui: { resourceUri: questionTemplate } },
 			},
 			handle(async ({ sessionId, ...input }, context) => {
-				const question = await broker.ask(
+				const { initialization, ...question } = await broker.ask(
 					requireChatId(context),
 					sessionId,
 					input,
@@ -167,6 +171,7 @@ export function createServer(broker: Broker): McpServer {
 				);
 				const result = await finishResult(broker, context, {
 					content: [
+						...(initialization ? textResult({ initialization }).content : []),
 						{
 							type: "text",
 							text: `Question created. Call ask_assert({"questionId":"${question.id}"}) next.`,
@@ -308,7 +313,13 @@ export function createServer(broker: Broker): McpServer {
 				broker,
 				context,
 				textResult(
-					{ session: inspected.session, tools: inspected.tools },
+					{
+						session: inspected.session,
+						tools: inspected.tools,
+						...(inspected.initialization
+							? { initialization: inspected.initialization }
+							: {}),
+					},
 					inputs,
 				),
 			);
@@ -356,6 +367,7 @@ export function createServer(broker: Broker): McpServer {
 					result.sessionId,
 					result.cwd,
 					result.inputs,
+					result.initialization,
 				),
 			);
 		}),
@@ -396,11 +408,44 @@ export function createServer(broker: Broker): McpServer {
 						result.sessionId,
 						result.cwd,
 						result.inputs,
+						result.initialization,
 					),
 				);
 			}),
 		);
 	}
+
+	server.registerTool(
+		"history",
+		{
+			title: "Session history",
+			description:
+				"Read recent Pi history with entry IDs and timestamps. Use before/after to page the current branch. History provides context for the current task. An explicit sessionId applies only to this read.",
+			inputSchema: historyInput.extend({
+				sessionId: z
+					.string()
+					.optional()
+					.describe("Pi session to read; defaults to this chat's session"),
+			}),
+			outputSchema,
+			annotations: toolAnnotations,
+		},
+		async ({ sessionId, ...range }, context) => {
+			const { history, ...session } = await broker.history(
+				requireChatId(context),
+				sessionId,
+				range,
+				context.mcpReq.signal,
+			);
+			const { content, ...page } = history;
+			return formatResult({
+				content: [
+					...textResult({ ...session, history: page }).content,
+					...content,
+				],
+			});
+		},
+	);
 
 	server.registerTool(
 		"sessions",
@@ -487,13 +532,21 @@ async function finishResult<
 		...deliveryContent(deliveries),
 		...answerContent(answers),
 	];
-	const structuredContent = {
-		text: content
-			.flatMap((block) => (block.type === "text" ? [block.text] : []))
-			.join("\n"),
-	};
 	await broker.acknowledge(deliveries, answers, context.mcpReq.signal);
-	return { ...result, content, structuredContent };
+	return formatResult({ ...result, content });
+}
+
+function formatResult<
+	T extends { content: ReturnType<typeof toolResult>["content"] },
+>(result: T) {
+	return {
+		...result,
+		structuredContent: {
+			text: result.content
+				.flatMap((block) => (block.type === "text" ? [block.text] : []))
+				.join("\n"),
+		},
+	};
 }
 
 function requestChatId(context: RequestContext): string | undefined {

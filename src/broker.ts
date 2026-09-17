@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
+import { type HistoryRange, historyInstructions } from "./history.ts";
 import {
 	type Activity,
 	type BrokerMessage,
@@ -49,28 +50,33 @@ interface ChangeWaiter {
 	onAbort(): void;
 }
 
+export interface Initialization {
+	sessionId: string;
+	instructions: string;
+}
+
 export interface InitializedSession extends Omit<SessionInspection, "tools"> {
 	selection: "existing" | "explicit" | "automatic";
+	initialization?: Initialization;
 	globalAgents?: string;
 	inputs: SessionInput[];
 	tools: { name: string; description: string }[];
 }
 
 export interface InspectedSession extends SessionInspection {
+	initialization?: Initialization;
 	inputs: SessionInput[];
 }
 
 export interface ChatResult {
+	initialization?: Initialization;
 	sessionId: string;
 	cwd: string;
 	inputs: SessionInput[];
 }
 
-export interface CallResult {
-	sessionId: string;
-	cwd: string;
+export interface CallResult extends ChatResult {
 	toolResults: ToolResultMessage[];
-	inputs: SessionInput[];
 }
 
 export class Broker {
@@ -176,13 +182,11 @@ export class Broker {
 		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<InitializedSession> {
-		const { sessionId: target, selection } = await this.#selectSession(
-			chatId,
-			sessionId,
-			requestId,
-			signal,
-			true,
-		);
+		const {
+			sessionId: target,
+			selection,
+			initialization,
+		} = await this.#selectSession(chatId, sessionId, requestId, signal, true);
 		const { inspection, inputs, globalAgents } = await this.#inspect(
 			target,
 			signal,
@@ -190,6 +194,7 @@ export class Broker {
 		await this.#ackInputs(target, inputs);
 		return {
 			selection,
+			...(initialization ? { initialization } : {}),
 			...inspection,
 			tools: inspection.tools.map(({ name, description }) => ({
 				name,
@@ -207,7 +212,7 @@ export class Broker {
 		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<ChatResult> {
-		const { sessionId: target } = await this.#selectSession(
+		const { sessionId: target, initialization } = await this.#selectSession(
 			chatId,
 			sessionId,
 			requestId,
@@ -220,7 +225,12 @@ export class Broker {
 		);
 		if ("message" in result) {
 			await this.#ackInputs(target, result.inputs);
-			return { sessionId: target, cwd: result.cwd, inputs: result.inputs };
+			return {
+				sessionId: target,
+				cwd: result.cwd,
+				inputs: result.inputs,
+				...(initialization ? { initialization } : {}),
+			};
 		}
 		throw new Error("Pi session returned no assistant message");
 	}
@@ -232,7 +242,7 @@ export class Broker {
 		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<InspectedSession> {
-		const { sessionId: target } = await this.#selectSession(
+		const { sessionId: target, initialization } = await this.#selectSession(
 			chatId,
 			sessionId,
 			requestId,
@@ -243,6 +253,7 @@ export class Broker {
 		const selected = names ? new Set(names) : undefined;
 		return {
 			...inspection,
+			...(initialization ? { initialization } : {}),
 			tools: selected
 				? inspection.tools.filter(({ name }) => selected.has(name))
 				: inspection.tools,
@@ -257,7 +268,7 @@ export class Broker {
 		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<CallResult> {
-		const { sessionId: target } = await this.#selectSession(
+		const { sessionId: target, initialization } = await this.#selectSession(
 			chatId,
 			sessionId,
 			requestId,
@@ -284,12 +295,31 @@ export class Broker {
 			await this.#ackInputs(target, result.inputs);
 			return {
 				sessionId: target,
+				...(initialization ? { initialization } : {}),
 				cwd: result.cwd,
 				toolResults: result.toolResults,
 				inputs: result.inputs,
 			};
 		}
 		throw new Error("Pi session returned no tool results");
+	}
+
+	async history(
+		chatId: string,
+		sessionId: string | undefined,
+		range: HistoryRange,
+		signal: AbortSignal,
+	) {
+		const target = sessionId ?? this.#state.binding(chatId);
+		if (!target) throw new Error("Specify a Pi sessionId to read history");
+		await this.#waitForSession(target, signal);
+		const result = await this.#request(
+			target,
+			(id) => ({ type: "history", id, sessionId: target, range, chatId }),
+			signal,
+		);
+		if ("history" in result) return { sessionId: target, ...result };
+		throw new Error("Pi session returned no history");
 	}
 
 	async inputs(
@@ -314,8 +344,8 @@ export class Broker {
 		input: QuestionInput,
 		requestId: unknown,
 		signal: AbortSignal,
-	): Promise<Question> {
-		const { sessionId: target } = await this.#selectSession(
+	): Promise<Question & { initialization?: Initialization }> {
+		const { sessionId: target, initialization } = await this.#selectSession(
 			chatId,
 			sessionId,
 			requestId,
@@ -341,7 +371,10 @@ export class Broker {
 				...(typeof requestId === "string" ? { requestId } : {}),
 			},
 		).catch(() => {});
-		return questionView(question);
+		return {
+			...questionView(question),
+			...(initialization ? { initialization } : {}),
+		};
 	}
 
 	async assertQuestion(
@@ -479,15 +512,21 @@ export class Broker {
 	): Promise<{
 		sessionId: string;
 		selection: InitializedSession["selection"];
+		initialization?: Initialization;
 	}> {
 		if (requestedId) {
 			await this.#waitForSession(requestedId, signal);
 			signal.throwIfAborted();
 			const boundId = this.#state.binding(chatId);
-			if (bindRequested || !boundId || boundId === requestedId) {
-				await this.#join(chatId, requestedId, requestId, bindRequested);
-			}
-			return { sessionId: requestedId, selection: "explicit" };
+			const initialization =
+				bindRequested || !boundId || boundId === requestedId
+					? await this.#join(chatId, requestedId, requestId, bindRequested)
+					: undefined;
+			return {
+				sessionId: requestedId,
+				selection: "explicit",
+				...(initialization ? { initialization } : {}),
+			};
 		}
 
 		for (;;) {
@@ -496,18 +535,32 @@ export class Broker {
 			if (boundId) {
 				await this.#waitForSession(boundId, signal);
 				signal.throwIfAborted();
-				if (bindRequested || this.#state.binding(chatId) === boundId) {
-					await this.#join(chatId, boundId, requestId, bindRequested);
-				}
-				return { sessionId: boundId, selection: "existing" };
+				const initialization =
+					bindRequested || this.#state.binding(chatId) === boundId
+						? await this.#join(chatId, boundId, requestId, bindRequested)
+						: undefined;
+				return {
+					sessionId: boundId,
+					selection: "existing",
+					...(initialization ? { initialization } : {}),
+				};
 			}
 			const occupied = this.#state.bindingCounts();
 			const candidate = [...this.#sessions.keys()].find(
 				(sessionId) => !occupied.has(sessionId),
 			);
 			if (candidate) {
-				await this.#join(chatId, candidate, requestId, bindRequested);
-				return { sessionId: candidate, selection: "automatic" };
+				const initialization = await this.#join(
+					chatId,
+					candidate,
+					requestId,
+					bindRequested,
+				);
+				return {
+					sessionId: candidate,
+					selection: "automatic",
+					...(initialization ? { initialization } : {}),
+				};
 			}
 			await this.#waitForChange(signal);
 		}
@@ -518,7 +571,7 @@ export class Broker {
 		sessionId: string,
 		requestId: unknown,
 		explicit = false,
-	): Promise<void> {
+	): Promise<Initialization | undefined> {
 		const previous = this.#state.binding(chatId);
 		const activity: Activity = {
 			chatId,
@@ -544,6 +597,7 @@ export class Broker {
 					initialization: explicit ? "explicit" : "implicit",
 				},
 			);
+			return { sessionId, instructions: historyInstructions };
 		}
 	}
 
