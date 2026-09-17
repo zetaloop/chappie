@@ -58,7 +58,6 @@ export class LocalSession {
 	readonly #syncs = new Map<number, SyncRequest>();
 	readonly #stores = new Map<string, StoreRequest>();
 	readonly #queue: RemoteRequest[] = [];
-	readonly #seenInputs = new Set<string>();
 	readonly #pendingInputs = new Map<string, SessionInput>();
 	readonly #deliveries = new Map<string, DeliveryRecord>();
 	#context: ExtensionContext | undefined;
@@ -97,6 +96,12 @@ export class LocalSession {
 		this.#pi.on("session_info_changed", (_event, context) => {
 			this.#context = context;
 			void this.#sync().catch(() => {});
+		});
+		this.#pi.on("session_tree", (event, context) => {
+			this.#context = context;
+			if (context.model?.provider === "chappie") {
+				this.#resetInputs(context, event.newLeafId);
+			}
 		});
 		this.#pi.on("context", (event, context) => ({
 			messages:
@@ -171,6 +176,7 @@ export class LocalSession {
 		this.#connection?.close();
 		this.#connection = undefined;
 		this.#context = undefined;
+		this.#resetInputs();
 		this.#rejectSyncs(new Error("Chappie session ended"));
 		this.#rejectStores(new Error("Chappie session ended"));
 	}
@@ -183,6 +189,9 @@ export class LocalSession {
 		if (!active) {
 			this.close();
 			return;
+		}
+		if (this.#sessionId !== context.sessionManager.getSessionId()) {
+			this.#resetInputs(context);
 		}
 		if (!this.#connection) {
 			this.#notify("Connecting to Chappie…");
@@ -448,16 +457,23 @@ export class LocalSession {
 		void this.#sync().catch(() => {});
 	}
 
+	#resetInputs(
+		context?: ExtensionContext,
+		cursor = context?.sessionManager.getLeafId() ?? null,
+	): void {
+		this.#sessionId = context?.sessionManager.getSessionId();
+		this.#inputCursor = cursor;
+		this.#pendingInputs.clear();
+	}
+
 	#collectInputs(): void {
 		const context = this.#context;
 		if (!context) return;
 		const sessionManager = context.sessionManager;
 		const sessionId = sessionManager.getSessionId();
 		if (this.#sessionId !== sessionId) {
-			this.#sessionId = sessionId;
-			this.#inputCursor = null;
-			this.#seenInputs.clear();
-			this.#pendingInputs.clear();
+			this.#resetInputs(context);
+			return;
 		}
 		const leafId = sessionManager.getLeafId();
 		if (leafId === this.#inputCursor) return;
@@ -469,18 +485,16 @@ export class LocalSession {
 				? sessionManager.getEntry(current.parentId)
 				: undefined;
 		}
+		if (this.#inputCursor !== null && !current) {
+			this.#resetInputs(context);
+			return;
+		}
 		for (const entry of entries.reverse()) {
-			if (
-				entry.type !== "message" ||
-				entry.message.role !== "user" ||
-				this.#seenInputs.has(entry.id)
-			)
-				continue;
+			if (entry.type !== "message" || entry.message.role !== "user") continue;
 			const message = entry.message as UserMessage;
 			if (typeof message.content !== "string") {
 				rememberImages(sessionId, message.content);
 			}
-			this.#seenInputs.add(entry.id);
 			this.#pendingInputs.set(entry.id, { id: entry.id, sessionId, message });
 		}
 		this.#inputCursor = leafId;
