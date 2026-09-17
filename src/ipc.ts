@@ -365,8 +365,7 @@ function listenServer(
 		};
 		server.once("error", onError);
 		server.once("listening", onListening);
-		if (typeof endpoint === "number") server.listen(endpoint);
-		else server.listen(endpoint);
+		server.listen(endpoint);
 	});
 }
 

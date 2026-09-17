@@ -4,7 +4,7 @@ Chappie is a single TypeScript Pi package that connects ChatGPT developer-mode t
 
 ## Architecture
 
-The package has one extension entry point with two runtime roles. `pi --chappie` starts the MCP broker over stdio. An ordinary Pi process registers the `chappie/chatgpt` provider and connects its current session to the broker through `node:net` using a Unix socket or Windows named pipe in Pi's agent directory.
+The package has one extension entry point with two runtime roles. `pi --chappie` starts the MCP broker over stdio. An ordinary Pi process registers the `chappie/chatgpt` provider and connects its current session through `node:net`: locally through a Unix socket or Windows named pipe in Pi's agent directory, or through TCP when `connect` targets another device.
 
 The broker owns ChatGPT conversation bindings, MCP request routing, deferred-result descriptors, and resource dispatch. The Pi extension owns provider output, native tool execution, session input, cancellation, and the bytes behind exported resources.
 
