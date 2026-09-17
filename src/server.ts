@@ -32,6 +32,9 @@ const outputSchema = z.object({
 		),
 });
 
+const syncInstructions =
+	"Synchronization ends accidental duplicate executions so one execution continues. Retain each initialization code privately in this ChatGPT context for its Pi session. On conflicting activity, call sync with action start, then verify with the code returned by your own most recent initialization. A rejected or unavailable code means this execution must send one final chat message with its task, entry time, and explicit exit statement, then end this ChatGPT response immediately. It must not wait for unlock, poll, reinitialize, or resume after release. Verification returns a new code and leaves ordinary tools and initialization locked. The verified execution uses chat and history to identify conflicting executions, require their final exit messages, and confirm their responses have ended before releasing with that code. Idle Pi status or a quiet history page is not proof of exit. Codes belong only in initialization and sync exchanges, never in chat, history, or notes.";
+
 const questionTemplate = "ui://chappie/question.html";
 const questionSchema = outputSchema.extend({ question: questionOutput });
 const toolAnnotations = {
@@ -55,26 +58,30 @@ export function createServer(broker: Broker): McpServer {
 			version: packageJson.version,
 		},
 		{
-			instructions: broker.askEnabled
-				? `${instructions}\n\n${questionInstructions}`
-				: instructions,
+			instructions: [
+				instructions,
+				...(broker.askEnabled ? [questionInstructions] : []),
+				...(broker.syncEnabled ? [syncInstructions] : []),
+			].join("\n\n"),
 		},
 	);
 
 	function handle<Args, Result>(
 		callback: (args: Args, context: RequestContext) => Promise<Result>,
+		communication = false,
 	) {
-		return async (args: Args, context: RequestContext): Promise<Result> => {
-			const signal = await broker.workflow(
-				requestChatId(context),
-				context.mcpReq._meta?.["otunnel/requestId"],
+		return (args: Args, context: RequestContext): Promise<Result> =>
+			broker.run(
+				requireChatId(context),
+				(args as { sessionId?: string }).sessionId,
 				context.mcpReq.signal,
+				(signal) =>
+					callback(args, {
+						...context,
+						mcpReq: { ...context.mcpReq, signal },
+					}),
+				communication,
 			);
-			return callback(args, {
-				...context,
-				mcpReq: { ...context.mcpReq, signal },
-			});
-		};
 	}
 
 	server.registerTool(
@@ -139,7 +146,7 @@ export function createServer(broker: Broker): McpServer {
 					inputs,
 				),
 			);
-		}),
+		}, true),
 	);
 
 	if (broker.askEnabled) {
@@ -231,7 +238,7 @@ export function createServer(broker: Broker): McpServer {
 				annotations: toolAnnotations,
 				_meta: { ui: { visibility: ["app"] }, "openai/widgetAccessible": true },
 			},
-			handle(async ({ questionId, answer, loaded = false }, context) => {
+			async ({ questionId, answer, loaded = false }, context) => {
 				const question = await broker.answer(
 					requireChatId(context),
 					questionId,
@@ -249,7 +256,7 @@ export function createServer(broker: Broker): McpServer {
 					content: [{ type: "text", text }],
 					structuredContent: { text, question },
 				};
-			}),
+			},
 		);
 
 		server.registerResource(
@@ -430,22 +437,70 @@ export function createServer(broker: Broker): McpServer {
 			outputSchema,
 			annotations: toolAnnotations,
 		},
-		async ({ sessionId, ...range }, context) => {
+		handle(async ({ sessionId, ...range }, context) => {
 			const { history, ...session } = await broker.history(
 				requireChatId(context),
 				sessionId,
 				range,
+				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);
 			const { content, ...page } = history;
 			return formatResult({
 				content: [
-					...textResult({ ...session, history: page }).content,
+					...textResult({
+						...session,
+						history: page,
+						...(broker.syncEnabled
+							? { sync: broker.syncState(session.sessionId) }
+							: {}),
+					}).content,
 					...content,
 				],
 			});
-		},
+		}, true),
 	);
+
+	if (broker.syncEnabled) {
+		server.registerTool(
+			"sync",
+			{
+				title: "Synchronize Pi activity",
+				description:
+					"End duplicate executions: start synchronization, verify your own latest initialization code, and release after conflicting executions exit. Failed verification requires a final chat exit message followed by ending this response. Verification leaves the session locked; chat and history support exit coordination.",
+				inputSchema: z.object({
+					action: z.enum(["start", "verify", "release"]),
+					code: z
+						.string()
+						.optional()
+						.describe(
+							"Initialization code for verification, or the verified code for release; omit when unavailable",
+						),
+					sessionId: z
+						.string()
+						.optional()
+						.describe(
+							"Pi session to synchronize; defaults to this chat's session",
+						),
+				}),
+				outputSchema,
+				annotations: toolAnnotations,
+			},
+			async ({ action, code, sessionId }, context) =>
+				formatResult(
+					textResult(
+						await broker.sync(
+							requireChatId(context),
+							sessionId,
+							action,
+							code,
+							context.mcpReq._meta?.["otunnel/requestId"],
+							context.mcpReq.signal,
+						),
+					),
+				),
+		);
+	}
 
 	server.registerTool(
 		"sessions",
@@ -465,12 +520,7 @@ export function createServer(broker: Broker): McpServer {
 		handle(async (args, context) => {
 			const chatId = requestChatId(context);
 			const inputs = chatId
-				? await broker.inputs(
-						chatId,
-						args.sessionId,
-						context.mcpReq._meta?.["otunnel/requestId"],
-						context.mcpReq.signal,
-					)
+				? await broker.inputs(chatId, args.sessionId, context.mcpReq.signal)
 				: [];
 			const result = textResult(
 				{
@@ -480,7 +530,7 @@ export function createServer(broker: Broker): McpServer {
 				inputs,
 			);
 			return finishResult(broker, context, result);
-		}),
+		}, true),
 	);
 
 	server.registerResource(
@@ -524,8 +574,11 @@ function textResult(
 async function finishResult<
 	T extends { content: ReturnType<typeof toolResult>["content"] },
 >(broker: Broker, context: RequestContext, result: T) {
+	context.mcpReq.signal.throwIfAborted();
 	const chatId = requestChatId(context);
-	const deliveries = chatId ? await broker.deliveries(chatId) : [];
+	if (!broker.deliveryAllowed(context.mcpReq.signal))
+		return formatResult(result);
+	const deliveries = chatId ? broker.deliveries(chatId) : [];
 	const answers = chatId ? broker.answers(chatId) : [];
 	const content = [
 		...result.content,

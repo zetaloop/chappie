@@ -9,10 +9,11 @@ import {
 	type StreamOptions,
 	type ToolCall,
 } from "@earendil-works/pi-ai";
+import type { Source } from "./activity.ts";
 
 export class ProviderOutput {
 	readonly stream: AssistantMessageEventStream;
-	readonly message: AssistantMessage;
+	readonly message: AssistantMessage & { chappie?: Source };
 	readonly finished: Promise<void>;
 	#resolveFinished: () => void;
 	#removeAbort?: () => void;

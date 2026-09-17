@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import { type Activity, chatLabel, source } from "./activity.ts";
 import { readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import { type HistoryRange, historyInstructions } from "./history.ts";
 import {
-	type Activity,
 	type BrokerMessage,
 	IpcServer,
 	type JsonLinePeer,
@@ -25,6 +25,9 @@ import { type ResourceData, resourceSessionId } from "./resources.ts";
 import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
 
+const exitInstructions =
+	"Send one final chat message stating your task, entry time, and that this execution is ending; keep all codes private. Then end this ChatGPT response immediately with no further tool calls. Do not wait for unlock, poll history, reinitialize, or resume this task after release.";
+
 interface RegisteredSession {
 	description: SessionDescription;
 	peer: JsonLinePeer<SessionMessage, BrokerMessage>;
@@ -38,9 +41,21 @@ interface PendingRequest {
 	onAbort(): void;
 }
 
-interface Workflow {
-	id: string;
+interface InitializationGrant {
+	sessionId: string;
+	code: string;
+	previousCode: string | undefined;
+	committed: boolean;
+}
+
+interface Operation {
+	chatId: string;
+	sessionId: string | undefined;
 	controller: AbortController;
+	communication: boolean;
+	coordinating: boolean;
+	revisions: Map<string, number>;
+	initialization?: InitializationGrant;
 }
 
 interface ChangeWaiter {
@@ -51,6 +66,7 @@ interface ChangeWaiter {
 }
 
 export interface Initialization {
+	code?: string;
 	sessionId: string;
 	instructions: string;
 }
@@ -86,9 +102,12 @@ export class Broker {
 	readonly #sessions = new Map<string, RegisteredSession>();
 	readonly #pending = new Map<number, PendingRequest>();
 	readonly #waiters = new Set<ChangeWaiter>();
-	readonly #workflows = new Map<string, Workflow>();
+	readonly #operations = new Map<AbortSignal, Operation>();
+	readonly #locks = new Map<string, boolean>();
+	readonly #startingLocks = new Set<string>();
+	readonly #syncRevisions = new Map<string, number>();
 	#ask = true;
-	#latestWorkflow = false;
+	#sync = false;
 	#nextRequestId = 1;
 
 	constructor(agentDir: string) {
@@ -104,17 +123,20 @@ export class Broker {
 	async start(): Promise<void> {
 		const config = await readConfig(this.#agentDir);
 		this.#ask = config.ask ?? true;
-		this.#latestWorkflow = config.latestWorkflow ?? false;
+		this.#sync = config.sync ?? false;
 		await this.#state.load();
 		await this.#ipc.start(config.listen ?? false);
 	}
 
 	async close(): Promise<void> {
 		const error = new Error("Chappie broker ended");
-		for (const workflow of this.#workflows.values()) {
-			workflow.controller.abort(error);
+		for (const operation of this.#operations.values()) {
+			operation.controller.abort(error);
 		}
-		this.#workflows.clear();
+		this.#operations.clear();
+		this.#locks.clear();
+		this.#startingLocks.clear();
+		this.#syncRevisions.clear();
 		for (const [id, pending] of this.#pending) {
 			this.#finishRequest(id, pending);
 			pending.reject(error);
@@ -128,43 +150,213 @@ export class Broker {
 		await this.#ipc.close();
 	}
 
-	async workflow(
-		chatId: string | undefined,
-		requestId: unknown,
+	async run<T>(
+		chatId: string,
+		sessionId: string | undefined,
 		signal: AbortSignal,
-	): Promise<AbortSignal> {
-		if (!this.#latestWorkflow || !chatId) return signal;
-		const id = workflowId(requestId);
-		if (!id) return signal;
-		signal.throwIfAborted();
-		const latest = this.#state.workflow(chatId);
-		const superseded = new Error(
-			"A newer workflow is handling this chat. Stop this workflow.",
-		);
-		// UUIDv7 puts the creation timestamp first, including across broker restarts.
-		if (latest && id < latest) throw superseded;
-		let workflow = this.#workflows.get(chatId);
-		if (!workflow || workflow.id !== id) {
-			const previous = workflow;
-			workflow = { id, controller: new AbortController() };
-			this.#workflows.set(chatId, workflow);
-			previous?.controller.abort(superseded);
-			if (latest !== id) await this.#state.setWorkflow(chatId, id);
+		callback: (signal: AbortSignal) => Promise<T>,
+		communication = false,
+	): Promise<T> {
+		if (!communication) this.#requireUnlocked(chatId, sessionId, signal);
+		if (!this.#sync) return callback(signal);
+		const controller = new AbortController();
+		const combined = AbortSignal.any([signal, controller.signal]);
+		const operation: Operation = {
+			chatId,
+			sessionId,
+			controller,
+			communication,
+			coordinating: false,
+			revisions: new Map(),
+		};
+		this.#operations.set(combined, operation);
+		this.#observe(operation, this.#state.binding(chatId));
+		this.#observe(operation, sessionId);
+		try {
+			const result = await callback(combined);
+			combined.throwIfAborted();
+			const initialization = operation.initialization;
+			if (initialization) {
+				initialization.previousCode = this.#state.code(
+					initialization.sessionId,
+				);
+				initialization.committed = true;
+				await this.#state.setCode(
+					initialization.sessionId,
+					initialization.code,
+				);
+				combined.throwIfAborted();
+			}
+			return result;
+		} catch (error) {
+			await this.#rollbackInitialization(operation);
+			throw error;
+		} finally {
+			this.#operations.delete(combined);
 		}
-		const combined = AbortSignal.any([signal, workflow.controller.signal]);
-		combined.throwIfAborted();
-		return combined;
 	}
 
-	listSessions(
-		sessionId?: string,
-	): (SessionDescription & { bindingCount: number })[] {
+	deliveryAllowed(signal: AbortSignal): boolean {
+		const operation = this.#operations.get(signal);
+		if (!operation?.communication) return true;
+		if (operation.coordinating) return false;
+		for (const [sessionId, revision] of operation.revisions) {
+			if (
+				this.#locks.has(sessionId) ||
+				(this.#syncRevisions.get(sessionId) ?? 0) !== revision
+			)
+				return false;
+		}
+		return true;
+	}
+
+	get syncEnabled(): boolean {
+		return this.#sync;
+	}
+
+	syncState(sessionId: string) {
+		return {
+			locked: this.#locks.has(sessionId),
+			verified: this.#locks.get(sessionId) ?? false,
+		};
+	}
+
+	synchronizing(chatId?: string, sessionId?: string): string | undefined {
+		const boundId = chatId ? this.#state.binding(chatId) : undefined;
+		if (boundId && this.#locks.has(boundId)) return boundId;
+		if (sessionId && this.#locks.has(sessionId)) return sessionId;
+		return undefined;
+	}
+
+	async sync(
+		chatId: string,
+		sessionId: string | undefined,
+		action: "start" | "verify" | "release",
+		code: string | undefined,
+		requestId: unknown,
+		signal: AbortSignal,
+	) {
+		if (!this.#sync) throw new Error("Session synchronization is disabled");
+		signal.throwIfAborted();
+		const target = sessionId ?? this.#state.binding(chatId);
+		if (!target) throw new Error("Specify a Pi sessionId to synchronize");
+		const locked = this.synchronizing(chatId);
+		if (locked && locked !== target) throw new Error(syncMessage(locked));
+		const activity = source(chatId, requestId);
+		const result = { sessionId: target };
+		if (action === "start") {
+			if (!this.#locks.has(target)) {
+				this.#locks.set(target, false);
+				this.#startingLocks.add(target);
+				this.#syncRevisions.set(
+					target,
+					(this.#syncRevisions.get(target) ?? 0) + 1,
+				);
+				const error = new Error(syncMessage(target));
+				const rollbacks: Promise<void>[] = [];
+				for (const operation of this.#operations.values()) {
+					if (
+						operation.sessionId !== target &&
+						this.#state.binding(operation.chatId) !== target
+					)
+						continue;
+					if (operation.initialization)
+						rollbacks.push(this.#rollbackInitialization(operation));
+					if (!operation.communication || operation.initialization)
+						operation.controller.abort(error);
+				}
+				this.#notifyChange();
+				try {
+					await Promise.all(rollbacks);
+					if (!this.#state.code(target)) {
+						this.#locks.delete(target);
+						this.#notifyChange();
+						throw new Error(
+							"Initialize this Pi session before starting synchronization",
+						);
+					}
+					await this.#notify(
+						target,
+						`${chatLabel(activity)} started synchronization`,
+						{ ...activity, event: "sync_started" },
+					);
+				} finally {
+					this.#startingLocks.delete(target);
+				}
+			}
+			return {
+				...result,
+				...this.syncState(target),
+				instructions: syncMessage(target),
+			};
+		}
+		if (this.#startingLocks.has(target))
+			throw new Error("Synchronization is still starting; retry this action");
+		if (!this.#locks.has(target))
+			throw new Error("This Pi session is not synchronizing");
+		const current = this.#state.code(target);
+		if (!current)
+			throw new Error("This Pi session has no synchronization code");
+		if (code !== current) {
+			await this.#notify(
+				target,
+				`${chatLabel(activity)} could not verify synchronization`,
+				{ ...activity, event: "sync_rejected" },
+			);
+			throw new Error(
+				`The sync code is missing or outdated. This execution is a stale, accidental duplicate. ${exitInstructions}`,
+			);
+		}
+		if (action === "verify") {
+			let renewed: string | undefined;
+			if (!this.#locks.get(target)) {
+				this.#locks.set(target, true);
+				renewed = randomBytes(6).toString("hex");
+				await this.#state.setCode(target, renewed);
+				await this.#notify(
+					target,
+					`${chatLabel(activity)} verified synchronization`,
+					{ ...activity, event: "sync_verified" },
+				);
+			}
+			return {
+				...result,
+				...this.syncState(target),
+				...(renewed ? { code: renewed } : {}),
+				instructions:
+					"This is the surviving execution. Keep the verified code private in this ChatGPT context. Use chat and history to identify every observed conflicting execution and require its final exit. Confirm they have ended their responses, rather than only paused ordinary tools. Verification, idle Pi status, or a quiet history page alone does not establish their exit. Release with this code only after explicit final exit statements and resolution of conflicting activity; ordinary tools remain locked until then.",
+			};
+		}
+		if (!this.#locks.get(target))
+			throw new Error(
+				"Verify the initialization code before releasing synchronization",
+			);
+		this.#locks.delete(target);
+		this.#notifyChange();
+		await this.#notify(
+			target,
+			`${chatLabel(activity)} released synchronization`,
+			{ ...activity, event: "sync_released" },
+		);
+		return {
+			...result,
+			...this.syncState(target),
+			instructions:
+				"Synchronization released. The surviving execution may continue the current task. Executions with rejected or unavailable codes remain finished.",
+		};
+	}
+
+	listSessions(sessionId?: string): (SessionDescription & {
+		bindingCount: number;
+		sync?: { locked: boolean; verified: boolean };
+	})[] {
 		const counts = this.#state.bindingCounts();
 		return [...this.#sessions.values()]
 			.filter(({ description }) => !sessionId || description.id === sessionId)
 			.map(({ description }) => ({
 				...description,
 				bindingCount: counts.get(description.id) ?? 0,
+				...(this.#sync ? { sync: this.syncState(description.id) } : {}),
 			}));
 	}
 
@@ -191,7 +383,7 @@ export class Broker {
 			target,
 			signal,
 		);
-		await this.#ackInputs(target, inputs);
+		await this.#ackInputs(target, inputs, signal);
 		return {
 			selection,
 			...(initialization ? { initialization } : {}),
@@ -217,18 +409,27 @@ export class Broker {
 			sessionId,
 			requestId,
 			signal,
+			false,
+			true,
 		);
 		const result = await this.#request(
 			target,
-			(id) => ({ type: "chat", id, chatId, sessionId: target, text }),
+			(id) => ({
+				type: "chat",
+				id,
+				...source(chatId, requestId),
+				sessionId: target,
+				text,
+			}),
 			signal,
 		);
 		if ("message" in result) {
-			await this.#ackInputs(target, result.inputs);
+			const inputs = this.deliveryAllowed(signal) ? result.inputs : [];
+			await this.#ackInputs(target, inputs, signal);
 			return {
 				sessionId: target,
 				cwd: result.cwd,
-				inputs: result.inputs,
+				inputs,
 				...(initialization ? { initialization } : {}),
 			};
 		}
@@ -249,7 +450,7 @@ export class Broker {
 			signal,
 		);
 		const { inspection, inputs } = await this.#inspect(target, signal);
-		await this.#ackInputs(target, inputs);
+		await this.#ackInputs(target, inputs, signal);
 		const selected = names ? new Set(names) : undefined;
 		return {
 			...inspection,
@@ -285,14 +486,14 @@ export class Broker {
 			(id) => ({
 				type: "call",
 				id,
-				chatId,
+				...source(chatId, requestId),
 				sessionId: target,
 				calls: toolCalls,
 			}),
 			signal,
 		);
 		if ("toolResults" in result) {
-			await this.#ackInputs(target, result.inputs);
+			await this.#ackInputs(target, result.inputs, signal);
 			return {
 				sessionId: target,
 				...(initialization ? { initialization } : {}),
@@ -308,6 +509,7 @@ export class Broker {
 		chatId: string,
 		sessionId: string | undefined,
 		range: HistoryRange,
+		requestId: unknown,
 		signal: AbortSignal,
 	) {
 		const target = sessionId ?? this.#state.binding(chatId);
@@ -315,7 +517,13 @@ export class Broker {
 		await this.#waitForSession(target, signal);
 		const result = await this.#request(
 			target,
-			(id) => ({ type: "history", id, sessionId: target, range, chatId }),
+			(id) => ({
+				type: "history",
+				id,
+				sessionId: target,
+				range,
+				...source(chatId, requestId),
+			}),
 			signal,
 		);
 		if ("history" in result) return { sessionId: target, ...result };
@@ -325,16 +533,14 @@ export class Broker {
 	async inputs(
 		chatId: string,
 		sessionId: string | undefined,
-		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<SessionInput[]> {
-		const boundId = this.#state.binding(chatId);
-		const target = sessionId ?? boundId;
-		if (!target || !this.#sessions.has(target)) return [];
-		signal.throwIfAborted();
-		if (target === boundId) await this.#join(chatId, target, requestId);
+		const target = sessionId ?? this.#state.binding(chatId);
+		if (!target || !this.#sessions.has(target) || !this.deliveryAllowed(signal))
+			return [];
 		const { inputs } = await this.#inspect(target, signal);
-		await this.#ackInputs(target, inputs);
+		if (!this.deliveryAllowed(signal)) return [];
+		await this.#ackInputs(target, inputs, signal);
 		return inputs;
 	}
 
@@ -351,6 +557,7 @@ export class Broker {
 			requestId,
 			signal,
 		);
+		this.#requireUnlocked(chatId, target, signal);
 		const session = this.#sessions.get(target);
 		if (!session) throw new Error(`Pi session ${target} is offline`);
 		const question: QuestionRecord = {
@@ -362,13 +569,13 @@ export class Broker {
 			delivered: false,
 		};
 		await this.#state.addQuestion(question);
+		const activity = source(chatId, requestId);
 		void this.#notify(
 			target,
-			`ChatGPT ${chatId.slice(-4)} asked: ${question.question}`,
+			`${chatLabel(activity)} asked: ${question.question}`,
 			{
 				event: "asked",
-				chatId,
-				...(typeof requestId === "string" ? { requestId } : {}),
+				...activity,
 			},
 		).catch(() => {});
 		return {
@@ -385,6 +592,7 @@ export class Broker {
 		for (;;) {
 			signal.throwIfAborted();
 			const question = this.#state.question(chatId, id);
+			this.#requireUnlocked(chatId, question.sessionId, signal);
 			if (question.loaded) return questionView(question);
 			await this.#waitForChange(signal);
 		}
@@ -429,7 +637,10 @@ export class Broker {
 	}
 
 	answers(chatId: string): QuestionRecord[] {
-		return this.#state.answers(chatId);
+		if (this.synchronizing(chatId)) return [];
+		return this.#state
+			.answers(chatId)
+			.filter((question) => !this.#locks.has(question.sessionId));
 	}
 
 	async readResource(uri: string, signal: AbortSignal): Promise<ResourceData> {
@@ -445,7 +656,10 @@ export class Broker {
 	}
 
 	deliveries(chatId: string): DeliveryRecord[] {
-		return this.#state.deliveries(chatId);
+		if (this.synchronizing(chatId)) return [];
+		return this.#state
+			.deliveries(chatId)
+			.filter((delivery) => !this.#locks.has(delivery.sessionId));
 	}
 
 	acknowledge(
@@ -509,60 +723,48 @@ export class Broker {
 		requestId: unknown,
 		signal: AbortSignal,
 		bindRequested = false,
+		communication = false,
 	): Promise<{
 		sessionId: string;
 		selection: InitializedSession["selection"];
 		initialization?: Initialization;
 	}> {
-		if (requestedId) {
-			await this.#waitForSession(requestedId, signal);
-			signal.throwIfAborted();
-			const boundId = this.#state.binding(chatId);
-			const initialization =
-				bindRequested || !boundId || boundId === requestedId
-					? await this.#join(chatId, requestedId, requestId, bindRequested)
-					: undefined;
-			return {
-				sessionId: requestedId,
-				selection: "explicit",
-				...(initialization ? { initialization } : {}),
-			};
-		}
-
 		for (;;) {
 			signal.throwIfAborted();
 			const boundId = this.#state.binding(chatId);
-			if (boundId) {
-				await this.#waitForSession(boundId, signal);
-				signal.throwIfAborted();
-				const initialization =
-					bindRequested || this.#state.binding(chatId) === boundId
-						? await this.#join(chatId, boundId, requestId, bindRequested)
-						: undefined;
-				return {
-					sessionId: boundId,
-					selection: "existing",
-					...(initialization ? { initialization } : {}),
-				};
-			}
-			const occupied = this.#state.bindingCounts();
-			const candidate = [...this.#sessions.keys()].find(
-				(sessionId) => !occupied.has(sessionId),
-			);
-			if (candidate) {
-				const initialization = await this.#join(
-					chatId,
-					candidate,
-					requestId,
-					bindRequested,
+			let target = requestedId ?? boundId;
+			if (!target) {
+				const occupied = this.#state.bindingCounts();
+				target = [...this.#sessions.keys()].find(
+					(id) => !occupied.has(id) && !this.#locks.has(id),
 				);
-				return {
-					sessionId: candidate,
-					selection: "automatic",
-					...(initialization ? { initialization } : {}),
-				};
 			}
-			await this.#waitForChange(signal);
+			if (!communication) this.#requireUnlocked(chatId, target, signal);
+			if (!target) {
+				await this.#waitForChange(signal);
+				continue;
+			}
+			await this.#waitForSession(target, signal);
+			signal.throwIfAborted();
+			if (!communication) this.#requireUnlocked(chatId, target, signal);
+			const current = this.#state.binding(chatId);
+			const initialize =
+				bindRequested ||
+				!current ||
+				(current === target && this.#sync && !this.#state.code(target));
+			const initialization =
+				initialize && !this.synchronizing(chatId, target)
+					? await this.#join(chatId, target, requestId, signal, bindRequested)
+					: undefined;
+			return {
+				sessionId: target,
+				selection: requestedId
+					? "explicit"
+					: boundId
+						? "existing"
+						: "automatic",
+				...(initialization ? { initialization } : {}),
+			};
 		}
 	}
 
@@ -570,35 +772,84 @@ export class Broker {
 		chatId: string,
 		sessionId: string,
 		requestId: unknown,
+		signal: AbortSignal,
 		explicit = false,
-	): Promise<Initialization | undefined> {
+	): Promise<Initialization> {
+		this.#requireUnlocked(chatId, sessionId, signal);
+		const operation = this.#operations.get(signal);
+		if (operation) this.#observe(operation, sessionId);
 		const previous = this.#state.binding(chatId);
-		const activity: Activity = {
-			chatId,
-			...(typeof requestId === "string" ? { requestId } : {}),
-		};
-		const workflow = workflowId(requestId);
-		const joined = await this.#state.join(chatId, sessionId, workflow);
+		const code = this.#sync ? randomBytes(6).toString("hex") : undefined;
+		await this.#state.bind(chatId, sessionId);
+		this.#requireUnlocked(chatId, sessionId, signal);
+		if (code) {
+			if (!operation)
+				throw new Error(
+					"Initialization is outside a tracked Chappie operation",
+				);
+			operation.initialization = {
+				sessionId,
+				code,
+				previousCode: undefined,
+				committed: false,
+			};
+		}
+		const activity = source(chatId, requestId);
 		if (previous !== sessionId) {
 			this.#notifyChange();
 			if (previous)
-				await this.#notify(previous, `ChatGPT ${chatId.slice(-4)} left`, {
+				await this.#notify(previous, `${chatLabel(activity)} left`, {
 					...activity,
 					event: "left",
 				});
 		}
-		if (joined || explicit) {
-			await this.#notify(
+		this.#requireUnlocked(chatId, sessionId, signal);
+		await this.#notify(sessionId, `${chatLabel(activity)} joined`, {
+			...activity,
+			event: "joined",
+			initialization: explicit ? "explicit" : "implicit",
+		});
+		return {
+			sessionId,
+			...(code ? { code } : {}),
+			instructions: code
+				? `${historyInstructions} Retain this initialization code in this ChatGPT context for sync verification; Pi history and chat messages contain only coordination details.`
+				: historyInstructions,
+		};
+	}
+
+	#requireUnlocked(
+		chatId: string,
+		sessionId: string | undefined,
+		signal: AbortSignal,
+	): void {
+		signal.throwIfAborted();
+		const operation = this.#operations.get(signal);
+		if (operation) this.#observe(operation, sessionId);
+		const locked = this.synchronizing(chatId, sessionId);
+		if (locked) throw new Error(syncMessage(locked));
+	}
+
+	#observe(operation: Operation, sessionId: string | undefined): void {
+		if (!sessionId) return;
+		operation.sessionId ??= sessionId;
+		if (!operation.revisions.has(sessionId)) {
+			operation.revisions.set(
 				sessionId,
-				`ChatGPT ${chatId.slice(-4)}${workflow ? ` (${workflow.slice(-4)})` : ""} joined`,
-				{
-					...activity,
-					event: "joined",
-					initialization: explicit ? "explicit" : "implicit",
-				},
+				this.#syncRevisions.get(sessionId) ?? 0,
 			);
-			return { sessionId, instructions: historyInstructions };
 		}
+		if (this.#locks.has(sessionId)) operation.coordinating = true;
+	}
+
+	async #rollbackInitialization(operation: Operation): Promise<void> {
+		const initialization = operation.initialization;
+		if (!initialization?.committed) return;
+		initialization.committed = false;
+		await this.#state.setCode(
+			initialization.sessionId,
+			initialization.previousCode,
+		);
 	}
 
 	async #notify(
@@ -628,7 +879,12 @@ export class Broker {
 		throw new Error("Pi session returned no inspection");
 	}
 
-	async #ackInputs(sessionId: string, inputs: SessionInput[]): Promise<void> {
+	async #ackInputs(
+		sessionId: string,
+		inputs: SessionInput[],
+		signal: AbortSignal,
+	): Promise<void> {
+		signal.throwIfAborted();
 		if (inputs.length === 0) return;
 		const session = this.#sessions.get(sessionId);
 		if (!session) throw new Error(`Pi session ${sessionId} is offline`);
@@ -644,6 +900,12 @@ export class Broker {
 		message: (id: number) => BrokerMessage,
 		signal: AbortSignal,
 	): Promise<SessionResult> {
+		const operation = this.#operations.get(signal);
+		if (operation) {
+			this.#observe(operation, sessionId);
+			if (!operation.communication)
+				this.#requireUnlocked(operation.chatId, sessionId, signal);
+		}
 		const session = this.#sessions.get(sessionId);
 		if (!session) throw new Error(`Pi session ${sessionId} is offline`);
 		if (signal.aborted) throw abortError(signal);
@@ -672,12 +934,10 @@ export class Broker {
 		};
 		this.#pending.set(id, pending);
 		signal.addEventListener("abort", onAbort, { once: true });
-		try {
-			await session.peer.send(message(id));
-		} catch (error) {
+		void session.peer.send(message(id)).catch((error: unknown) => {
 			this.#finishRequest(id, pending);
-			throw error;
-		}
+			pending.reject(error instanceof Error ? error : new Error(String(error)));
+		});
 		return completion.promise;
 	}
 
@@ -729,12 +989,8 @@ export class Broker {
 	}
 }
 
-function workflowId(requestId: unknown): string | undefined {
-	return typeof requestId === "string"
-		? /^wfr_[0-9a-f]{12}7[0-9a-f]{3}[89ab][0-9a-f]{15}(?=\/|$)/i
-				.exec(requestId)?.[0]
-				.toLowerCase()
-		: undefined;
+function syncMessage(sessionId: string): string {
+	return `Pi session ${sessionId} is synchronizing to end duplicate executions. Ordinary tools and initialization are locked for this session and its bound ChatGPT conversations. Verify with the code returned by your own most recent initialization. With a missing or rejected code, this execution is an accidental duplicate: ${exitInstructions} The verified execution must confirm the conflicting executions' final exits before releasing the lock.`;
 }
 
 function abortError(signal: AbortSignal): Error {

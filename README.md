@@ -29,9 +29,9 @@ Call `init` from ChatGPT to connect the conversation to Pi. A conversation can r
 
 ## Usage
 
-Chappie exposes common coding tools directly and every active Pi tool through `tools` and `call`. `chat` sends an assistant message to Pi, Pi input accompanies later tool results, and `transfer` moves files in either direction. `ask` can present a persistent question in ChatGPT when webpage questions are enabled.
+Chappie exposes common coding tools directly and every active Pi tool through `tools` and `call`. `chat` sends an assistant message to Pi, Pi input accompanies later tool results, and `transfer` moves files in either direction. `history` reads recent Pi messages and activity with timestamps. `ask` can present a persistent question in ChatGPT when webpage questions are enabled.
 
-See the [tool guide](docs/tools.md) for session selection, Pi tools, webpage questions, and file transfer.
+See the [tool guide](docs/tools.md) for session selection, history, synchronization, Pi tools, webpage questions, and file transfer.
 
 ## Configuration
 
@@ -51,4 +51,12 @@ Remote Pi sessions connect through the broker device's mDNS name:
 
 The default port is `24274`. Set `listen` to a port number or append `:port` to `connect` to use another one. Only the broker device runs otunnel; local and remote sessions appear in the same session list.
 
-Set `ask` to `false` to disable webpage questions. Set `latestWorkflow` to `true` to let a newer otunnel workflow supersede older requests from the same ChatGPT conversation.
+Set `ask` to `false` to disable webpage questions.
+
+Optional session synchronization ends duplicate executions so one execution continues:
+
+```json
+{ "sync": true }
+```
+
+With synchronization enabled, initialization returns a fresh code. `sync` locks a Pi session and its bound conversations while executions verify their codes. Rejected executions announce their exit and end their responses; the verified execution confirms those exits through `chat` and `history`, then releases the lock. Codes persist in broker state; locks last for the broker process. See [synchronization](docs/tools.md#synchronization) for the tool sequence.

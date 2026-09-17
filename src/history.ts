@@ -1,6 +1,8 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import * as z from "zod";
+import type { Source } from "./activity.ts";
 import { toolResultsContent } from "./delivery.ts";
+import type { ProviderOutput } from "./provider.ts";
 import { contentWithImageReferences, rememberImages } from "./resources.ts";
 
 export const historyInput = z.object({
@@ -55,10 +57,22 @@ export function historyResult(
 		}
 	});
 	const selected = after ? entries.slice(0, limit) : entries.slice(-limit);
+	const sources = new Map<string, Source>();
+	for (const entry of branch) {
+		if (entry.type !== "message" || entry.message.role !== "assistant")
+			continue;
+		const message = entry.message as ProviderOutput["message"];
+		if (!message.chappie) continue;
+		for (const block of message.content) {
+			if (block.type === "toolCall") sources.set(block.id, message.chappie);
+		}
+	}
 	return {
 		count: selected.length,
 		hasMore: entries.length > selected.length,
-		content: selected.flatMap((entry) => entryContent(entry, sessionId)),
+		content: selected.flatMap((entry) =>
+			entryContent(entry, sessionId, sources),
+		),
 	};
 }
 
@@ -72,6 +86,7 @@ function entryIndex(entries: SessionEntry[], id: string): number {
 function entryContent(
 	entry: SessionEntry,
 	sessionId: string,
+	sources: Map<string, Source>,
 ): ReturnType<typeof toolResultsContent> {
 	const record: Record<string, unknown> = { ...entry };
 	const message = entry.type === "message" ? entry.message : entry;
@@ -79,8 +94,13 @@ function entryContent(
 		return [{ type: "text", text: JSON.stringify(record) }];
 	}
 	const { content, ...metadata } = message;
-	if (entry.type === "message") record.message = metadata;
-	else delete record.content;
+	if (entry.type === "message") {
+		const source =
+			entry.message.role === "toolResult"
+				? sources.get(entry.message.toolCallId)
+				: undefined;
+		record.message = { ...metadata, ...(source ? { chappie: source } : {}) };
+	} else delete record.content;
 	const header = { type: "text" as const, text: JSON.stringify(record) };
 	if (entry.type === "message" && entry.message.role === "toolResult") {
 		rememberImages(sessionId, entry.message.content);

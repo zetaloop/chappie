@@ -17,6 +17,7 @@ import type {
 	SlashCommandInfo,
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
+import type { Activity } from "./activity.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { HistoryRange, HistoryResult } from "./history.ts";
 import type { ResourceData } from "./resources.ts";
@@ -37,13 +38,6 @@ export interface SessionInspection {
 	session: SessionDescription;
 	tools: ToolInfo[];
 	skills: SlashCommandInfo[];
-}
-
-export interface Activity {
-	event?: string;
-	chatId?: string;
-	requestId?: string;
-	initialization?: "explicit" | "implicit";
 }
 
 export interface SessionInput {
@@ -86,11 +80,13 @@ export type BrokerMessage =
 			sessionId: string;
 			range: HistoryRange;
 			chatId: string;
+			requestId?: string;
 	  }
 	| {
 			type: "chat";
 			id: number;
 			chatId: string;
+			requestId?: string;
 			sessionId: string;
 			text: string;
 	  }
@@ -98,6 +94,7 @@ export type BrokerMessage =
 			type: "call";
 			id: number;
 			chatId: string;
+			requestId?: string;
 			sessionId: string;
 			calls: ToolCall[];
 	  }

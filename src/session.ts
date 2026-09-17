@@ -13,10 +13,10 @@ import type {
 	SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { type Activity, chatLabel, source } from "./activity.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import { historyResult } from "./history.ts";
 import {
-	type Activity,
 	type BrokerMessage,
 	IpcClient,
 	type SessionDescription,
@@ -296,9 +296,12 @@ export class LocalSession {
 						message.range,
 					);
 					this.#notify(
-						`ChatGPT ${message.chatId.slice(-4)} read history: ${history.count} entries`,
+						`${chatLabel(message)} read history: ${history.count} entries`,
 						"info",
-						{ event: "history", chatId: message.chatId },
+						{
+							event: "history",
+							...source(message.chatId, message.requestId),
+						},
 					);
 					return { type: "result", id: message.id, cwd: context.cwd, history };
 				});
@@ -332,9 +335,12 @@ export class LocalSession {
 						? [...new Set(request.calls.map((call) => call.name))].join(", ")
 						: "chat";
 				this.#notify(
-					`${name} cancelled for ChatGPT ${request.chatId.slice(-4)}: ${message.reason}`,
+					`${name} cancelled for ${chatLabel(request)}: ${message.reason}`,
 					"warning",
-					{ event: "cancelled", chatId: request.chatId },
+					{
+						event: "cancelled",
+						...source(request.chatId, request.requestId),
+					},
 				);
 				if (queued !== -1) {
 					this.#queue.splice(queued, 1);
@@ -398,6 +404,7 @@ export class LocalSession {
 		}
 
 		this.#queue.shift();
+		output.message.chappie = source(request.chatId, request.requestId);
 		this.#active = {
 			request,
 			session: this.#description(),
@@ -459,7 +466,7 @@ export class LocalSession {
 		if (active.cancelled !== undefined) {
 			const delivery: DeliveryRecord = {
 				id: randomUUID(),
-				chatId: active.request.chatId,
+				...source(active.request.chatId, active.request.requestId),
 				sessionId: active.session.id,
 				cwd: active.session.cwd,
 				toolResults: active.toolResults,
@@ -546,7 +553,10 @@ export class LocalSession {
 					this.#notify(
 						`Result saved for ChatGPT ${delivery.chatId.slice(-4)}`,
 						"info",
-						{ event: "result_saved", chatId: delivery.chatId },
+						{
+							event: "result_saved",
+							...source(delivery.chatId, delivery.requestId),
+						},
 					);
 				} finally {
 					this.#stores.delete(delivery.id);
