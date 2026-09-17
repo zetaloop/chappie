@@ -15,6 +15,7 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import type { DeliveryRecord } from "./delivery.ts";
 import {
+	type Activity,
 	type BrokerMessage,
 	IpcClient,
 	type SessionDescription,
@@ -27,7 +28,7 @@ import { readSessionResource, rememberImages } from "./resources.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
 
-interface Notice {
+interface Notice extends Activity {
 	message: string;
 	type: "info" | "warning" | "error";
 }
@@ -126,9 +127,17 @@ export class LocalSession {
 		this.#pi.on("session_shutdown", () => this.close());
 	}
 
-	#notify(message: string, type: Notice["type"] = "info"): void {
+	#notify(
+		message: string,
+		type: Notice["type"] = "info",
+		activity: Activity = {},
+	): void {
 		if (this.#context)
-			this.#pi.appendEntry<Notice>("chappie.notice", { message, type });
+			this.#pi.appendEntry<Notice>("chappie.notice", {
+				message,
+				type,
+				...activity,
+			});
 	}
 
 	async start(output: ProviderOutput): Promise<void> {
@@ -261,7 +270,7 @@ export class LocalSession {
 				if (
 					message.sessionId === this.#context?.sessionManager.getSessionId()
 				) {
-					this.#notify(message.message);
+					this.#notify(message.message, "info", message.activity);
 				}
 				break;
 			case "inspect":
@@ -307,6 +316,7 @@ export class LocalSession {
 				this.#notify(
 					`${name} cancelled for ChatGPT ${request.chatId.slice(-4)}: ${message.reason}`,
 					"warning",
+					{ event: "cancelled", chatId: request.chatId },
 				);
 				if (queued !== -1) {
 					this.#queue.splice(queued, 1);
@@ -515,7 +525,11 @@ export class LocalSession {
 					await connection.send({ type: "delivery", delivery });
 					await completion.promise;
 					this.#deliveries.delete(delivery.id);
-					this.#notify(`Result saved for ChatGPT ${delivery.chatId.slice(-4)}`);
+					this.#notify(
+						`Result saved for ChatGPT ${delivery.chatId.slice(-4)}`,
+						"info",
+						{ event: "result_saved", chatId: delivery.chatId },
+					);
 				} finally {
 					this.#stores.delete(delivery.id);
 				}

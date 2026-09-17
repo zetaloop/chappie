@@ -38,6 +38,13 @@ export interface SessionInspection {
 	skills: SlashCommandInfo[];
 }
 
+export interface Activity {
+	event?: string;
+	chatId?: string;
+	requestId?: string;
+	initialization?: "explicit" | "implicit";
+}
+
 export interface SessionInput {
 	id: string;
 	sessionId: string;
@@ -69,7 +76,7 @@ export type SessionMessage =
 export type BrokerMessage =
 	| { type: "synced"; id: number; sessionId: string }
 	| { type: "stored"; id: string }
-	| { type: "notice"; sessionId: string; message: string }
+	| { type: "notice"; sessionId: string; message: string; activity?: Activity }
 	| { type: "inspect"; id: number; sessionId: string }
 	| {
 			type: "chat";

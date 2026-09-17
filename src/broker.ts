@@ -3,6 +3,7 @@ import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import {
+	type Activity,
 	type BrokerMessage,
 	IpcServer,
 	type JsonLinePeer,
@@ -334,6 +335,11 @@ export class Broker {
 		void this.#notify(
 			target,
 			`ChatGPT ${chatId.slice(-4)} asked: ${question.question}`,
+			{
+				event: "asked",
+				chatId,
+				...(typeof requestId === "string" ? { requestId } : {}),
+			},
 		).catch(() => {});
 		return questionView(question);
 	}
@@ -380,7 +386,10 @@ export class Broker {
 					: previous
 						? `Answer updated in ChatGPT ${chatId.slice(-4)}: ${question.question} — ${response}`
 						: `Answered in ChatGPT ${chatId.slice(-4)}: ${question.question} — ${response}`;
-				void this.#notify(question.sessionId, message).catch(() => {});
+				void this.#notify(question.sessionId, message, {
+					event: question.answer?.skipped ? "skipped" : "answered",
+					chatId,
+				}).catch(() => {});
 			}
 		}
 		return questionView(question);
@@ -432,7 +441,9 @@ export class Broker {
 					sessionId: message.session.id,
 				});
 				if (!registered)
-					await this.#notify(message.session.id, "Chappie connected");
+					await this.#notify(message.session.id, "Chappie connected", {
+						event: "connected",
+					});
 				this.#notifyChange();
 				break;
 			}
@@ -509,25 +520,41 @@ export class Broker {
 		explicit = false,
 	): Promise<void> {
 		const previous = this.#state.binding(chatId);
+		const activity: Activity = {
+			chatId,
+			...(typeof requestId === "string" ? { requestId } : {}),
+		};
 		const workflow = workflowId(requestId);
 		const joined = await this.#state.join(chatId, sessionId, workflow);
 		if (previous !== sessionId) {
 			this.#notifyChange();
 			if (previous)
-				await this.#notify(previous, `ChatGPT ${chatId.slice(-4)} left`);
+				await this.#notify(previous, `ChatGPT ${chatId.slice(-4)} left`, {
+					...activity,
+					event: "left",
+				});
 		}
 		if (joined || explicit) {
 			await this.#notify(
 				sessionId,
 				`ChatGPT ${chatId.slice(-4)}${workflow ? ` (${workflow.slice(-4)})` : ""} joined`,
+				{
+					...activity,
+					event: "joined",
+					initialization: explicit ? "explicit" : "implicit",
+				},
 			);
 		}
 	}
 
-	async #notify(sessionId: string, message: string): Promise<void> {
+	async #notify(
+		sessionId: string,
+		message: string,
+		activity: Activity = {},
+	): Promise<void> {
 		await this.#sessions
 			.get(sessionId)
-			?.peer.send({ type: "notice", sessionId, message });
+			?.peer.send({ type: "notice", sessionId, message, activity });
 	}
 
 	async #waitForSession(sessionId: string, signal: AbortSignal): Promise<void> {
