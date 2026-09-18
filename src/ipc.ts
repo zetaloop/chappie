@@ -66,6 +66,7 @@ export type SessionResult =
 	| { error: string };
 
 export type SessionRequest =
+	| { type: "inspect"; sessionId: string }
 	| { type: "readResource"; sessionId: string; uri: string; offset?: number }
 	| {
 			type: "copy";
@@ -87,7 +88,6 @@ export type BrokerMessage =
 	| { type: "synced"; id: number; sessionId: string }
 	| { type: "stored"; id: string }
 	| { type: "notice"; sessionId: string; message: string; activity?: Activity }
-	| { type: "inspect"; id: number; sessionId: string }
 	| {
 			type: "history";
 			id: number;

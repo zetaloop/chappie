@@ -33,7 +33,7 @@ import {
 	rememberImages,
 	resourceSessionId,
 } from "./resources.ts";
-import { copyFiles, transfer } from "./transfer.ts";
+import { copyFiles, transfer, transferResult } from "./transfer.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
 
@@ -217,13 +217,29 @@ export class LocalSession {
 		if (args.files) throw new Error("files and to are mutually exclusive");
 		if (args.paths.length !== args.to.paths.length)
 			throw new Error("Source and destination counts must match");
+		const inspected = await this.#request(
+			{ type: "inspect", sessionId: args.to.sessionId },
+			signal,
+		);
+		if (!("inspection" in inspected))
+			throw new Error("Pi session returned no environment");
 		const exported = await transfer.execute(
 			id,
 			{ paths: args.paths },
 			signal,
-			update,
+			undefined,
 			context,
 		);
+		update?.({
+			content: [],
+			details: {
+				...exported.details,
+				to: {
+					sessionId: args.to.sessionId,
+					device: inspected.inspection.session.device,
+				},
+			},
+		});
 		const result = await this.#request(
 			{
 				type: "copy",
@@ -236,12 +252,7 @@ export class LocalSession {
 		);
 		if (!("transfer" in result))
 			throw new Error("Pi session returned no transfer result");
-		if (result.transfer.files.some((file) => "error" in file))
-			throw new Error(JSON.stringify(result.transfer));
-		return {
-			content: [{ type: "text", text: JSON.stringify(result.transfer) }],
-			details: result.transfer,
-		};
+		return transferResult({ ...result.transfer, device: hostname() });
 	}
 
 	close(): void {
@@ -412,6 +423,7 @@ export class LocalSession {
 						type: "result",
 						id: message.id,
 						transfer: {
+							device: hostname(),
 							files,
 							resources: [],
 							to: { sessionId: message.sessionId, device: hostname() },

@@ -8,14 +8,16 @@ import {
 	stat,
 	unlink,
 } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { homedir, hostname } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
-	type ExtensionContext,
+	formatSize,
+	type ToolDefinition,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	describeResource,
@@ -24,6 +26,7 @@ import {
 } from "./resources.ts";
 
 export interface TransferDetails {
+	device: string;
 	files: ({ path: string; bytes: number } | { path: string; error: string })[];
 	resources: ResourceDescriptor[];
 	to?: { sessionId: string; device: string };
@@ -36,53 +39,52 @@ export const transferFile = Type.Object({
 	mime_type: Type.Optional(Type.String()),
 });
 
+const parameters = Type.Object({
+	paths: Type.Array(Type.String(), {
+		minItems: 1,
+		description:
+			"Pi destinations for import; Pi source paths or chappie:// image references for export or session copies",
+	}),
+	files: Type.Optional(
+		Type.Array(transferFile, {
+			minItems: 1,
+			description:
+				"ChatGPT files paired with paths in order; omit for Pi sources",
+		}),
+	),
+	to: Type.Optional(
+		Type.Object({
+			sessionId: Type.String({ description: "Destination Pi session" }),
+			paths: Type.Array(Type.String(), {
+				minItems: 1,
+				description: "Destinations paired with source paths in order",
+			}),
+		}),
+	),
+	overwrite: Type.Optional(
+		Type.Boolean({ description: "Overwrite existing target files" }),
+	),
+});
+
 export const transfer = {
 	name: "transfer",
 	label: "transfer",
 	description:
 		"Copy ChatGPT files into Pi paths with files, or copy Pi files to another session with to. Otherwise, return resource links for Pi paths or Chappie image references.",
-	parameters: Type.Object({
-		paths: Type.Array(Type.String(), {
-			minItems: 1,
-			description:
-				"Pi destinations for import; Pi source paths or chappie:// image references for export or session copies",
-		}),
-		files: Type.Optional(
-			Type.Array(transferFile, {
-				minItems: 1,
-				description:
-					"ChatGPT files paired with paths in order; omit for Pi sources",
-			}),
-		),
-		to: Type.Optional(
-			Type.Object({
-				sessionId: Type.String({ description: "Destination Pi session" }),
-				paths: Type.Array(Type.String(), {
-					minItems: 1,
-					description: "Destinations paired with source paths in order",
-				}),
-			}),
-		),
-		overwrite: Type.Optional(
-			Type.Boolean({ description: "Overwrite existing target files" }),
-		),
-	}),
+	parameters,
 	async execute(
-		_id: string,
-		args: {
-			paths: string[];
-			files?: { download_url: string }[];
-			to?: { sessionId: string; paths: string[] };
-			overwrite?: boolean;
-		},
-		signal: AbortSignal | undefined,
-		_update: unknown,
-		context: ExtensionContext,
+		_id,
+		args,
+		signal,
+		update,
+		context,
 	): Promise<{
 		content: { type: "text"; text: string }[];
 		details: TransferDetails;
 	}> {
 		const sessionId = context.sessionManager.getSessionId();
+		const device = hostname();
+		update?.({ content: [], details: { device, files: [], resources: [] } });
 		if (!args.files) {
 			const resources = await Promise.all(
 				args.paths.map((requested) =>
@@ -95,7 +97,7 @@ export const transfer = {
 				content: [
 					{ type: "text" as const, text: JSON.stringify({ resources }) },
 				],
-				details: { files: [], resources },
+				details: { device, files: [], resources },
 			};
 		}
 
@@ -126,15 +128,100 @@ export const transfer = {
 				}
 			}),
 		);
-		if (files.some((file) => "error" in file)) {
-			throw new Error(JSON.stringify({ files }));
-		}
-		return {
-			content: [{ type: "text" as const, text: JSON.stringify({ files }) }],
-			details: { files, resources: [] },
-		};
+		return transferResult({ device, files, resources: [] });
 	},
-};
+	renderCall(args, theme, context) {
+		const device = context.state.device ?? hostname();
+		const from = args.files ? "ChatGPT" : device;
+		const to = args.files
+			? device
+			: (context.state.to ?? (args.to ? "Pi" : "ChatGPT"));
+		const header =
+			context.lastComponent instanceof Text
+				? context.lastComponent
+				: new Text("", 0, 0);
+		header.setText(theme.fg("toolTitle", theme.bold(`${from} → ${to}`)));
+		context.state.header = header;
+		return header;
+	},
+	renderResult(result, _options, theme, context) {
+		const details = result.details;
+		if (!details) {
+			const text = result.content
+				.flatMap((block) => (block.type === "text" ? [block.text] : []))
+				.join("\n");
+			return new Text(
+				theme.fg(context.isError ? "error" : "toolOutput", text),
+				0,
+				0,
+			);
+		}
+		const args = context.args;
+		context.state.device = details.device;
+		context.state.to = details.to?.device ?? "ChatGPT";
+		const from = args.files ? "ChatGPT" : details.device;
+		const to = args.files ? details.device : (details.to?.device ?? "ChatGPT");
+		context.state.header?.setText(
+			theme.fg("toolTitle", theme.bold(`${from} → ${to}`)),
+		);
+		const lines =
+			details.resources.length > 0
+				? details.resources.map((resource, index) => {
+						const source = displayPath(args.paths?.[index] ?? resource.name);
+						const destination = args.to?.paths[index];
+						return `${destination ? `${source} → ${destination}` : source}  ${theme.fg("dim", formatSize(resource.size))}`;
+					})
+				: details.files.length > 0
+					? details.files.map((file, index) => {
+							const source = args.to
+								? args.paths?.[index]
+								: args.files?.[index]?.file_name;
+							const path = source
+								? `${displayPath(source)} → ${file.path}`
+								: file.path;
+							return "error" in file
+								? theme.fg("error", `${path}\n${file.error}`)
+								: `${path}  ${theme.fg("dim", formatSize(file.bytes))}`;
+						})
+					: (args.paths ?? []).map((path, index) =>
+							args.to?.paths[index]
+								? `${displayPath(path)} → ${args.to.paths[index]}`
+								: displayPath(path),
+						);
+		return new Text(lines.join("\n"), 0, 0);
+	},
+} satisfies ToolDefinition<
+	typeof parameters,
+	TransferDetails,
+	{ header?: Text; device?: string; to?: string }
+>;
+
+function displayPath(path: string): string {
+	return path.startsWith("chappie://")
+		? decodeURIComponent(basename(new URL(path).pathname))
+		: path;
+}
+
+export function transferResult(details: TransferDetails): {
+	content: { type: "text"; text: string }[];
+	details: TransferDetails;
+} {
+	if (details.files.some((file) => "error" in file)) {
+		throw new Error(
+			details.files
+				.map((file) =>
+					"error" in file
+						? `${file.path}: ${file.error}`
+						: `${file.path}  ${formatSize(file.bytes)}`,
+				)
+				.join("\n"),
+		);
+	}
+	return {
+		content: [{ type: "text", text: JSON.stringify(details) }],
+		details,
+	};
+}
 
 export async function copyFiles(
 	paths: string[],

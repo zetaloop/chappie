@@ -121,6 +121,8 @@ Questions remain available after the assistant response and across broker restar
 
 `transfer.paths` always names paths or image references on the Pi side. Relative paths resolve from the selected Pi session's working directory; absolute paths and `~/` are accepted.
 
+Pi displays transfers with the source and destination device names joined by an arrow. File paths and sizes appear below the direction; failures show their error messages.
+
 ### ChatGPT to Pi
 
 Pair Pi destinations with ChatGPT files:
