@@ -143,7 +143,7 @@ export function createServer(broker: Broker): McpServer {
 			{
 				title: "Ask in ChatGPT",
 				description:
-					"Create a question in ChatGPT and return its ID immediately. Call ask_assert next with question.id. Answers, revisions, and skips arrive as webAnswer in later tool results.",
+					"Request a question widget in ChatGPT and return its ID immediately. Display depends on the host; call ask_assert next with question.id to confirm loading. Answers, revisions, and skips arrive as webAnswer in later tool results.",
 				inputSchema: questionInput.extend({
 					sessionId: z
 						.string()
@@ -169,7 +169,7 @@ export function createServer(broker: Broker): McpServer {
 						...(initialization ? textResult({ initialization }).content : []),
 						{
 							type: "text",
-							text: `Question created. Call ask_assert({"questionId":"${question.id}"}) next.`,
+							text: `Question widget requested. Call ask_assert({"questionId":"${question.id}"}) next.`,
 						},
 					],
 				});
@@ -185,7 +185,7 @@ export function createServer(broker: Broker): McpServer {
 			{
 				title: "Assert question display",
 				description:
-					"Assert that an ask widget loaded in ChatGPT. Call immediately after ask with question.id. Returns when the widget reports loaded; times out if it fails to load. User answers arrive separately as webAnswer.",
+					"Confirm that an ask widget loaded in ChatGPT. Call immediately after ask with question.id. Fails after 10 seconds without loading and records the question as skipped. Use a Pi interactive tool if an answer is needed. User answers arrive separately as webAnswer.",
 				inputSchema: z.object({
 					questionId: z.string().describe("question.id returned by ask"),
 				}),

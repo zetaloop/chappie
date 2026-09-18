@@ -1,7 +1,7 @@
 import * as z from "zod";
 
 export const questionInstructions =
-	"Use ask for a question in ChatGPT, then immediately call ask_assert with question.id from its result. The assertion returns when the widget reports loaded and times out if loading fails. User answers arrive separately as webAnswer in normal tool results. Apply answers and revisions promptly; a skip means proceed with available information. Supply header when useful and mark the preferred first option recommended: true. The widget provides custom input and skipping. If loading fails and input is needed, use an installed Pi interactive tool through call.";
+	"ask requests a question widget in ChatGPT; its result confirms creation of the request. Immediately call ask_assert with question.id to confirm loading. If the widget fails to load within 10 seconds, the assertion fails and records the question as skipped. Use an installed Pi interactive tool through call when an answer is needed. User answers arrive separately as webAnswer in normal tool results. Apply answers and revisions promptly; a user skip means proceed with available information. Supply header when useful and mark the preferred first option recommended: true. The widget provides custom input, skipping, and editing saved answers.";
 
 export const questionInput = z.object({
 	header: z
@@ -46,10 +46,7 @@ export const questionInput = z.object({
 export const answerInput = z.object({
 	selections: z.array(z.number().int().nonnegative()).default([]),
 	text: z.string().trim().default(""),
-	skipped: z
-		.literal(true)
-		.optional()
-		.describe("The user skipped this question"),
+	skipped: z.literal(true).optional().describe("The question was skipped"),
 });
 
 export const questionOutput = questionInput.extend({

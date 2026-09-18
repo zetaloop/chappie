@@ -358,11 +358,35 @@ export class Broker {
 		id: string,
 		signal: AbortSignal,
 	): Promise<Question> {
-		for (;;) {
+		const timeout = AbortSignal.timeout(10_000);
+		const combined = AbortSignal.any([signal, timeout]);
+		try {
+			for (;;) {
+				signal.throwIfAborted();
+				const question = this.#state.question(chatId, id);
+				if (question.loaded) return questionView(question);
+				await this.#waitForChange(combined);
+			}
+		} catch (error) {
 			signal.throwIfAborted();
+			if (!timeout.aborted) throw error;
 			const question = this.#state.question(chatId, id);
 			if (question.loaded) return questionView(question);
-			await this.#waitForChange(signal);
+			if (!question.answer) {
+				await this.#state.answer(chatId, id, {
+					selections: [],
+					text: "",
+					skipped: true,
+				});
+				void this.#notify(
+					question.sessionId,
+					`Question skipped after display timeout: ${question.question}`,
+					{ event: "skipped", chatId },
+				).catch(() => {});
+			}
+			throw new Error(
+				"Question widget did not load within 10 seconds. The question was automatically skipped. Use an installed Pi interactive tool through call if an answer is needed.",
+			);
 		}
 	}
 

@@ -91,7 +91,7 @@ The active model remains the current ChatGPT conversation. Starting another `cha
 
 ## Webpage questions
 
-When enabled, `ask` creates a question in ChatGPT and returns its ID immediately:
+When enabled, `ask` saves a question and requests a widget in ChatGPT, returning its ID immediately. Display depends on the host:
 
 ```json
 {
@@ -110,6 +110,8 @@ Call `ask_assert` with the returned ID to confirm that the widget loaded:
 ```json
 { "questionId": "<question-id>" }
 ```
+
+If the widget has not loaded within 10 seconds, `ask_assert` fails and saves the unanswered question as skipped. Its loading state remains unchanged. Use a Pi interactive tool when an answer is needed. The user can still answer or edit the saved question when its widget is available.
 
 Answers, revisions, and skips arrive later as `webAnswer` in normal Chappie results. `options` can be omitted for a text answer, and `allowMultiple: true` allows several choices. `sessionId` associates the question with a Pi session using the session selection rules above.
 
