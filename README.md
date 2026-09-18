@@ -31,7 +31,7 @@ Call `init` from ChatGPT to connect the conversation to Pi. A conversation can r
 
 Chappie exposes common coding tools directly and every active Pi tool through `tools` and `call`. `chat` sends an assistant message to Pi, Pi input accompanies later tool results, and `transfer` moves files in either direction. `history` reads recent Pi messages and activity with timestamps. `ask` can present a persistent question in ChatGPT when webpage questions are enabled.
 
-See the [tool guide](docs/tools.md) for session selection, history, synchronization, Pi tools, webpage questions, and file transfer.
+See the [tool guide](docs/tools.md) for session selection, history, Pi tools, webpage questions, and file transfer.
 
 ## Configuration
 
@@ -53,10 +53,4 @@ The default port is `24274`. Set `listen` to a port number or append `:port` to 
 
 Set `ask` to `false` to disable webpage questions.
 
-Enable synchronization to resolve conflicting activity:
-
-```json
-{ "sync": true }
-```
-
-Initialization returns a short name and a private code. `sync` pauses conflicting work for discussion through `chat` and `history`. The verified coordinator decides who continues, their tasks, and who exits, including retaining only one execution. See [synchronization](docs/tools.md#synchronization).
+Closely spaced initializations from the same ChatGPT conversation receive guidance to observe the ongoing work through `history` and explain its results. See [participation](docs/tools.md#participation).

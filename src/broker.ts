@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { type Activity, chatLabel, source } from "./activity.ts";
 import { readConfig } from "./config.ts";
@@ -25,8 +25,8 @@ import { type ResourceData, resourceSessionId } from "./resources.ts";
 import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
 
-const coordinationInstructions =
-	"Report your goal and progress through chat using your initialization name. The coordinator decides who continues, their tasks, and who exits. Follow the decision through chat and history; if asked to exit, leave a handoff and end this response.";
+const observerInstructions =
+	"This ChatGPT conversation recently initialized or resumed work in this Pi session. A parallel execution is already continuing the task. Participate as an observer for this task: read history with observer: true, follow new entries with after and wait: true, and think independently. Leave execution and Pi communication to the ongoing work. Once its completion is recorded, explain the actual results in ChatGPT and finish your response. Continue observing this task rather than reinitializing to take over.";
 
 interface RegisteredSession {
 	description: SessionDescription;
@@ -41,23 +41,6 @@ interface PendingRequest {
 	onAbort(): void;
 }
 
-interface InitializationGrant {
-	sessionId: string;
-	code: string;
-	previousCode: string | undefined;
-	committed: boolean;
-}
-
-interface Operation {
-	chatId: string;
-	sessionId: string | undefined;
-	controller: AbortController;
-	communication: boolean;
-	coordinating: boolean;
-	revisions: Map<string, number>;
-	initialization?: InitializationGrant;
-}
-
 interface ChangeWaiter {
 	resolve(): void;
 	reject(error: Error): void;
@@ -66,8 +49,6 @@ interface ChangeWaiter {
 }
 
 export interface Initialization {
-	name?: string;
-	code?: string;
 	sessionId: string;
 	instructions: string;
 }
@@ -103,12 +84,8 @@ export class Broker {
 	readonly #sessions = new Map<string, RegisteredSession>();
 	readonly #pending = new Map<number, PendingRequest>();
 	readonly #waiters = new Set<ChangeWaiter>();
-	readonly #operations = new Map<AbortSignal, Operation>();
-	readonly #locks = new Map<string, boolean>();
-	readonly #startingLocks = new Set<string>();
-	readonly #syncRevisions = new Map<string, number>();
+	readonly #cooldowns = new Map<string, number>();
 	#ask = true;
-	#sync = false;
 	#nextRequestId = 1;
 
 	constructor(agentDir: string) {
@@ -124,20 +101,13 @@ export class Broker {
 	async start(): Promise<void> {
 		const config = await readConfig(this.#agentDir);
 		this.#ask = config.ask ?? true;
-		this.#sync = config.sync ?? false;
 		await this.#state.load();
 		await this.#ipc.start(config.listen ?? false);
 	}
 
 	async close(): Promise<void> {
 		const error = new Error("Chappie broker ended");
-		for (const operation of this.#operations.values()) {
-			operation.controller.abort(error);
-		}
-		this.#operations.clear();
-		this.#locks.clear();
-		this.#startingLocks.clear();
-		this.#syncRevisions.clear();
+		this.#cooldowns.clear();
 		for (const [id, pending] of this.#pending) {
 			this.#finishRequest(id, pending);
 			pending.reject(error);
@@ -151,205 +121,8 @@ export class Broker {
 		await this.#ipc.close();
 	}
 
-	async run<T>(
-		chatId: string,
-		sessionId: string | undefined,
-		signal: AbortSignal,
-		callback: (signal: AbortSignal) => Promise<T>,
-		communication = false,
-	): Promise<T> {
-		if (!communication) this.#requireUnlocked(chatId, sessionId, signal);
-		if (!this.#sync) return callback(signal);
-		const controller = new AbortController();
-		const combined = AbortSignal.any([signal, controller.signal]);
-		const operation: Operation = {
-			chatId,
-			sessionId,
-			controller,
-			communication,
-			coordinating: false,
-			revisions: new Map(),
-		};
-		this.#operations.set(combined, operation);
-		this.#observe(operation, this.#state.binding(chatId));
-		this.#observe(operation, sessionId);
-		try {
-			const result = await callback(combined);
-			combined.throwIfAborted();
-			const initialization = operation.initialization;
-			if (initialization) {
-				initialization.previousCode = this.#state.code(
-					initialization.sessionId,
-				);
-				initialization.committed = true;
-				await this.#state.setCode(
-					initialization.sessionId,
-					initialization.code,
-				);
-				combined.throwIfAborted();
-			}
-			return result;
-		} catch (error) {
-			await this.#rollbackInitialization(operation);
-			throw error;
-		} finally {
-			this.#operations.delete(combined);
-		}
-	}
-
-	deliveryAllowed(signal: AbortSignal): boolean {
-		const operation = this.#operations.get(signal);
-		if (!operation?.communication) return true;
-		if (operation.coordinating) return false;
-		for (const [sessionId, revision] of operation.revisions) {
-			if (
-				this.#locks.has(sessionId) ||
-				(this.#syncRevisions.get(sessionId) ?? 0) !== revision
-			)
-				return false;
-		}
-		return true;
-	}
-
-	get syncEnabled(): boolean {
-		return this.#sync;
-	}
-
-	syncState(sessionId: string) {
-		return {
-			locked: this.#locks.has(sessionId),
-			verified: this.#locks.get(sessionId) ?? false,
-		};
-	}
-
-	synchronizing(chatId?: string, sessionId?: string): string | undefined {
-		const boundId = chatId ? this.#state.binding(chatId) : undefined;
-		if (boundId && this.#locks.has(boundId)) return boundId;
-		if (sessionId && this.#locks.has(sessionId)) return sessionId;
-		return undefined;
-	}
-
-	async sync(
-		chatId: string,
-		sessionId: string | undefined,
-		action: "start" | "verify" | "release",
-		code: string | undefined,
-		requestId: unknown,
-		signal: AbortSignal,
-	) {
-		if (!this.#sync) throw new Error("Session synchronization is disabled");
-		signal.throwIfAborted();
-		const target = sessionId ?? this.#state.binding(chatId);
-		if (!target) throw new Error("Specify a Pi sessionId to synchronize");
-		const locked = this.synchronizing(chatId);
-		if (locked && locked !== target) throw new Error(syncMessage(locked));
-		const activity = source(chatId, requestId);
-		const result = { sessionId: target };
-		if (action === "start") {
-			if (!this.#locks.has(target)) {
-				this.#locks.set(target, false);
-				this.#startingLocks.add(target);
-				this.#syncRevisions.set(
-					target,
-					(this.#syncRevisions.get(target) ?? 0) + 1,
-				);
-				const error = new Error(syncMessage(target));
-				const rollbacks: Promise<void>[] = [];
-				for (const operation of this.#operations.values()) {
-					if (
-						operation.sessionId !== target &&
-						this.#state.binding(operation.chatId) !== target
-					)
-						continue;
-					if (operation.initialization)
-						rollbacks.push(this.#rollbackInitialization(operation));
-					if (!operation.communication || operation.initialization)
-						operation.controller.abort(error);
-				}
-				this.#notifyChange();
-				try {
-					await Promise.all(rollbacks);
-					if (!this.#state.code(target)) {
-						this.#locks.delete(target);
-						this.#notifyChange();
-						throw new Error(
-							"Initialize this Pi session before starting synchronization",
-						);
-					}
-					await this.#notify(
-						target,
-						`${chatLabel(activity)} started synchronization`,
-						{ ...activity, event: "sync_started" },
-					);
-				} finally {
-					this.#startingLocks.delete(target);
-				}
-			}
-			return {
-				...result,
-				...this.syncState(target),
-				instructions: syncMessage(target),
-			};
-		}
-		if (this.#startingLocks.has(target))
-			throw new Error("Synchronization is still starting; retry this action");
-		if (!this.#locks.has(target))
-			throw new Error("This Pi session is not synchronizing");
-		const current = this.#state.code(target);
-		if (!current)
-			throw new Error("This Pi session has no synchronization code");
-		if (code !== current) {
-			await this.#notify(
-				target,
-				`${chatLabel(activity)} could not verify synchronization`,
-				{ ...activity, event: "sync_rejected" },
-			);
-			throw new Error(
-				`Invalid sync code. Ordinary tools remain locked. ${coordinationInstructions}`,
-			);
-		}
-		if (action === "verify") {
-			let renewed: string | undefined;
-			if (!this.#locks.get(target)) {
-				this.#locks.set(target, true);
-				renewed = randomBytes(6).toString("hex");
-				await this.#state.setCode(target, renewed);
-				await this.#notify(
-					target,
-					`${chatLabel(activity)} verified synchronization`,
-					{ ...activity, event: "sync_verified" },
-				);
-			}
-			return {
-				...result,
-				...this.syncState(target),
-				...(renewed ? { code: renewed } : {}),
-				instructions:
-					"You are the coordinator. Decide who continues, their tasks, and who exits; you may retain only one execution. Keep this code private. Release after your decisions are acknowledged and requested exits are complete.",
-			};
-		}
-		if (!this.#locks.get(target))
-			throw new Error(
-				"Verify the initialization code before releasing synchronization",
-			);
-		this.#locks.delete(target);
-		this.#notifyChange();
-		await this.#notify(
-			target,
-			`${chatLabel(activity)} released synchronization`,
-			{ ...activity, event: "sync_released" },
-		);
-		return {
-			...result,
-			...this.syncState(target),
-			instructions:
-				"Synchronization released. Continue as directed by the coordinator.",
-		};
-	}
-
 	listSessions(sessionId?: string): (SessionDescription & {
 		bindingCount: number;
-		sync?: { locked: boolean; verified: boolean };
 	})[] {
 		const counts = this.#state.bindingCounts();
 		return [...this.#sessions.values()]
@@ -357,7 +130,6 @@ export class Broker {
 			.map(({ description }) => ({
 				...description,
 				bindingCount: counts.get(description.id) ?? 0,
-				...(this.#sync ? { sync: this.syncState(description.id) } : {}),
 			}));
 	}
 
@@ -410,8 +182,6 @@ export class Broker {
 			sessionId,
 			requestId,
 			signal,
-			false,
-			true,
 		);
 		const result = await this.#request(
 			target,
@@ -425,7 +195,7 @@ export class Broker {
 			signal,
 		);
 		if ("message" in result) {
-			const inputs = this.deliveryAllowed(signal) ? result.inputs : [];
+			const inputs = result.inputs;
 			await this.#ackInputs(target, inputs, signal);
 			return {
 				sessionId: target,
@@ -537,10 +307,8 @@ export class Broker {
 		signal: AbortSignal,
 	): Promise<SessionInput[]> {
 		const target = sessionId ?? this.#state.binding(chatId);
-		if (!target || !this.#sessions.has(target) || !this.deliveryAllowed(signal))
-			return [];
+		if (!target || !this.#sessions.has(target)) return [];
 		const { inputs } = await this.#inspect(target, signal);
-		if (!this.deliveryAllowed(signal)) return [];
 		await this.#ackInputs(target, inputs, signal);
 		return inputs;
 	}
@@ -558,7 +326,7 @@ export class Broker {
 			requestId,
 			signal,
 		);
-		this.#requireUnlocked(chatId, target, signal);
+		signal.throwIfAborted();
 		const session = this.#sessions.get(target);
 		if (!session) throw new Error(`Pi session ${target} is offline`);
 		const question: QuestionRecord = {
@@ -593,7 +361,6 @@ export class Broker {
 		for (;;) {
 			signal.throwIfAborted();
 			const question = this.#state.question(chatId, id);
-			this.#requireUnlocked(chatId, question.sessionId, signal);
 			if (question.loaded) return questionView(question);
 			await this.#waitForChange(signal);
 		}
@@ -607,6 +374,7 @@ export class Broker {
 	): Promise<Question> {
 		let question = this.#state.question(chatId, id);
 		if ((loaded || answer) && !question.loaded) {
+			this.#cooldown(chatId, question.sessionId);
 			question = { ...question, loaded: true };
 			await this.#state.addQuestion(question);
 			this.#notifyChange();
@@ -638,29 +406,30 @@ export class Broker {
 	}
 
 	answers(chatId: string): QuestionRecord[] {
-		if (this.synchronizing(chatId)) return [];
-		return this.#state
-			.answers(chatId)
-			.filter((question) => !this.#locks.has(question.sessionId));
+		return this.#state.answers(chatId);
 	}
 
 	async readResource(uri: string, signal: AbortSignal): Promise<ResourceData> {
-		const sessionId = resourceSessionId(uri);
+		const requested = new URL(uri);
+		const chatId = requested.searchParams.get("chatId");
+		requested.search = "";
+		const sessionId = resourceSessionId(requested.href);
+		if (chatId) this.#cooldown(chatId, sessionId);
 		await this.#waitForSession(sessionId, signal);
 		const result = await this.#request(
 			sessionId,
-			(id) => ({ type: "readResource", id, sessionId, uri }),
+			(id) => ({ type: "readResource", id, sessionId, uri: requested.href }),
 			signal,
 		);
-		if ("resource" in result) return result.resource;
+		if ("resource" in result) {
+			if (chatId) this.#cooldown(chatId, sessionId);
+			return { ...result.resource, uri };
+		}
 		throw new Error("Pi session returned no resource");
 	}
 
 	deliveries(chatId: string): DeliveryRecord[] {
-		if (this.synchronizing(chatId)) return [];
-		return this.#state
-			.deliveries(chatId)
-			.filter((delivery) => !this.#locks.has(delivery.sessionId));
+		return this.#state.deliveries(chatId);
 	}
 
 	acknowledge(
@@ -724,7 +493,6 @@ export class Broker {
 		requestId: unknown,
 		signal: AbortSignal,
 		bindRequested = false,
-		communication = false,
 	): Promise<{
 		sessionId: string;
 		selection: InitializedSession["selection"];
@@ -736,25 +504,16 @@ export class Broker {
 			let target = requestedId ?? boundId;
 			if (!target) {
 				const occupied = this.#state.bindingCounts();
-				target = [...this.#sessions.keys()].find(
-					(id) => !occupied.has(id) && !this.#locks.has(id),
-				);
+				target = [...this.#sessions.keys()].find((id) => !occupied.has(id));
 			}
-			if (!communication) this.#requireUnlocked(chatId, target, signal);
 			if (!target) {
 				await this.#waitForChange(signal);
 				continue;
 			}
 			await this.#waitForSession(target, signal);
 			signal.throwIfAborted();
-			if (!communication) this.#requireUnlocked(chatId, target, signal);
-			const current = this.#state.binding(chatId);
-			const initialize =
-				bindRequested ||
-				!current ||
-				(current === target && this.#sync && !this.#state.code(target));
 			const initialization =
-				initialize && !this.synchronizing(chatId, target)
+				bindRequested || !this.#state.binding(chatId)
 					? await this.#join(chatId, target, requestId, signal, bindRequested)
 					: undefined;
 			return {
@@ -776,25 +535,13 @@ export class Broker {
 		signal: AbortSignal,
 		explicit = false,
 	): Promise<Initialization> {
-		this.#requireUnlocked(chatId, sessionId, signal);
-		const operation = this.#operations.get(signal);
-		if (operation) this.#observe(operation, sessionId);
+		signal.throwIfAborted();
 		const previous = this.#state.binding(chatId);
-		const code = this.#sync ? randomBytes(6).toString("hex") : undefined;
+		const key = JSON.stringify([chatId, sessionId]);
+		const observer = (this.#cooldowns.get(key) ?? 0) > Date.now();
+		if (!observer) this.#cooldown(chatId, sessionId);
 		await this.#state.bind(chatId, sessionId);
-		this.#requireUnlocked(chatId, sessionId, signal);
-		if (code) {
-			if (!operation)
-				throw new Error(
-					"Initialization is outside a tracked Chappie operation",
-				);
-			operation.initialization = {
-				sessionId,
-				code,
-				previousCode: undefined,
-				committed: false,
-			};
-		}
+		signal.throwIfAborted();
 		const activity = source(chatId, requestId);
 		if (previous !== sessionId) {
 			this.#notifyChange();
@@ -804,58 +551,24 @@ export class Broker {
 					event: "left",
 				});
 		}
-		this.#requireUnlocked(chatId, sessionId, signal);
+		signal.throwIfAborted();
 		await this.#notify(sessionId, `${chatLabel(activity)} joined`, {
 			...activity,
 			event: "joined",
 			initialization: explicit ? "explicit" : "implicit",
 		});
-		const name = activity.requestId?.match(/\/([^/]+)$/)?.[1];
-		const instructions = name
-			? `${historyInstructions} Use this name when coordinating through chat.`
-			: historyInstructions;
 		return {
 			sessionId,
-			...(name ? { name } : {}),
-			...(code ? { code } : {}),
-			instructions: code
-				? `${instructions} Keep this code private for sync verification.`
-				: instructions,
+			instructions: observer ? observerInstructions : historyInstructions,
 		};
 	}
 
-	#requireUnlocked(
-		chatId: string,
-		sessionId: string | undefined,
-		signal: AbortSignal,
-	): void {
-		signal.throwIfAborted();
-		const operation = this.#operations.get(signal);
-		if (operation) this.#observe(operation, sessionId);
-		const locked = this.synchronizing(chatId, sessionId);
-		if (locked) throw new Error(syncMessage(locked));
-	}
-
-	#observe(operation: Operation, sessionId: string | undefined): void {
-		if (!sessionId) return;
-		operation.sessionId ??= sessionId;
-		if (!operation.revisions.has(sessionId)) {
-			operation.revisions.set(
-				sessionId,
-				this.#syncRevisions.get(sessionId) ?? 0,
-			);
+	#cooldown(chatId: string, sessionId: string): void {
+		const now = Date.now();
+		for (const [key, expires] of this.#cooldowns) {
+			if (expires <= now) this.#cooldowns.delete(key);
 		}
-		if (this.#locks.has(sessionId)) operation.coordinating = true;
-	}
-
-	async #rollbackInitialization(operation: Operation): Promise<void> {
-		const initialization = operation.initialization;
-		if (!initialization?.committed) return;
-		initialization.committed = false;
-		await this.#state.setCode(
-			initialization.sessionId,
-			initialization.previousCode,
-		);
+		this.#cooldowns.set(JSON.stringify([chatId, sessionId]), now + 10_000);
 	}
 
 	async #notify(
@@ -906,12 +619,6 @@ export class Broker {
 		message: (id: number) => BrokerMessage,
 		signal: AbortSignal,
 	): Promise<SessionResult> {
-		const operation = this.#operations.get(signal);
-		if (operation) {
-			this.#observe(operation, sessionId);
-			if (!operation.communication)
-				this.#requireUnlocked(operation.chatId, sessionId, signal);
-		}
 		const session = this.#sessions.get(sessionId);
 		if (!session) throw new Error(`Pi session ${sessionId} is offline`);
 		if (signal.aborted) throw abortError(signal);
@@ -993,10 +700,6 @@ export class Broker {
 		this.#sessions.delete(sessionId);
 		this.#notifyChange();
 	}
-}
-
-function syncMessage(sessionId: string): string {
-	return `Pi session ${sessionId} is synchronizing. Ordinary tools and initialization are locked. Verify with your own initialization code; keep it private. ${coordinationInstructions} Only the verified coordinator can release.`;
 }
 
 function abortError(signal: AbortSignal): Error {

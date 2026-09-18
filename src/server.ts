@@ -32,9 +32,6 @@ const outputSchema = z.object({
 		),
 });
 
-const syncInstructions =
-	"On conflicting activity, start sync and verify with your own initialization code. Keep codes private. Verification returns a new code to the coordinator; ordinary tools and initialization stay locked. Discuss through chat and history, including after failed verification. The coordinator decides who continues, their tasks, and who exits, including retaining only one execution. Acknowledge the decision; if asked to exit, leave a chat handoff and end your response. Only the coordinator releases after decisions and exits are confirmed.";
-
 const questionTemplate = "ui://chappie/question.html";
 const questionSchema = outputSchema.extend({ question: questionOutput });
 const toolAnnotations = {
@@ -61,27 +58,18 @@ export function createServer(broker: Broker): McpServer {
 			instructions: [
 				instructions,
 				...(broker.askEnabled ? [questionInstructions] : []),
-				...(broker.syncEnabled ? [syncInstructions] : []),
 			].join("\n\n"),
 		},
 	);
 
 	function handle<Args, Result>(
 		callback: (args: Args, context: RequestContext) => Promise<Result>,
-		communication = false,
 	) {
-		return (args: Args, context: RequestContext): Promise<Result> =>
-			broker.run(
-				requireChatId(context),
-				(args as { sessionId?: string }).sessionId,
-				context.mcpReq.signal,
-				(signal) =>
-					callback(args, {
-						...context,
-						mcpReq: { ...context.mcpReq, signal },
-					}),
-				communication,
-			);
+		return (args: Args, context: RequestContext): Promise<Result> => {
+			requireChatId(context);
+			context.mcpReq.signal.throwIfAborted();
+			return callback(args, context);
+		};
 	}
 
 	server.registerTool(
@@ -89,7 +77,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Connect to Pi",
 			description:
-				"Select this chat's default Pi session and return its environment, tool catalog, and initialization name for coordination. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session. Read recent history when resuming work.",
+				"Select this chat's default Pi session and return its environment, tool catalog, and participation instructions. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session. Read recent history when resuming work.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
@@ -146,7 +134,7 @@ export function createServer(broker: Broker): McpServer {
 					inputs,
 				),
 			);
-		}, true),
+		}),
 	);
 
 	if (broker.askEnabled) {
@@ -446,61 +434,17 @@ export function createServer(broker: Broker): McpServer {
 				context.mcpReq.signal,
 			);
 			const { content, ...page } = history;
-			return formatResult({
-				content: [
-					...textResult({
-						...session,
-						history: page,
-						...(broker.syncEnabled
-							? { sync: broker.syncState(session.sessionId) }
-							: {}),
-					}).content,
-					...content,
-				],
-			});
-		}, true),
+			return formatResult(
+				{
+					content: [
+						...textResult({ ...session, history: page }).content,
+						...content,
+					],
+				},
+				requireChatId(context),
+			);
+		}),
 	);
-
-	if (broker.syncEnabled) {
-		server.registerTool(
-			"sync",
-			{
-				title: "Synchronize Pi activity",
-				description:
-					"Pause conflicting activity. Verify your initialization code to coordinate; failed verification still permits discussion. The coordinator decides who continues, their tasks, who exits, and when to release.",
-				inputSchema: z.object({
-					action: z.enum(["start", "verify", "release"]),
-					code: z
-						.string()
-						.optional()
-						.describe(
-							"Initialization code for verification, or the verified code for release; omit when unavailable",
-						),
-					sessionId: z
-						.string()
-						.optional()
-						.describe(
-							"Pi session to synchronize; defaults to this chat's session",
-						),
-				}),
-				outputSchema,
-				annotations: toolAnnotations,
-			},
-			async ({ action, code, sessionId }, context) =>
-				formatResult(
-					textResult(
-						await broker.sync(
-							requireChatId(context),
-							sessionId,
-							action,
-							code,
-							context.mcpReq._meta?.["otunnel/requestId"],
-							context.mcpReq.signal,
-						),
-					),
-				),
-		);
-	}
 
 	server.registerTool(
 		"sessions",
@@ -530,14 +474,17 @@ export function createServer(broker: Broker): McpServer {
 				inputs,
 			);
 			return finishResult(broker, context, result);
-		}, true),
+		}),
 	);
 
 	server.registerResource(
 		"Pi resource",
-		new ResourceTemplate("chappie://session/{sessionId}/{kind}/{id}/{name}", {
-			list: undefined,
-		}),
+		new ResourceTemplate(
+			"chappie://session/{sessionId}/{kind}/{id}/{name}{?chatId}",
+			{
+				list: undefined,
+			},
+		),
 		{ title: "Pi resource" },
 		async (uri, _variables, context) => {
 			const resource = await broker.readResource(
@@ -576,8 +523,6 @@ async function finishResult<
 >(broker: Broker, context: RequestContext, result: T) {
 	context.mcpReq.signal.throwIfAborted();
 	const chatId = requestChatId(context);
-	if (!broker.deliveryAllowed(context.mcpReq.signal))
-		return formatResult(result);
 	const deliveries = chatId ? broker.deliveries(chatId) : [];
 	const answers = chatId ? broker.answers(chatId) : [];
 	const content = [
@@ -586,16 +531,23 @@ async function finishResult<
 		...answerContent(answers),
 	];
 	await broker.acknowledge(deliveries, answers, context.mcpReq.signal);
-	return formatResult({ ...result, content });
+	return formatResult({ ...result, content }, chatId);
 }
 
 function formatResult<
 	T extends { content: ReturnType<typeof toolResult>["content"] },
->(result: T) {
+>(result: T, chatId?: string) {
+	const content = result.content.map((block) => {
+		if (block.type !== "resource_link" || !chatId) return block;
+		const uri = new URL(block.uri);
+		uri.searchParams.set("chatId", chatId);
+		return { ...block, uri: uri.href };
+	});
 	return {
 		...result,
+		content,
 		structuredContent: {
-			text: result.content
+			text: content
 				.flatMap((block) => (block.type === "text" ? [block.text] : []))
 				.join("\n"),
 		},
