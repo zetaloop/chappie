@@ -103,8 +103,7 @@ export function createServer(broker: Broker): McpServer {
 		"chat",
 		{
 			title: "Reply in Pi",
-			description:
-				"Send an assistant message to Pi. Renders Markdown and saves the message in the session transcript.",
+			description: "Send a Markdown assistant message to Pi.",
 			outputSchema,
 			inputSchema: z.object({
 				text: z.string().min(1).describe("Assistant message in Markdown"),
@@ -266,7 +265,7 @@ export function createServer(broker: Broker): McpServer {
 								csp: { connectDomains: [], resourceDomains: [] },
 							},
 							"openai/widgetDescription":
-								"A persistent question the user can answer while the assistant continues working.",
+								"A question the user can answer or revise.",
 						},
 					},
 				],

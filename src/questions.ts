@@ -1,15 +1,10 @@
 import * as z from "zod";
 
 export const questionInstructions =
-	"ask requests a question widget in ChatGPT; its result confirms creation of the request. Immediately call ask_assert with question.id to confirm loading. If the widget fails to load within 10 seconds, the assertion fails and records the question as skipped. Use an installed Pi interactive tool through call when an answer is needed. User answers arrive separately as webAnswer in normal tool results. Apply answers and revisions promptly; a user skip means proceed with available information. Supply header when useful and mark the preferred first option recommended: true. The widget provides custom input, skipping, and editing saved answers.";
+	"ask requests a question widget in ChatGPT; its result confirms creation of the request. Immediately call ask_assert with question.id to confirm loading. If the widget fails to load within 10 seconds, the assertion fails and records the question as skipped. Use an installed Pi interactive tool through call when an answer is needed. User answers arrive separately as webAnswer in normal tool results. Apply answers and revisions promptly; a user skip means proceed with available information.";
 
 export const questionInput = z.object({
-	header: z
-		.string()
-		.trim()
-		.min(1)
-		.optional()
-		.describe("Short topic label above the question, when useful"),
+	header: z.string().trim().min(1).optional().describe("Short topic label"),
 	question: z
 		.string()
 		.trim()
@@ -18,7 +13,7 @@ export const questionInput = z.object({
 	context: z
 		.string()
 		.optional()
-		.describe("Context to display above the choices"),
+		.describe("Background needed to answer the question"),
 	options: z
 		.array(
 			z.object({
@@ -30,12 +25,12 @@ export const questionInput = z.object({
 				recommended: z
 					.boolean()
 					.optional()
-					.describe("Show a Recommended badge; put this choice first"),
+					.describe("Preferred choice; place it first"),
 			}),
 		)
 		.default([])
 		.describe(
-			"Distinct choices, usually two or three. The widget provides custom input and skipping separately.",
+			"Distinct choices, usually two or three. Freeform answers and skipping are available separately.",
 		),
 	allowMultiple: z
 		.boolean()

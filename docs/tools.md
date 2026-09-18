@@ -40,19 +40,13 @@ Omit `before` for the latest entries. Use `after` to read forward from an entry.
 
 To follow progress, pass `after` with `wait: true`. Available entries return immediately; at the end of the branch, the request waits up to 30 seconds for new readable entries. A timeout returns an empty page. Reads with `before` return immediately. Cancellation, disconnection, or an invalidated branch cursor ends the request. Waiting for history leaves the session available for other requests.
 
-Set `observer: true` to read as an observer. Ordinary reads leave a notice in Pi; observer reads omit that notice. History-reading notices are excluded from returned pages and their counts. New messages and work activity wake waiting readers; idle status alone does not indicate task completion.
+Set `observer: true` to read as an observer. New messages and work activity wake waiting readers; idle status alone does not indicate task completion.
 
-Messages, tool calls and results, summaries, images, file links, and Chappie activity records use their saved contents, including Pi's existing truncation notices and full-output paths. Assistant messages carry their originating `chatId` and optional full `requestId` in `message.chappie`. Tool results inherit the source of their `toolCallId`, including when the call falls outside the requested page. Activity records carry the same source fields. Request-specific notices display a compact label such as `ChatGPT Zxbs(fd44) joined`; the workflow suffix is for log correlation and can be shared by parallel executions. The returned history remains separate from new input and pending result delivery.
-
-Pi user input, webpage answers, connection status, and deferred delivery target sessions or conversations. A deferred result's `requestId` identifies the original operation; the result can reach another execution in that conversation.
+History includes saved messages, tool calls and results, summaries, images, file links, and work activity. Truncation notices and full-output paths are included so complete output can be read when needed. Reading history leaves new input and pending results available for normal delivery.
 
 ## Participation
 
-Initialization opens a 10-second window for its ChatGPT conversation and Pi session. Repeated initializations within that window return observer guidance alongside the normal environment and input. They leave the window's expiration unchanged. The broker stores these times in memory.
-
-The first widget loading report also opens a window for the question's conversation and session. Resource reads open a window when requested and renew it after a successful read. Exported resource links carry the receiving conversation ID so these reads address the corresponding window independently of the current binding.
-
-The executing assistant uses `chat` to share progress and completion in Pi. An observer follows that work through `history` with `observer: true` and `wait: true`, thinks independently, and explains the recorded results in ChatGPT when the task is complete. Participation guidance applies to the current task. Tool execution and message delivery use their normal session and conversation routes.
+The executing assistant uses `chat` to share progress and completion in Pi. When initialization directs an assistant to observe, it follows that work through `history` with `observer: true` and `wait: true`, thinks independently, and explains the recorded results in ChatGPT when the task is complete.
 
 ## Pi tools
 
@@ -83,7 +77,7 @@ Pi controls execution inside that batch. Separate requests run in order within o
 { "text": "Updated the parser and its callers." }
 ```
 
-Pi user input consumed during the work accompanies later Chappie results, including images. Steering and follow-up follow Pi's own delivery timing.
+Pi user input consumed during the work accompanies later Chappie results, including images.
 
 If a request is explicitly cancelled after local work has produced results, those results can accompany a later response to the originating ChatGPT conversation. Long-running local work is better run through the environment's persistent process facilities instead of occupying one tool request.
 
@@ -111,7 +105,7 @@ Call `ask_assert` with the returned ID to confirm that the widget loaded:
 { "questionId": "<question-id>" }
 ```
 
-If the widget has not loaded within 10 seconds, `ask_assert` fails and saves the unanswered question as skipped. Its loading state remains unchanged. Use a Pi interactive tool when an answer is needed. The user can still answer or edit the saved question when its widget is available.
+If the widget has not loaded within 10 seconds, `ask_assert` fails and saves the unanswered question as skipped. Use a Pi interactive tool when an answer is needed. The user can still answer or edit the saved question when its widget is available.
 
 Answers, revisions, and skips arrive later as `webAnswer` in normal Chappie results. `options` can be omitted for a text answer, and `allowMultiple: true` allows several choices. `sessionId` associates the question with a Pi session using the session selection rules above.
 
@@ -120,8 +114,6 @@ Questions remain available after the assistant response and across broker restar
 ## Files
 
 `transfer.paths` always names paths or image references on the Pi side. Relative paths resolve from the selected Pi session's working directory; absolute paths and `~/` are accepted.
-
-Pi displays transfers with the source and destination device names joined by an arrow. File paths and sizes appear below the direction; failures show their error messages.
 
 ### ChatGPT to Pi
 
@@ -134,7 +126,7 @@ Pair Pi destinations with ChatGPT files:
 }
 ```
 
-The ChatGPT host turns the cloud paths or attachment references into downloadable file objects before the call reaches Chappie. Chappie creates parent directories and writes each file directly to its destination.
+The ChatGPT host turns the cloud paths or attachment references into downloadable file objects before the call reaches Chappie. Parent directories are created as needed.
 
 Existing targets produce an error by default. Use `overwrite: true` when replacement is intended:
 
@@ -177,7 +169,7 @@ Supply `to` to copy files to another connected Pi session:
 
 Source and destination paths correspond by position. Each session resolves its own relative paths, absolute paths, and `~/`. Image references can also be copied. `files` and `to` select different sources and are mutually exclusive.
 
-File chunks travel through the broker over the existing connections. The destination writes each file to a temporary sibling directory, then places the completed file at its requested path. `overwrite: true` replaces an existing destination. Cancellation or failure discards the incomplete file; successfully copied files remain available.
+Both Pi sessions need to stay connected during the transfer. `overwrite: true` replaces an existing destination. Cancellation or failure discards the incomplete file; successfully copied files remain available.
 
 ### Images
 
