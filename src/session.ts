@@ -44,6 +44,11 @@ interface StoreRequest {
 	reject(error: Error): void;
 }
 
+interface HistoryRequest {
+	request: Extract<BrokerMessage, { type: "history" }>;
+	timeout: NodeJS.Timeout;
+}
+
 interface ActiveRequest {
 	request: RemoteRequest;
 	session: SessionDescription;
@@ -62,6 +67,7 @@ export class LocalSession {
 	readonly #queue: RemoteRequest[] = [];
 	readonly #pendingInputs = new Map<string, SessionInput>();
 	readonly #deliveries = new Map<string, DeliveryRecord>();
+	readonly #histories = new Map<number, HistoryRequest>();
 	#context: ExtensionContext | undefined;
 	#connection: IpcClient | undefined;
 	#output: ProviderOutput | undefined;
@@ -104,6 +110,20 @@ export class LocalSession {
 			if (context.model?.provider === "chappie") {
 				this.#resetInputs(context, event.newLeafId);
 			}
+			this.#historyChanged();
+		});
+		// Pi persists messages after message_end handlers finish.
+		this.#pi.on("message_start", (_event, context) => {
+			this.#context = context;
+			this.#historyChanged();
+		});
+		this.#pi.on("tool_call", (_event, context) => {
+			this.#context = context;
+			this.#historyChanged();
+		});
+		this.#pi.on("session_compact", (_event, context) => {
+			this.#context = context;
+			this.#historyChanged();
 		});
 		this.#pi.on("context", (event, context) => ({
 			messages:
@@ -122,6 +142,7 @@ export class LocalSession {
 			this.#context = context;
 			this.#starting = false;
 			this.#collectInputs();
+			this.#historyChanged();
 			await this.#completeActive();
 			this.#dispatch();
 		});
@@ -139,6 +160,7 @@ export class LocalSession {
 				type,
 				...activity,
 			});
+		if (activity.event !== "history") this.#historyChanged();
 	}
 
 	async start(output: ProviderOutput): Promise<void> {
@@ -157,6 +179,7 @@ export class LocalSession {
 			await connection.connect();
 			if (output.closed) return;
 			this.#collectInputs();
+			this.#historyChanged();
 			await this.#completeActive();
 			this.#status = "ready";
 			await this.#sync();
@@ -189,6 +212,7 @@ export class LocalSession {
 		this.#resetInputs();
 		this.#rejectSyncs(new Error("Chappie session ended"));
 		this.#rejectStores(new Error("Chappie session ended"));
+		for (const id of this.#histories.keys()) this.#finishHistory(id);
 	}
 
 	#update(
@@ -211,6 +235,7 @@ export class LocalSession {
 				},
 				onMessage: (message) => this.#receive(message),
 				onClose: (error) => {
+					for (const id of this.#histories.keys()) this.#finishHistory(id);
 					this.#rejectSyncs(error);
 					this.#rejectStores(error);
 					if (this.#output && !this.#output.closed) this.#output.fail(error);
@@ -287,24 +312,7 @@ export class LocalSession {
 				});
 				break;
 			case "history":
-				await this.#reply(message.id, message.sessionId, () => {
-					const context = this.#context;
-					if (!context) throw new Error("Chappie session is not available");
-					const history = historyResult(
-						context.sessionManager.getBranch(),
-						message.sessionId,
-						message.range,
-					);
-					this.#notify(
-						`${chatLabel(message)} read history: ${history.count} entries`,
-						"info",
-						{
-							event: "history",
-							...source(message.chatId, message.requestId),
-						},
-					);
-					return { type: "result", id: message.id, cwd: context.cwd, history };
-				});
+				await this.#readHistory(message);
 				break;
 			case "ackInputs":
 				if (
@@ -321,6 +329,10 @@ export class LocalSession {
 				}));
 				break;
 			case "cancel": {
+				if (this.#histories.has(message.id)) {
+					this.#finishHistory(message.id);
+					break;
+				}
 				const queued = this.#queue.findIndex(
 					(request) => request.id === message.id,
 				);
@@ -368,6 +380,66 @@ export class LocalSession {
 				this.#dispatch();
 				break;
 		}
+	}
+
+	async #readHistory(
+		request: HistoryRequest["request"],
+		wait = request.range.wait,
+	): Promise<void> {
+		try {
+			const context = this.#context;
+			if (context?.sessionManager.getSessionId() !== request.sessionId)
+				throw new Error("The requested Pi session is no longer active");
+			const history = historyResult(
+				context.sessionManager.getBranch(),
+				request.sessionId,
+				request.range,
+			);
+			if (wait && !request.range.before && history.count === 0) {
+				if (!this.#histories.has(request.id)) {
+					this.#histories.set(request.id, {
+						request,
+						timeout: setTimeout(() => {
+							void this.#readHistory(request, false).catch(() => {});
+						}, 30_000),
+					});
+				}
+				return;
+			}
+			this.#finishHistory(request.id);
+			if (!request.range.observer) {
+				this.#notify(
+					`${chatLabel(request)} read history: ${history.count} entries`,
+					"info",
+					{ event: "history", ...source(request.chatId, request.requestId) },
+				);
+			}
+			await this.#connection?.send({
+				type: "result",
+				id: request.id,
+				cwd: context.cwd,
+				history,
+			});
+		} catch (error) {
+			this.#finishHistory(request.id);
+			await this.#sendError(
+				request.id,
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}
+
+	#historyChanged(): void {
+		for (const { request } of this.#histories.values()) {
+			void this.#readHistory(request).catch(() => {});
+		}
+	}
+
+	#finishHistory(id: number): void {
+		const pending = this.#histories.get(id);
+		if (!pending) return;
+		clearTimeout(pending.timeout);
+		this.#histories.delete(id);
 	}
 
 	#inspection(): SessionInspection {
@@ -450,6 +522,7 @@ export class LocalSession {
 		context: ExtensionContext,
 	): Promise<void> {
 		this.#context = context;
+		this.#historyChanged();
 		const active = this.#active;
 		if (!active || message !== active.message) return;
 		const sessionId = active.session.id;

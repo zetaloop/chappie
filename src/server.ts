@@ -427,7 +427,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Session history",
 			description:
-				"Read recent Pi history with entry IDs and timestamps. Use before/after to page the current branch. History provides context for the current task. An explicit sessionId applies only to this read.",
+				"Read Pi history with entry IDs and timestamps. Use before/after to page the current branch, and wait to follow new progress when caught up. Set observer when reading as an observer. An explicit sessionId applies only to this read.",
 			inputSchema: historyInput.extend({
 				sessionId: z
 					.string()

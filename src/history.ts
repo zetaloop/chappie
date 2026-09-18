@@ -1,6 +1,6 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import * as z from "zod";
-import type { Source } from "./activity.ts";
+import type { Activity, Source } from "./activity.ts";
 import { toolResultsContent } from "./delivery.ts";
 import type { ProviderOutput } from "./provider.ts";
 import { contentWithImageReferences, rememberImages } from "./resources.ts";
@@ -22,6 +22,16 @@ export const historyInput = z.object({
 		.min(1)
 		.optional()
 		.describe("Read entries after this entry ID, starting with the earliest"),
+	wait: z
+		.boolean()
+		.optional()
+		.describe(
+			"Wait up to 30 seconds for new entries when caught up; before reads return immediately",
+		),
+	observer: z
+		.boolean()
+		.optional()
+		.describe("Read work progress as an observer"),
 });
 
 export type HistoryRange = z.infer<typeof historyInput>;
@@ -48,7 +58,10 @@ export function historyResult(
 			case "custom_message":
 				return entry.customType !== "chappie.request";
 			case "custom":
-				return entry.customType === "chappie.notice";
+				return (
+					entry.customType === "chappie.notice" &&
+					(entry.data as Activity | undefined)?.event !== "history"
+				);
 			case "compaction":
 			case "branch_summary":
 				return true;
