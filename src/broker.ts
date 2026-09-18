@@ -56,7 +56,7 @@ export interface Initialization {
 export interface InitializedSession extends Omit<SessionInspection, "tools"> {
 	selection: "existing" | "explicit" | "automatic";
 	initialization?: Initialization;
-	globalAgents?: string;
+	globalAgents?: { path: string };
 	inputs: SessionInput[];
 	tools: { name: string; description: string }[];
 }

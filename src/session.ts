@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { resolve } from "node:path";
 import type {
 	AssistantMessage,
 	ToolResultMessage,
@@ -374,7 +374,7 @@ export class LocalSession {
 				break;
 			case "inspect":
 				await this.#reply(message.id, message.sessionId, async () => {
-					const globalAgents = await this.#readGlobalAgents();
+					const globalAgents = await this.#globalAgents();
 					return {
 						type: "result",
 						id: message.id,
@@ -626,9 +626,11 @@ export class LocalSession {
 		};
 	}
 
-	async #readGlobalAgents(): Promise<string | undefined> {
+	async #globalAgents(): Promise<{ path: string } | undefined> {
+		const path = resolve(this.#agentDir, "AGENTS.md");
 		try {
-			return await readFile(join(this.#agentDir, "AGENTS.md"), "utf8");
+			await access(path);
+			return { path };
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 			throw error;

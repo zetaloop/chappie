@@ -51,7 +51,7 @@ export type SessionResult =
 	| {
 			inspection: SessionInspection;
 			inputs: SessionInput[];
-			globalAgents?: string;
+			globalAgents?: { path: string };
 	  }
 	| { message: AssistantMessage; cwd: string; inputs: SessionInput[] }
 	| {
