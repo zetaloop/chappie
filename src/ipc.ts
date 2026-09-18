@@ -20,7 +20,8 @@ import type {
 import type { Activity } from "./activity.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { HistoryRange, HistoryResult } from "./history.ts";
-import type { ResourceData } from "./resources.ts";
+import type { ResourceData, ResourceDescriptor } from "./resources.ts";
+import type { TransferDetails } from "./transfer.ts";
 
 const defaultPort = 24274;
 
@@ -61,12 +62,25 @@ export type SessionResult =
 	  }
 	| { history: HistoryResult; cwd: string }
 	| { resource: ResourceData }
+	| { transfer: TransferDetails }
 	| { error: string };
+
+export type SessionRequest =
+	| { type: "readResource"; sessionId: string; uri: string; offset?: number }
+	| {
+			type: "copy";
+			sessionId: string;
+			resources: ResourceDescriptor[];
+			paths: string[];
+			overwrite?: boolean;
+	  };
 
 export type SessionMessage =
 	| { type: "sync"; id: number; session: SessionDescription }
 	| { type: "unregister"; sessionId: string }
 	| { type: "delivery"; delivery: DeliveryRecord }
+	| { type: "request"; id: number; request: SessionRequest }
+	| { type: "cancelRequest"; id: number }
 	| ({ type: "result"; id: number } & SessionResult);
 
 export type BrokerMessage =
@@ -99,7 +113,8 @@ export type BrokerMessage =
 			calls: ToolCall[];
 	  }
 	| { type: "cancel"; id: number; sessionId: string; reason: string }
-	| { type: "readResource"; id: number; sessionId: string; uri: string }
+	| (SessionRequest & { id: number })
+	| ({ type: "response"; id: number } & SessionResult)
 	| { type: "ackInputs"; sessionId: string; ids: string[] };
 
 export function ipcEndpoint(agentDir: string): string {

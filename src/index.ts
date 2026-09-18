@@ -34,6 +34,9 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 	const config = await readConfig(agentDir);
 	const session = new LocalSession(pi, agentDir, config.connect);
 	session.install();
-	pi.registerTool(transfer);
+	pi.registerTool({
+		...transfer,
+		execute: (...args) => session.transfer(...args),
+	});
 	pi.registerProvider(createChappieProvider((output) => session.start(output)));
 }

@@ -1,8 +1,15 @@
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
-import { mkdir, stat, unlink } from "node:fs/promises";
+import {
+	link,
+	mkdir,
+	mkdtempDisposable,
+	rename,
+	stat,
+	unlink,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
@@ -10,11 +17,16 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { describeResource, registerFile } from "./resources.ts";
+import {
+	describeResource,
+	type ResourceDescriptor,
+	registerFile,
+} from "./resources.ts";
 
-interface TransferDetails {
+export interface TransferDetails {
 	files: ({ path: string; bytes: number } | { path: string; error: string })[];
-	resources: import("./resources.ts").ResourceDescriptor[];
+	resources: ResourceDescriptor[];
+	to?: { sessionId: string; device: string };
 }
 
 export const transferFile = Type.Object({
@@ -28,18 +40,27 @@ export const transfer = {
 	name: "transfer",
 	label: "transfer",
 	description:
-		"Copy ChatGPT files into Pi paths when files is supplied. Otherwise, return resource links for Pi paths or Chappie image references.",
+		"Copy ChatGPT files into Pi paths with files, or copy Pi files to another session with to. Otherwise, return resource links for Pi paths or Chappie image references.",
 	parameters: Type.Object({
 		paths: Type.Array(Type.String(), {
 			minItems: 1,
 			description:
-				"Pi destinations for import; Pi paths or chappie:// image references for export",
+				"Pi destinations for import; Pi source paths or chappie:// image references for export or session copies",
 		}),
 		files: Type.Optional(
 			Type.Array(transferFile, {
 				minItems: 1,
 				description:
-					"ChatGPT files paired with paths in order; omit for export",
+					"ChatGPT files paired with paths in order; omit for Pi sources",
+			}),
+		),
+		to: Type.Optional(
+			Type.Object({
+				sessionId: Type.String({ description: "Destination Pi session" }),
+				paths: Type.Array(Type.String(), {
+					minItems: 1,
+					description: "Destinations paired with source paths in order",
+				}),
 			}),
 		),
 		overwrite: Type.Optional(
@@ -51,6 +72,7 @@ export const transfer = {
 		args: {
 			paths: string[];
 			files?: { download_url: string }[];
+			to?: { sessionId: string; paths: string[] };
 			overwrite?: boolean;
 		},
 		signal: AbortSignal | undefined,
@@ -114,6 +136,46 @@ export const transfer = {
 	},
 };
 
+export async function copyFiles(
+	paths: string[],
+	resources: ResourceDescriptor[],
+	cwd: string,
+	overwrite: boolean,
+	read: (resource: ResourceDescriptor) => AsyncIterable<Uint8Array>,
+	signal: AbortSignal,
+): Promise<TransferDetails["files"]> {
+	if (paths.length !== resources.length)
+		throw new Error("Source and destination counts must match");
+	return Promise.all(
+		paths.map(async (requested, index) => {
+			const path = localPath(requested, cwd);
+			try {
+				const resource = resources[index];
+				if (!resource) throw new Error("Missing source resource");
+				const bytes = await withFileMutationQueue(path, async () => {
+					signal.throwIfAborted();
+					await mkdir(dirname(path), { recursive: true });
+					await using temporary = await mkdtempDisposable(
+						join(dirname(path), ".chappie-"),
+					);
+					const staged = join(temporary.path, "file");
+					const bytes = await importFile(staged, read(resource), false, signal);
+					signal.throwIfAborted();
+					if (overwrite) await rename(staged, path);
+					else await link(staged, path);
+					return bytes;
+				});
+				return { path, bytes };
+			} catch (error) {
+				return {
+					path: requested,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+		}),
+	);
+}
+
 function localPath(path: string, cwd: string): string {
 	if (path === "~") return homedir();
 	if (path.startsWith("~/") || path.startsWith("~\\")) {
@@ -124,7 +186,7 @@ function localPath(path: string, cwd: string): string {
 
 async function importFile(
 	path: string,
-	url: string,
+	source: string | AsyncIterable<Uint8Array>,
 	overwrite: boolean,
 	signal?: AbortSignal,
 ): Promise<number> {
@@ -138,13 +200,15 @@ async function importFile(
 		try {
 			await once(writable, "open");
 			opened = true;
-			const response = await fetch(url, signal ? { signal } : {});
-			if (!response.ok || !response.body) {
-				throw new Error(`Download failed with HTTP ${response.status}`);
-			}
-			const readable = Readable.from(
-				response.body as unknown as AsyncIterable<Uint8Array>,
-			);
+			let content: AsyncIterable<Uint8Array>;
+			if (typeof source === "string") {
+				const response = await fetch(source, signal ? { signal } : {});
+				if (!response.ok || !response.body) {
+					throw new Error(`Download failed with HTTP ${response.status}`);
+				}
+				content = response.body as unknown as AsyncIterable<Uint8Array>;
+			} else content = source;
+			const readable = Readable.from(content, { objectMode: false });
 			if (signal) await pipeline(readable, writable, { signal });
 			else await pipeline(readable, writable);
 			signal?.throwIfAborted();

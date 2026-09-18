@@ -14,7 +14,7 @@
 | `bash` | Run a shell command. |
 | `edit` | Apply text replacements. |
 | `write` | Write text to a file. |
-| `transfer` | Move files between ChatGPT and Pi or export a Pi image. |
+| `transfer` | Move files between ChatGPT and Pi, copy between Pi sessions, or export a Pi image. |
 
 ## Sessions
 
@@ -157,6 +157,25 @@ Omit `files` to export existing Pi files:
 Chappie returns MCP resource links. ChatGPT retrieves the bytes when it materializes those resources, which can require user confirmation. A resource remains associated with the Pi session that exported it, so that Pi process and source file need to remain available until the bytes are read.
 
 For a directory, create an archive with a Pi tool and export the resulting file.
+
+### Pi to Pi
+
+Supply `to` to copy files to another connected Pi session:
+
+```json
+{
+  "sessionId": "<source-session>",
+  "paths": ["build/output.zip"],
+  "to": {
+    "sessionId": "<destination-session>",
+    "paths": ["downloads/output.zip"]
+  }
+}
+```
+
+Source and destination paths correspond by position. Each session resolves its own relative paths, absolute paths, and `~/`. Image references can also be copied. `files` and `to` select different sources and are mutually exclusive.
+
+File chunks travel through the broker over the existing connections. The destination writes each file to a temporary sibling directory, then places the completed file at its requested path. `overwrite: true` replaces an existing destination. Cancellation or failure discards the incomplete file; successfully copied files remain available.
 
 ### Images
 

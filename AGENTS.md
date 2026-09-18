@@ -12,7 +12,7 @@ One MCP tool request becomes one native Pi tool batch. A `call` array requests P
 
 `chat` completes one assistant turn. Remote work arriving while Pi is idle starts a new turn through an invisible custom control message that is removed from model context.
 
-Files use one `transfer` tool. Supplying `files` imports ChatGPT files directly into the requested Pi paths. Omitting `files` exports existing files or Chappie image references as MCP resources. Resource URIs contain the owning Pi session so `resources/read` never depends on the ChatGPT conversation's current binding.
+Files use one `transfer` tool. Supplying `files` imports ChatGPT files directly into the requested Pi paths. Supplying `to` copies source files or image references to another Pi session through broker-relayed IPC requests. The destination pulls bounded resource chunks and installs each completed file from a temporary sibling directory. Omitting both exports existing files or Chappie image references as MCP resources. Resource URIs contain the owning Pi session so `resources/read` never depends on the ChatGPT conversation's current binding.
 
 `chappie.state.json` under Pi's agent directory stores conversation bindings, questions, and interrupted-result descriptors. Initialization cooldowns live in broker memory and are scoped to a ChatGPT conversation and Pi session. Widget loading and resource reads also start cooldowns. Exported resource links carry the receiving conversation ID; file bytes remain associated with the owning Pi session.
 

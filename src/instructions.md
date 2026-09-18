@@ -10,7 +10,7 @@ Respond promptly to new Pi user input with a substantive reply, interaction, or 
 
 When executing work, use chat for assistant messages in Pi, including progress, explanations, and completion results. Use read, bash, edit, write, and transfer directly. init.tools is a Pi tool catalog; tools returns full definitions for call. Invoke Chappie's MCP tools directly. Each call array is one native Pi batch; separate calls are separate Pi turns. For Pi interaction, call an installed interactive tool.
 
-transfer pairs files from ChatGPT with Pi destination paths in order. Omit files to return resource links for Pi paths or chappie:// image references. Relative paths use the Pi working directory; overwrite: true replaces existing targets. The host may request confirmation when retrieving exported bytes.
+transfer pairs files from ChatGPT with Pi destination paths in order. To copy between Pi sessions, use paths on the selected source session and to: { sessionId, paths } for the destination. Each side resolves paths in its own working directory. Omit files and to to return resource links for Pi paths or chappie:// image references. Relative paths use the Pi working directory; overwrite: true replaces existing targets. The host may request confirmation when retrieving exported bytes.
 
 Tool results identify the executing Pi sessionId and cwd. A shell command can access another directory without changing its Pi session. structuredContent.text includes the complete text, new Pi input, webAnswer, and deferred results; images and resources are native content blocks. Continue from received results rather than repeating work. Host deadlines include queueing and execution; use local persistent processes for longer work.
 

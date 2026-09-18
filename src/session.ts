@@ -22,10 +22,18 @@ import {
 	type SessionDescription,
 	type SessionInput,
 	type SessionInspection,
+	type SessionRequest,
+	type SessionResult,
 	type SessionStatus,
 } from "./ipc.ts";
 import type { ProviderOutput } from "./provider.ts";
-import { readSessionResource, rememberImages } from "./resources.ts";
+import {
+	type ResourceDescriptor,
+	readSessionResource,
+	rememberImages,
+	resourceSessionId,
+} from "./resources.ts";
+import { copyFiles, transfer } from "./transfer.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
 
@@ -41,6 +49,11 @@ interface SyncRequest {
 
 interface StoreRequest {
 	resolve(): void;
+	reject(error: Error): void;
+}
+
+interface PendingRequest {
+	resolve(result: SessionResult): void;
 	reject(error: Error): void;
 }
 
@@ -68,12 +81,14 @@ export class LocalSession {
 	readonly #pendingInputs = new Map<string, SessionInput>();
 	readonly #deliveries = new Map<string, DeliveryRecord>();
 	readonly #histories = new Map<number, HistoryRequest>();
+	readonly #requests = new Map<number, PendingRequest>();
+	readonly #copies = new Map<number, AbortController>();
 	#context: ExtensionContext | undefined;
 	#connection: IpcClient | undefined;
 	#output: ProviderOutput | undefined;
 	#active: ActiveRequest | undefined;
 	#status: SessionStatus = "idle";
-	#nextSyncId = 1;
+	#nextRequestId = 1;
 	#starting = false;
 	#sessionId: string | undefined;
 	#inputCursor: string | null = null;
@@ -194,6 +209,41 @@ export class LocalSession {
 		}
 	}
 
+	async transfer(
+		...parameters: Parameters<typeof transfer.execute>
+	): ReturnType<typeof transfer.execute> {
+		const [id, args, signal, update, context] = parameters;
+		if (!args.to) return transfer.execute(...parameters);
+		if (args.files) throw new Error("files and to are mutually exclusive");
+		if (args.paths.length !== args.to.paths.length)
+			throw new Error("Source and destination counts must match");
+		const exported = await transfer.execute(
+			id,
+			{ paths: args.paths },
+			signal,
+			update,
+			context,
+		);
+		const result = await this.#request(
+			{
+				type: "copy",
+				sessionId: args.to.sessionId,
+				paths: args.to.paths,
+				resources: exported.details.resources,
+				...(args.overwrite !== undefined ? { overwrite: args.overwrite } : {}),
+			},
+			signal,
+		);
+		if (!("transfer" in result))
+			throw new Error("Pi session returned no transfer result");
+		if (result.transfer.files.some((file) => "error" in file))
+			throw new Error(JSON.stringify(result.transfer));
+		return {
+			content: [{ type: "text", text: JSON.stringify(result.transfer) }],
+			details: result.transfer,
+		};
+	}
+
 	close(): void {
 		const sessionId = this.#context?.sessionManager.getSessionId();
 		if (sessionId && this.#connection?.connected) {
@@ -210,6 +260,7 @@ export class LocalSession {
 		this.#connection = undefined;
 		this.#context = undefined;
 		this.#resetInputs();
+		this.#cancelRequests(new Error("Chappie session ended"));
 		this.#rejectSyncs(new Error("Chappie session ended"));
 		this.#rejectStores(new Error("Chappie session ended"));
 		for (const id of this.#histories.keys()) this.#finishHistory(id);
@@ -235,6 +286,7 @@ export class LocalSession {
 				},
 				onMessage: (message) => this.#receive(message),
 				onClose: (error) => {
+					this.#cancelRequests(error);
 					for (const id of this.#histories.keys()) this.#finishHistory(id);
 					this.#rejectSyncs(error);
 					this.#rejectStores(error);
@@ -273,7 +325,7 @@ export class LocalSession {
 			this.#context.model?.provider !== "chappie"
 		)
 			return;
-		const id = this.#nextSyncId++;
+		const id = this.#nextRequestId++;
 		const completion = Promise.withResolvers<void>();
 		this.#syncs.set(id, completion);
 		try {
@@ -286,6 +338,16 @@ export class LocalSession {
 
 	async #receive(message: BrokerMessage): Promise<void> {
 		switch (message.type) {
+			case "response": {
+				const pending = this.#requests.get(message.id);
+				if (!pending) break;
+				if ("error" in message) pending.reject(new Error(message.error));
+				else {
+					const { type: _type, id: _id, ...result } = message;
+					pending.resolve(result);
+				}
+				break;
+			}
 			case "synced":
 				this.#syncs.get(message.id)?.resolve();
 				break;
@@ -325,10 +387,47 @@ export class LocalSession {
 				await this.#reply(message.id, message.sessionId, async () => ({
 					type: "result",
 					id: message.id,
-					resource: await readSessionResource(message.sessionId, message.uri),
+					resource: await readSessionResource(
+						message.sessionId,
+						message.uri,
+						message.offset,
+					),
 				}));
 				break;
+			case "copy": {
+				const controller = new AbortController();
+				this.#copies.set(message.id, controller);
+				void this.#reply(message.id, message.sessionId, async () => {
+					const context = this.#context;
+					if (!context) throw new Error("Chappie session is not available");
+					const files = await copyFiles(
+						message.paths,
+						message.resources,
+						context.cwd,
+						message.overwrite === true,
+						(resource) => this.#readChunks(resource, controller.signal),
+						controller.signal,
+					);
+					return {
+						type: "result",
+						id: message.id,
+						transfer: {
+							files,
+							resources: [],
+							to: { sessionId: message.sessionId, device: hostname() },
+						},
+					};
+				})
+					.finally(() => this.#copies.delete(message.id))
+					.catch(() => {});
+				break;
+			}
 			case "cancel": {
+				const copying = this.#copies.get(message.id);
+				if (copying) {
+					copying.abort(new Error(message.reason));
+					break;
+				}
 				if (this.#histories.has(message.id)) {
 					this.#finishHistory(message.id);
 					break;
@@ -380,6 +479,65 @@ export class LocalSession {
 				this.#dispatch();
 				break;
 		}
+	}
+
+	async #request(
+		request: SessionRequest,
+		signal?: AbortSignal,
+	): Promise<SessionResult> {
+		signal?.throwIfAborted();
+		const connection = this.#connection;
+		if (!connection?.connected) throw new Error("Chappie is not connected");
+		const id = this.#nextRequestId++;
+		const completion = Promise.withResolvers<SessionResult>();
+		const onAbort = (): void => {
+			completion.reject(signal?.reason);
+			void connection.send({ type: "cancelRequest", id }).catch(() => {});
+		};
+		this.#requests.set(id, completion);
+		signal?.addEventListener("abort", onAbort, { once: true });
+		void connection
+			.send({ type: "request", id, request })
+			.catch(completion.reject);
+		try {
+			return await completion.promise;
+		} finally {
+			this.#requests.delete(id);
+			signal?.removeEventListener("abort", onAbort);
+		}
+	}
+
+	async *#readChunks(
+		resource: ResourceDescriptor,
+		signal: AbortSignal,
+	): AsyncGenerator<Uint8Array> {
+		for (let offset = 0; offset < resource.size; ) {
+			const result = await this.#request(
+				{
+					type: "readResource",
+					sessionId: resourceSessionId(resource.uri),
+					uri: resource.uri,
+					offset,
+				},
+				signal,
+			);
+			if (!("resource" in result))
+				throw new Error("Pi session returned no resource");
+			const data = Buffer.from(result.resource.blob, "base64");
+			if (data.length === 0)
+				throw new Error(
+					`Source ended before ${resource.size} bytes: ${resource.name}`,
+				);
+			yield data;
+			offset += data.length;
+		}
+	}
+
+	#cancelRequests(error: Error): void {
+		for (const pending of this.#requests.values()) pending.reject(error);
+		this.#requests.clear();
+		for (const controller of this.#copies.values()) controller.abort(error);
+		this.#copies.clear();
 	}
 
 	async #readHistory(

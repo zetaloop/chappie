@@ -29,7 +29,7 @@ Call `init` from ChatGPT to connect the conversation to Pi. A conversation can r
 
 ## Usage
 
-Chappie exposes common coding tools directly and every active Pi tool through `tools` and `call`. `chat` sends an assistant message to Pi, Pi input accompanies later tool results, and `transfer` moves files in either direction. `history` reads recent Pi messages and activity with timestamps. `ask` can present a persistent question in ChatGPT when webpage questions are enabled.
+Chappie exposes common coding tools directly and every active Pi tool through `tools` and `call`. `chat` sends an assistant message to Pi, Pi input accompanies later tool results, and `transfer` moves files between ChatGPT and Pi or between connected devices. `history` reads recent Pi messages and activity with timestamps. `ask` can present a persistent question in ChatGPT when webpage questions are enabled.
 
 See the [tool guide](docs/tools.md) for session selection, history, Pi tools, webpage questions, and file transfer.
 

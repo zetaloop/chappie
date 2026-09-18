@@ -85,6 +85,10 @@ export class Broker {
 	readonly #pending = new Map<number, PendingRequest>();
 	readonly #waiters = new Set<ChangeWaiter>();
 	readonly #cooldowns = new Map<string, number>();
+	readonly #relays = new Map<
+		JsonLinePeer<SessionMessage, BrokerMessage>,
+		Map<number, AbortController>
+	>();
 	#ask = true;
 	#nextRequestId = 1;
 
@@ -108,6 +112,10 @@ export class Broker {
 	async close(): Promise<void> {
 		const error = new Error("Chappie broker ended");
 		this.#cooldowns.clear();
+		for (const relays of this.#relays.values()) {
+			for (const controller of relays.values()) controller.abort(error);
+		}
+		this.#relays.clear();
 		for (const [id, pending] of this.#pending) {
 			this.#finishRequest(id, pending);
 			pending.reject(error);
@@ -469,6 +477,39 @@ export class Broker {
 		message: SessionMessage,
 	): Promise<void> {
 		switch (message.type) {
+			case "request": {
+				let relays = this.#relays.get(peer);
+				if (!relays) {
+					relays = new Map();
+					this.#relays.set(peer, relays);
+				}
+				const controller = new AbortController();
+				relays.set(message.id, controller);
+				void this.#request(
+					message.request.sessionId,
+					(id) => ({ ...message.request, id }),
+					controller.signal,
+				)
+					.then(
+						(result) =>
+							peer.send({ ...result, type: "response", id: message.id }),
+						(error: unknown) =>
+							peer.send({
+								type: "response",
+								id: message.id,
+								error: error instanceof Error ? error.message : String(error),
+							}),
+					)
+					.finally(() => relays.delete(message.id))
+					.catch(() => {});
+				break;
+			}
+			case "cancelRequest":
+				this.#relays
+					.get(peer)
+					?.get(message.id)
+					?.abort(new Error("Transfer cancelled"));
+				break;
 			case "sync": {
 				const registered =
 					this.#sessions.get(message.session.id)?.peer === peer;
@@ -710,6 +751,10 @@ export class Broker {
 	}
 
 	#removePeer(peer: JsonLinePeer<SessionMessage, BrokerMessage>): void {
+		for (const controller of this.#relays.get(peer)?.values() ?? []) {
+			controller.abort(new Error("Pi session disconnected"));
+		}
+		this.#relays.delete(peer);
 		for (const [sessionId, session] of this.#sessions) {
 			if (session.peer === peer) this.#removeSession(sessionId);
 		}

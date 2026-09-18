@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import mime from "mime";
@@ -124,15 +124,35 @@ export function describeResource(
 export async function readSessionResource(
 	sessionId: string,
 	uri: string,
+	offset?: number,
 ): Promise<ResourceData> {
 	const descriptor = describeResource(sessionId, uri);
 	const entry = store(sessionId).get(uri);
 	if (!entry) throw new Error(`Unknown Chappie resource: ${uri}`);
-	const blob =
-		entry.type === "file"
-			? (await readFile(entry.path)).toString("base64")
-			: entry.data;
-	return { ...descriptor, blob };
+	if (offset === undefined) {
+		const blob =
+			entry.type === "file"
+				? (await readFile(entry.path)).toString("base64")
+				: entry.data;
+		return { ...descriptor, blob };
+	}
+	if (!Number.isSafeInteger(offset) || offset < 0)
+		throw new Error("Resource offset must be a nonnegative integer");
+	const length = Math.min(1024 * 1024, Math.max(0, descriptor.size - offset));
+	let data: Buffer;
+	if (entry.type === "file") {
+		await using file = await open(entry.path, "r");
+		const { buffer, bytesRead } = await file.read(
+			Buffer.alloc(length),
+			0,
+			length,
+			offset,
+		);
+		data = buffer.subarray(0, bytesRead);
+	} else {
+		data = Buffer.from(entry.data, "base64").subarray(offset, offset + length);
+	}
+	return { ...descriptor, blob: data.toString("base64") };
 }
 
 export function resourceSessionId(uri: string): string {
