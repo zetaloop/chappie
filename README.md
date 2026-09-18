@@ -53,10 +53,10 @@ The default port is `24274`. Set `listen` to a port number or append `:port` to 
 
 Set `ask` to `false` to disable webpage questions.
 
-Optional session synchronization ends duplicate executions so one execution continues:
+Enable synchronization to resolve conflicting activity:
 
 ```json
 { "sync": true }
 ```
 
-With synchronization enabled, initialization returns a fresh code. `sync` locks a Pi session and its bound conversations while executions verify their codes. Rejected executions announce their exit and end their responses; the verified execution confirms those exits through `chat` and `history`, then releases the lock. Codes persist in broker state; locks last for the broker process. See [synchronization](docs/tools.md#synchronization) for the tool sequence.
+Initialization returns a short name and a private code. `sync` pauses conflicting work for discussion through `chat` and `history`. The verified coordinator decides who continues, their tasks, and who exits, including retaining only one execution. See [synchronization](docs/tools.md#synchronization).

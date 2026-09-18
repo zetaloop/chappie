@@ -25,8 +25,8 @@ import { type ResourceData, resourceSessionId } from "./resources.ts";
 import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
 
-const exitInstructions =
-	"Send one final chat message stating your task, entry time, and that this execution is ending; keep all codes private. Then end this ChatGPT response immediately with no further tool calls. Do not wait for unlock, poll history, reinitialize, or resume this task after release.";
+const coordinationInstructions =
+	"Report your goal and progress through chat using your initialization name. The coordinator decides who continues, their tasks, and who exits. Follow the decision through chat and history; if asked to exit, leave a handoff and end this response.";
 
 interface RegisteredSession {
 	description: SessionDescription;
@@ -66,6 +66,7 @@ interface ChangeWaiter {
 }
 
 export interface Initialization {
+	name?: string;
 	code?: string;
 	sessionId: string;
 	instructions: string;
@@ -304,7 +305,7 @@ export class Broker {
 				{ ...activity, event: "sync_rejected" },
 			);
 			throw new Error(
-				`The sync code is missing or outdated. This execution is a stale, accidental duplicate. ${exitInstructions}`,
+				`Invalid sync code. Ordinary tools remain locked. ${coordinationInstructions}`,
 			);
 		}
 		if (action === "verify") {
@@ -324,7 +325,7 @@ export class Broker {
 				...this.syncState(target),
 				...(renewed ? { code: renewed } : {}),
 				instructions:
-					"This is the surviving execution. Keep the verified code private in this ChatGPT context. Use chat and history to identify every observed conflicting execution and require its final exit. Confirm they have ended their responses, rather than only paused ordinary tools. Verification, idle Pi status, or a quiet history page alone does not establish their exit. Release with this code only after explicit final exit statements and resolution of conflicting activity; ordinary tools remain locked until then.",
+					"You are the coordinator. Decide who continues, their tasks, and who exits; you may retain only one execution. Keep this code private. Release after your decisions are acknowledged and requested exits are complete.",
 			};
 		}
 		if (!this.#locks.get(target))
@@ -342,7 +343,7 @@ export class Broker {
 			...result,
 			...this.syncState(target),
 			instructions:
-				"Synchronization released. The surviving execution may continue the current task. Executions with rejected or unavailable codes remain finished.",
+				"Synchronization released. Continue as directed by the coordinator.",
 		};
 	}
 
@@ -809,12 +810,17 @@ export class Broker {
 			event: "joined",
 			initialization: explicit ? "explicit" : "implicit",
 		});
+		const name = activity.requestId?.match(/\/([^/]+)$/)?.[1];
+		const instructions = name
+			? `${historyInstructions} Use this name when coordinating through chat.`
+			: historyInstructions;
 		return {
 			sessionId,
+			...(name ? { name } : {}),
 			...(code ? { code } : {}),
 			instructions: code
-				? `${historyInstructions} Retain this initialization code in this ChatGPT context for sync verification; Pi history and chat messages contain only coordination details.`
-				: historyInstructions,
+				? `${instructions} Keep this code private for sync verification.`
+				: instructions,
 		};
 	}
 
@@ -990,7 +996,7 @@ export class Broker {
 }
 
 function syncMessage(sessionId: string): string {
-	return `Pi session ${sessionId} is synchronizing to end duplicate executions. Ordinary tools and initialization are locked for this session and its bound ChatGPT conversations. Verify with the code returned by your own most recent initialization. With a missing or rejected code, this execution is an accidental duplicate: ${exitInstructions} The verified execution must confirm the conflicting executions' final exits before releasing the lock.`;
+	return `Pi session ${sessionId} is synchronizing. Ordinary tools and initialization are locked. Verify with your own initialization code; keep it private. ${coordinationInstructions} Only the verified coordinator can release.`;
 }
 
 function abortError(signal: AbortSignal): Error {

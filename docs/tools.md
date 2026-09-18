@@ -4,7 +4,7 @@
 |---|---|
 | `init` | Select this ChatGPT conversation's default Pi session and read its environment. |
 | `history` | Read the current Pi branch with timestamps and entry IDs. |
-| `sync` | End duplicate executions so one execution continues. |
+| `sync` | Resolve conflicting activity under one coordinator. |
 | `sessions` | List connected Pi sessions and the current default. |
 | `tools` | Read full definitions of active Pi tools for `call`. |
 | `chat` | Send an assistant message to Pi. |
@@ -20,6 +20,8 @@
 ## Sessions
 
 Call `init` at the start of local work. Without `sessionId`, it reuses the conversation's saved default or selects an online Pi session with no saved ChatGPT binding. Pass a Pi session ID to resume a specific task, including from another ChatGPT conversation or branch. Read recent `history` to recover progress before continuing the current task.
+
+Initialization returns the request suffix as `initialization.name` when available. Each execution retains its own name for coordination through `chat`.
 
 `sessions` lists connected sessions with their ID, device, working directory, name, execution status, and binding count. The first execution tool call establishes the default using its `sessionId` or an online session with no saved bindings. During synchronization, `chat` and `history` use the requested session solely for communication. Once a default exists, another tool's `sessionId` selects only that operation's target; `init({ sessionId })` changes the default.
 
@@ -37,23 +39,21 @@ Remote Pi sessions appear in the same list when they connect to a broker exposed
 
 Omit `before` for the latest entries. Use `after` to read forward from an entry. Both fields can delimit a range, with the named entries outside the returned range. The default limit is 20 readable entries. Results follow branch order and contain each entry's original ID and timestamp. `hasMore` indicates additional entries in the requested direction.
 
-Messages, tool calls and results, summaries, images, file links, and Chappie activity records use their saved contents, including Pi's existing truncation notices and full-output paths. Assistant messages carry their originating `chatId` and optional full `requestId` in `message.chappie`. Tool results inherit the source of their `toolCallId`, including when the call falls outside the requested page. Activity records carry the same source fields. Request-specific notices display a compact label such as `ChatGPT Zxbs(fd44) joined`; the workflow suffix is for log correlation and can be shared by duplicate executions. Reading leaves a short notice in Pi; the returned history remains separate from new input and pending result delivery.
+Messages, tool calls and results, summaries, images, file links, and Chappie activity records use their saved contents, including Pi's existing truncation notices and full-output paths. Assistant messages carry their originating `chatId` and optional full `requestId` in `message.chappie`. Tool results inherit the source of their `toolCallId`, including when the call falls outside the requested page. Activity records carry the same source fields. Request-specific notices display a compact label such as `ChatGPT Zxbs(fd44) joined`; the workflow suffix is for log correlation and can be shared by parallel executions. When participants report different goals, workflow timing helps identify possible work resumed from an earlier ChatGPT message. Reading leaves a short notice in Pi; the returned history remains separate from new input and pending result delivery.
 
 Pi user input, webpage answers, connection status, and deferred delivery target sessions or conversations. A deferred result's `requestId` identifies the original operation; the result can reach another execution in that conversation.
 
 ## Synchronization
 
-Set `sync` to `true` in the broker's `chappie.json` to enable the `sync` tool. Each explicit initialization and first execution that establishes a default returns `initialization.code`. Retain the code in the ChatGPT context alongside its Pi session ID. Ordinary calls use the existing binding; a saved binding without a code receives one on its next execution.
+Enable `sync` in the broker's `chappie.json`. Initialization returns a private `initialization.code` for its Pi session; a saved binding without a code receives one on its next execution.
 
-When activity conflicts, start synchronization for the session:
+When activity conflicts, start synchronization:
 
 ```json
 { "action": "start", "sessionId": "<session-id>" }
 ```
 
-This locks ordinary tools and initialization for that Pi session and every conversation currently bound to it. Existing ordinary requests in that scope are cancelled through Pi's cancellation path. Bound conversations also pause their operations on other sessions. Other conversations continue using unrelated sessions. Automatic session selection considers unlocked sessions.
-
-`chat`, `history`, and `sessions` remain available to establish which executions must exit. A rejected execution uses `chat` for one final message with its task, entry time, and explicit exit statement, then immediately ends its ChatGPT response and all tool use. Unlocking leaves that execution finished; it must not wait, poll, reinitialize, or resume the task. The verified execution remains responsible for completing the current task. Communication tools keep existing bindings during synchronization. Pending input, webpage answers, and deferred results for the affected work remain available for normal delivery after release. Webpage components can still submit answers and the host can read exported resources.
+This locks ordinary tools and initialization for the Pi session and its bound conversations, cancelling their active ordinary requests. Bound conversations also pause work on other sessions; unrelated conversations continue. `chat`, `history`, and `sessions` remain available with existing bindings.
 
 Verify using the code from the most recent initialization:
 
@@ -61,15 +61,17 @@ Verify using the code from the most recent initialization:
 { "action": "verify", "code": "<initialization-code>" }
 ```
 
-The first successful verification replaces the code and returns it to that call. Verification leaves the session locked. A missing, incorrect, or older code identifies an accidental duplicate that must exit as described above. This applies to the execution, even when other executions share its conversation ID. Repeating `start` preserves the current synchronization; repeating `verify` with the verified code reads its status.
+The first successful verification returns a replacement code to the coordinator. Everyone can discuss goals and progress through `chat` and `history`, including executions with missing or rejected codes. The coordinator decides who continues, their tasks, and who exits, and may retain only one execution.
 
-The holder of the verified code uses `chat` and `history` to identify every observed conflicting execution, require an explicit final exit message, and confirm it has ended its response. A promise to pause ordinary tools, idle Pi status, or a quiet history page alone is insufficient. After those final exits and resolution of conflicting activity, the surviving execution explicitly releases the session:
+Participants acknowledge the decision. Those directed to exit leave a chat handoff and end their responses. Only the coordinator can release, after these decisions and exits are confirmed:
 
 ```json
 { "action": "release", "code": "<verified-code>" }
 ```
 
-Current codes are saved per Pi session in `chappie.state.json`. Activity records contain coordination details; codes stay in initialization and synchronization exchanges. Lock and verification state live in the broker process, so restarting the broker restores ordinary operation. Pi-client and tunnel reconnections retain the running broker's locks. `sessions` and `history` report the current synchronization state.
+Remaining executions resume their assigned work. Pending input, webpage answers, and deferred results resume normal delivery. Webpage submissions and exported resource reads remain available throughout synchronization.
+
+Codes persist per Pi session in `chappie.state.json`; locks last for the broker process and survive Pi-client or tunnel reconnections. Repeated `start` preserves the lock; `verify` with the current code, `sessions`, and `history` report its status.
 
 ## Pi tools
 

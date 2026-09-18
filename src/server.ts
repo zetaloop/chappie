@@ -33,7 +33,7 @@ const outputSchema = z.object({
 });
 
 const syncInstructions =
-	"Synchronization ends accidental duplicate executions so one execution continues. Retain each initialization code privately in this ChatGPT context for its Pi session. On conflicting activity, call sync with action start, then verify with the code returned by your own most recent initialization. A rejected or unavailable code means this execution must send one final chat message with its task, entry time, and explicit exit statement, then end this ChatGPT response immediately. It must not wait for unlock, poll, reinitialize, or resume after release. Verification returns a new code and leaves ordinary tools and initialization locked. The verified execution uses chat and history to identify conflicting executions, require their final exit messages, and confirm their responses have ended before releasing with that code. Idle Pi status or a quiet history page is not proof of exit. Codes belong only in initialization and sync exchanges, never in chat, history, or notes.";
+	"On conflicting activity, start sync and verify with your own initialization code. Keep codes private. Verification returns a new code to the coordinator; ordinary tools and initialization stay locked. Discuss through chat and history, including after failed verification. The coordinator decides who continues, their tasks, and who exits, including retaining only one execution. Acknowledge the decision; if asked to exit, leave a chat handoff and end your response. Only the coordinator releases after decisions and exits are confirmed.";
 
 const questionTemplate = "ui://chappie/question.html";
 const questionSchema = outputSchema.extend({ question: questionOutput });
@@ -89,7 +89,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Connect to Pi",
 			description:
-				"Select this chat's default Pi session and return its environment and tool catalog. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session. Read recent history when resuming work.",
+				"Select this chat's default Pi session and return its environment, tool catalog, and initialization name for coordination. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session. Read recent history when resuming work.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
@@ -467,7 +467,7 @@ export function createServer(broker: Broker): McpServer {
 			{
 				title: "Synchronize Pi activity",
 				description:
-					"End duplicate executions: start synchronization, verify your own latest initialization code, and release after conflicting executions exit. Failed verification requires a final chat exit message followed by ending this response. Verification leaves the session locked; chat and history support exit coordination.",
+					"Pause conflicting activity. Verify your initialization code to coordinate; failed verification still permits discussion. The coordinator decides who continues, their tasks, who exits, and when to release.",
 				inputSchema: z.object({
 					action: z.enum(["start", "verify", "release"]),
 					code: z
