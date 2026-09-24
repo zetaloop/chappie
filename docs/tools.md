@@ -16,6 +16,12 @@
 | `write` | Write text to a file. |
 | `transfer` | Move files between ChatGPT and Pi, copy between Pi sessions, or export a Pi image. |
 
+## Encoding
+
+Every tool except the widget-only `answer` takes one `data` argument: the arguments object serialized as JSON, with its UTF-8 bytes encoded as standard padded base64. Each tool description includes the JSON schema of the arguments before encoding. `transfer` keeps `files` as a top-level unencoded field so ChatGPT can attach uploaded files.
+
+Every text content block and `structuredContent.text` in a result, including errors, is base64 of UTF-8 text. Images and resources remain native content blocks. The `ask` result keeps `structuredContent.question` as plain JSON for the widget.
+
 ## Sessions
 
 Call `init` at the start of local work. Without `sessionId`, it reuses the conversation's saved default or selects an online Pi session with no saved ChatGPT binding. Pass a Pi session ID to resume a specific task, including from another ChatGPT conversation or branch. Read recent `history` to recover progress before continuing the current task.

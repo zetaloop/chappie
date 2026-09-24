@@ -4,6 +4,7 @@ import * as z from "zod";
 import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
 import { deliveryContent } from "./delivery.ts";
+import { type Encoded, type EncodedArgs, encode, encoded } from "./encoding.ts";
 import { historyInput } from "./history.ts";
 import {
 	answerContent,
@@ -28,7 +29,7 @@ const outputSchema = z.object({
 	text: z
 		.string()
 		.describe(
-			"Complete text output, including Pi user input, submitted webpage answers, and deferred results. Images and file resources accompany it as native content blocks.",
+			"Base64 of the UTF-8 complete text output, including Pi user input, submitted webpage answers, and deferred results. Images and file resources accompany it as native content blocks.",
 		),
 });
 
@@ -63,31 +64,41 @@ export function createServer(broker: Broker): McpServer {
 	);
 
 	function handle<Args, Result>(
+		input: Encoded<Args>,
 		callback: (args: Args, context: RequestContext) => Promise<Result>,
 	) {
-		return (args: Args, context: RequestContext): Promise<Result> => {
-			requireChatId(context);
-			context.mcpReq.signal.throwIfAborted();
-			return callback(args, context);
+		return async (args: EncodedArgs, context: RequestContext) => {
+			try {
+				requireChatId(context);
+				context.mcpReq.signal.throwIfAborted();
+				return await callback(await input.parse(args), context);
+			} catch (error) {
+				if (context.mcpReq.signal.aborted) throw error;
+				return errorResult(error);
+			}
 		};
 	}
 
+	const initInput = encoded(
+		z.object({
+			sessionId: z
+				.string()
+				.optional()
+				.describe("Default Pi session ID; may be shared with other chats"),
+		}),
+	);
 	server.registerTool(
 		"init",
 		{
 			title: "Connect to Pi",
-			description:
+			description: initInput.describe(
 				"Select this chat's default Pi session and return its environment, tool catalog, and participation instructions. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session. Read recent history when resuming work.",
+			),
 			outputSchema,
-			inputSchema: z.object({
-				sessionId: z
-					.string()
-					.optional()
-					.describe("Default Pi session ID; may be shared with other chats"),
-			}),
+			inputSchema: initInput.inputSchema,
 			annotations: toolAnnotations,
 		},
-		handle(async (args, context) => {
+		handle(initInput, async (args, context) => {
 			const chatId = requireChatId(context);
 			const { inputs, ...initialized } = await broker.initialize(
 				chatId,
@@ -99,24 +110,29 @@ export function createServer(broker: Broker): McpServer {
 		}),
 	);
 
+	const chatInput = encoded(
+		z.object({
+			text: z.string().min(1).describe("Assistant message in Markdown"),
+			sessionId: z
+				.string()
+				.optional()
+				.describe(
+					"Pi session for this operation; becomes the default if none is set",
+				),
+		}),
+	);
 	server.registerTool(
 		"chat",
 		{
 			title: "Reply in Pi",
-			description: "Send a Markdown assistant message to Pi.",
+			description: chatInput.describe(
+				"Send a Markdown assistant message to Pi.",
+			),
 			outputSchema,
-			inputSchema: z.object({
-				text: z.string().min(1).describe("Assistant message in Markdown"),
-				sessionId: z
-					.string()
-					.optional()
-					.describe(
-						"Pi session for this operation; becomes the default if none is set",
-					),
-			}),
+			inputSchema: chatInput.inputSchema,
 			annotations: toolAnnotations,
 		},
-		handle(async (args, context) => {
+		handle(chatInput, async (args, context) => {
 			const chatId = requireChatId(context);
 			const { sessionId, cwd, inputs, initialization } = await broker.chat(
 				chatId,
@@ -137,25 +153,29 @@ export function createServer(broker: Broker): McpServer {
 	);
 
 	if (broker.askEnabled) {
+		const askInput = encoded(
+			questionInput.extend({
+				sessionId: z
+					.string()
+					.optional()
+					.describe(
+						"Pi session for this question; defaults to this chat's session",
+					),
+			}),
+		);
 		server.registerTool(
 			"ask",
 			{
 				title: "Ask in ChatGPT",
-				description:
+				description: askInput.describe(
 					"Request a question widget in ChatGPT and return its ID immediately. Display depends on the host; call ask_assert next with question.id to confirm loading. Answers, revisions, and skips arrive as webAnswer in later tool results.",
-				inputSchema: questionInput.extend({
-					sessionId: z
-						.string()
-						.optional()
-						.describe(
-							"Pi session for this question; defaults to this chat's session",
-						),
-				}),
+				),
+				inputSchema: askInput.inputSchema,
 				outputSchema: questionSchema,
 				annotations: toolAnnotations,
 				_meta: { ui: { resourceUri: questionTemplate } },
 			},
-			handle(async ({ sessionId, ...input }, context) => {
+			handle(askInput, async ({ sessionId, ...input }, context) => {
 				const { initialization, ...question } = await broker.ask(
 					requireChatId(context),
 					sessionId,
@@ -168,7 +188,7 @@ export function createServer(broker: Broker): McpServer {
 						...(initialization ? textResult({ initialization }).content : []),
 						{
 							type: "text",
-							text: `Question widget requested. Call ask_assert({"questionId":"${question.id}"}) next.`,
+							text: `Question widget requested. Call ask_assert with questionId "${question.id}" next.`,
 						},
 					],
 				});
@@ -179,19 +199,23 @@ export function createServer(broker: Broker): McpServer {
 			}),
 		);
 
+		const assertInput = encoded(
+			z.object({
+				questionId: z.string().describe("question.id returned by ask"),
+			}),
+		);
 		server.registerTool(
 			"ask_assert",
 			{
 				title: "Assert question display",
-				description:
+				description: assertInput.describe(
 					"Confirm that an ask widget loaded in ChatGPT. Call immediately after ask with question.id. Fails after 10 seconds without loading and records the question as skipped. Use a Pi interactive tool if an answer is needed. User answers arrive separately as webAnswer.",
-				inputSchema: z.object({
-					questionId: z.string().describe("question.id returned by ask"),
-				}),
+				),
+				inputSchema: assertInput.inputSchema,
 				outputSchema: questionSchema,
 				annotations: toolAnnotations,
 			},
-			handle(async ({ questionId }, context) => {
+			handle(assertInput, async ({ questionId }, context) => {
 				const question = await broker.assertQuestion(
 					requireChatId(context),
 					questionId,
@@ -273,29 +297,33 @@ export function createServer(broker: Broker): McpServer {
 		);
 	}
 
+	const toolsInput = encoded(
+		z.object({
+			names: z
+				.array(z.string())
+				.min(1)
+				.optional()
+				.describe("Tool names to describe; omit to return every active tool"),
+			sessionId: z
+				.string()
+				.optional()
+				.describe(
+					"Pi session for this operation; becomes the default if none is set",
+				),
+		}),
+	);
 	server.registerTool(
 		"tools",
 		{
 			title: "Pi tools",
-			description:
+			description: toolsInput.describe(
 				"Get full definitions of Pi tools for call. Filter by names, or omit names to list all active tools.",
+			),
 			outputSchema,
-			inputSchema: z.object({
-				names: z
-					.array(z.string())
-					.min(1)
-					.optional()
-					.describe("Tool names to describe; omit to return every active tool"),
-				sessionId: z
-					.string()
-					.optional()
-					.describe(
-						"Pi session for this operation; becomes the default if none is set",
-					),
-			}),
+			inputSchema: toolsInput.inputSchema,
 			annotations: toolAnnotations,
 		},
-		handle(async (args, context) => {
+		handle(toolsInput, async (args, context) => {
 			const { inputs, ...inspected } = await broker.tools(
 				requireChatId(context),
 				args.sessionId,
@@ -320,32 +348,36 @@ export function createServer(broker: Broker): McpServer {
 		}),
 	);
 
+	const callInput = encoded(
+		z.object({
+			calls: z
+				.array(
+					z.object({
+						name: z.string(),
+						arguments: z.record(z.string(), z.unknown()),
+					}),
+				)
+				.min(1),
+			sessionId: z
+				.string()
+				.optional()
+				.describe(
+					"Pi session for this operation; becomes the default if none is set",
+				),
+		}),
+	);
 	server.registerTool(
 		"call",
 		{
 			title: "Call Pi tools",
-			description:
+			description: callInput.describe(
 				"Execute Pi tools using the definitions returned by tools. Each calls array is one native Pi batch.",
+			),
 			outputSchema,
-			inputSchema: z.object({
-				calls: z
-					.array(
-						z.object({
-							name: z.string(),
-							arguments: z.record(z.string(), z.unknown()),
-						}),
-					)
-					.min(1),
-				sessionId: z
-					.string()
-					.optional()
-					.describe(
-						"Pi session for this operation; becomes the default if none is set",
-					),
-			}),
+			inputSchema: callInput.inputSchema,
 			annotations: toolAnnotations,
 		},
-		handle(async (args, context) => {
+		handle(callInput, async (args, context) => {
 			const result = await broker.call(
 				requireChatId(context),
 				args.sessionId,
@@ -368,19 +400,20 @@ export function createServer(broker: Broker): McpServer {
 	);
 
 	for (const tool of directTools) {
+		const input = encoded(tool.inputSchema, tool.fileParams);
 		server.registerTool(
 			tool.name,
 			{
 				title: tool.name,
-				description: tool.description,
+				description: input.describe(tool.description),
 				outputSchema,
-				inputSchema: tool.inputSchema,
+				inputSchema: input.inputSchema,
 				annotations: toolAnnotations,
 				...(tool.fileParams
 					? { _meta: { "openai/fileParams": tool.fileParams } }
 					: {}),
 			},
-			handle(async (args, context) => {
+			handle(input, async (args, context) => {
 				const input = { ...args } as Record<string, unknown> & {
 					sessionId?: string;
 				};
@@ -409,22 +442,26 @@ export function createServer(broker: Broker): McpServer {
 		);
 	}
 
+	const historyEncoded = encoded(
+		historyInput.extend({
+			sessionId: z
+				.string()
+				.optional()
+				.describe("Pi session to read; defaults to this chat's session"),
+		}),
+	);
 	server.registerTool(
 		"history",
 		{
 			title: "Session history",
-			description:
+			description: historyEncoded.describe(
 				"Read Pi history with entry IDs and timestamps. Use before/after to page the current branch, and wait to follow new progress when caught up. Set observer when reading as an observer. An explicit sessionId applies only to this read.",
-			inputSchema: historyInput.extend({
-				sessionId: z
-					.string()
-					.optional()
-					.describe("Pi session to read; defaults to this chat's session"),
-			}),
+			),
+			inputSchema: historyEncoded.inputSchema,
 			outputSchema,
 			annotations: toolAnnotations,
 		},
-		handle(async ({ sessionId, ...range }, context) => {
+		handle(historyEncoded, async ({ sessionId, ...range }, context) => {
 			const { history, ...session } = await broker.history(
 				requireChatId(context),
 				sessionId,
@@ -445,22 +482,26 @@ export function createServer(broker: Broker): McpServer {
 		}),
 	);
 
+	const sessionsInput = encoded(
+		z.object({
+			sessionId: z
+				.string()
+				.optional()
+				.describe("Filter the online list to this Pi session"),
+		}),
+	);
 	server.registerTool(
 		"sessions",
 		{
 			title: "Local sessions",
-			description:
+			description: sessionsInput.describe(
 				"List online Pi sessions with their IDs, devices, cwd, names, execution status, and saved binding counts. Also returns this chat's default.",
+			),
 			outputSchema,
-			inputSchema: z.object({
-				sessionId: z
-					.string()
-					.optional()
-					.describe("Filter the online list to this Pi session"),
-			}),
+			inputSchema: sessionsInput.inputSchema,
 			annotations: toolAnnotations,
 		},
-		handle(async (args, context) => {
+		handle(sessionsInput, async (args, context) => {
 			const chatId = requestChatId(context);
 			const inputs = chatId
 				? await broker.inputs(chatId, args.sessionId, context.mcpReq.signal)
@@ -544,12 +585,25 @@ function formatResult<
 	});
 	return {
 		...result,
-		content,
+		content: content.map((block) =>
+			block.type === "text" ? { ...block, text: encode(block.text) } : block,
+		),
 		structuredContent: {
-			text: content
-				.flatMap((block) => (block.type === "text" ? [block.text] : []))
-				.join("\n"),
+			text: encode(
+				content
+					.flatMap((block) => (block.type === "text" ? [block.text] : []))
+					.join("\n"),
+			),
 		},
+	};
+}
+
+function errorResult(error: unknown) {
+	const text = encode(error instanceof Error ? error.message : String(error));
+	return {
+		content: [{ type: "text" as const, text }],
+		structuredContent: { text },
+		isError: true,
 	};
 }
 
