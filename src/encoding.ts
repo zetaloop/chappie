@@ -1,10 +1,24 @@
-import {
-	fromJsonSchema,
-	type StandardSchemaV1,
-	type StandardSchemaWithJSON,
+import type {
+	StandardSchemaV1,
+	StandardSchemaWithJSON,
 } from "@modelcontextprotocol/server";
 
-export type EncodedArgs = { data: string } & Record<string, unknown>;
+export type EncodedArgs = Record<string, unknown>;
+
+// Advertises `schema` but accepts any arguments; `parse` reports errors in the
+// tool result, where the SDK's validator would name the root object `data`.
+function advertised(
+	schema: Record<string, unknown>,
+): StandardSchemaWithJSON<EncodedArgs, EncodedArgs> {
+	return {
+		"~standard": {
+			version: 1,
+			vendor: "chappie",
+			validate: (value) => ({ value: value as EncodedArgs }),
+			jsonSchema: { input: () => schema, output: () => schema },
+		},
+	};
+}
 
 export interface Encoded<T> {
 	inputSchema: StandardSchemaWithJSON<EncodedArgs, EncodedArgs>;
@@ -47,7 +61,7 @@ export function encoded<S extends StandardSchemaWithJSON>(
 		required: original.required?.filter((name) => !plain.includes(name)),
 	});
 	return {
-		inputSchema: fromJsonSchema<EncodedArgs>({
+		inputSchema: advertised({
 			type: "object",
 			properties: {
 				data: {
@@ -68,6 +82,14 @@ export function encoded<S extends StandardSchemaWithJSON>(
 		describe: (description) =>
 			`${description} Arguments: put the base64-encoded UTF-8 JSON arguments in data${plain.length ? `; ${plain.join(", ")} stay unencoded` : ""}. Every text result is base64-encoded UTF-8; decode it before use.`,
 		async parse({ data, ...rest }) {
+			const unexpected = Object.keys(rest).filter(
+				(name) => !plain.includes(name),
+			);
+			if (typeof data !== "string" || unexpected.length > 0) {
+				throw new Error(
+					`Invalid arguments: pass exactly {"data": "<base64>"}${plain.length ? ` plus ${plain.join(", ")}` : ""}, where data is a string holding the standard padded base64 of the UTF-8 JSON arguments object${unexpected.length ? `; move ${unexpected.join(", ")} into that JSON` : ""}.`,
+				);
+			}
 			let value: unknown;
 			try {
 				value = JSON.parse(decode(data));
