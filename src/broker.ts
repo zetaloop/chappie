@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { type Activity, chatLabel, source } from "./activity.ts";
 import { readConfig } from "./config.ts";
@@ -78,7 +79,7 @@ export interface CallResult extends ChatResult {
 }
 
 export class Broker {
-	readonly #agentDir: string;
+	readonly #directory: string;
 	readonly #ipc: IpcServer;
 	readonly #state: State;
 	readonly #sessions = new Map<string, RegisteredSession>();
@@ -92,19 +93,20 @@ export class Broker {
 	#ask = true;
 	#nextRequestId = 1;
 
-	constructor(agentDir: string) {
-		this.#agentDir = agentDir;
-		this.#state = new State(agentDir);
+	constructor(directory: string) {
+		this.#directory = directory;
+		this.#state = new State(directory);
 		this.#ipc = new IpcServer(
-			agentDir,
+			directory,
 			(peer, message) => this.#receive(peer, message),
 			(peer) => this.#removePeer(peer),
 		);
 	}
 
 	async start(): Promise<void> {
-		const config = await readConfig(this.#agentDir);
+		const config = await readConfig(this.#directory);
 		this.#ask = config.ask ?? true;
+		await mkdir(this.#directory, { recursive: true });
 		await this.#state.load();
 		await this.#ipc.start(config.listen ?? false);
 	}

@@ -117,9 +117,9 @@ export type BrokerMessage =
 	| ({ type: "response"; id: number } & SessionResult)
 	| { type: "ackInputs"; sessionId: string; ids: string[] };
 
-export function ipcEndpoint(agentDir: string): string {
-	const directory = resolve(agentDir);
-	if (process.platform !== "win32") return join(directory, "chappie.sock");
+export function ipcEndpoint(root: string): string {
+	const directory = resolve(root);
+	if (process.platform !== "win32") return join(directory, "broker.sock");
 	const identity = directory.replaceAll("\\", "/").toLowerCase();
 	return String.raw`\\.\pipe\chappie-${createHash("sha256").update(identity).digest("hex").slice(0, 16)}`;
 }
@@ -210,14 +210,14 @@ export class IpcServer {
 	readonly #servers = new Set<Server>();
 
 	constructor(
-		agentDir: string,
+		directory: string,
 		onMessage: (
 			peer: JsonLinePeer<SessionMessage, BrokerMessage>,
 			message: SessionMessage,
 		) => Promise<void> | void,
 		onClose: (peer: JsonLinePeer<SessionMessage, BrokerMessage>) => void,
 	) {
-		this.#endpoint = ipcEndpoint(agentDir);
+		this.#endpoint = ipcEndpoint(directory);
 		this.#onMessage = onMessage;
 		this.#onClose = onClose;
 	}
@@ -281,11 +281,11 @@ export class IpcClient {
 	#closed = false;
 
 	constructor(
-		agentDir: string,
+		directory: string,
 		remote: string | undefined,
 		callbacks: ConnectionCallbacks,
 	) {
-		this.#endpoint = ipcEndpoint(agentDir);
+		this.#endpoint = ipcEndpoint(directory);
 		this.#remote = remote;
 		this.#callbacks = callbacks;
 	}

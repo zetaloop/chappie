@@ -1,10 +1,9 @@
-import { Writable } from "node:stream";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	StdioServerTransport,
 	serveStdio,
 } from "@modelcontextprotocol/server/stdio";
 import { Broker } from "./broker.ts";
+import { getDirectory } from "./config.ts";
 import { createServer } from "./server.ts";
 
 const terminationSignals =
@@ -12,18 +11,10 @@ const terminationSignals =
 		? ["SIGINT", "SIGTERM"]
 		: ["SIGHUP", "SIGINT", "SIGTERM"];
 
-export async function serveChappie(): Promise<never> {
-	const broker = new Broker(getAgentDir());
+export async function serve(): Promise<void> {
+	const broker = new Broker(getDirectory());
 	await broker.start();
-	const output = new Writable({
-		write(chunk, encoding, callback) {
-			Reflect.apply(Writable.prototype.write, process.stdout, [
-				chunk,
-				encoding,
-				callback,
-			]);
-		},
-	});
+	const output = process.stdout;
 	const transport = new StdioServerTransport(process.stdin, output);
 	let stop: (() => void) | undefined;
 	const stopped = new Promise<void>((resolve) => {
@@ -53,6 +44,4 @@ export async function serveChappie(): Promise<never> {
 	} finally {
 		await broker.close();
 	}
-	await new Promise<void>((resolve) => output.end(resolve));
-	process.exit(0);
 }

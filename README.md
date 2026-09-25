@@ -10,13 +10,19 @@ Install the Pi package:
 pi install npm:@zetaloop/chappie
 ```
 
+Install the broker:
+
+```sh
+pnpm add -g @zetaloop/chappie
+```
+
 Run Chappie as the MCP server managed by [otunnel](https://github.com/zetaloop/otunnel):
 
 ```yaml
 mcp:
   commands:
     - channel: main
-      command: pi --chappie
+      command: chappie
 ```
 
 Add the tunnel as a developer-mode app in ChatGPT, then start Pi in a project:
@@ -35,7 +41,7 @@ See the [tool guide](docs/tools.md) for session selection, history, Pi tools, we
 
 ## Configuration
 
-`chappie.json` in Pi's agent directory configures Chappie.
+`~/.chappie/config.json` configures Chappie.
 
 A broker can accept Pi sessions from other devices on the local network:
 

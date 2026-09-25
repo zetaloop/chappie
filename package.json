@@ -12,7 +12,9 @@
 	},
 	"scripts": {
 		"format": "biome check --write .",
-		"check": "biome check . && tsc"
+		"check": "biome check . && tsc --noEmit",
+		"build": "tsc && node scripts/build.ts",
+		"prepack": "pnpm build"
 	},
 	"keywords": [
 		"pi-package",
@@ -29,7 +31,7 @@
 	},
 	"pi": {
 		"extensions": [
-			"./src/index.ts"
+			"./dist/index.js"
 		]
 	},
 	"peerDependencies": {
@@ -44,7 +46,7 @@
 		"zod": "^4.6.4"
 	},
 	"files": [
-		"src",
+		"dist",
 		"docs"
 	],
 	"publishConfig": {
@@ -53,5 +55,22 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/zetaloop/chappie.git"
+	},
+	"bin": {
+		"chappie": "./dist/cli.js"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-ai": {
+			"optional": true
+		},
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		},
+		"@earendil-works/pi-tui": {
+			"optional": true
+		},
+		"typebox": {
+			"optional": true
+		}
 	}
 }

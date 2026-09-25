@@ -14,6 +14,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { type Activity, chatLabel, source } from "./activity.ts";
+import { getDirectory } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import { historyResult } from "./history.ts";
 import {
@@ -290,7 +291,7 @@ export class LocalSession {
 			this.#resetInputs(context);
 		}
 		if (!this.#connection) {
-			this.#connection = new IpcClient(this.#agentDir, this.#connect, {
+			this.#connection = new IpcClient(getDirectory(), this.#connect, {
 				onOpen: async () => {
 					await this.#sync();
 					await this.#flushDeliveries();

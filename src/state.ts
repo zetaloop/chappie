@@ -17,8 +17,8 @@ export class State {
 	readonly #questions = new Map<string, QuestionRecord>();
 	#writes = Promise.resolve();
 
-	constructor(agentDir: string) {
-		this.#path = join(agentDir, "chappie.state.json");
+	constructor(directory: string) {
+		this.#path = join(directory, "state.json");
 		this.#temporaryPath = `${this.#path}.tmp`;
 	}
 

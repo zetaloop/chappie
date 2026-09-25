@@ -4,21 +4,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 export default async function chappie(pi: ExtensionAPI): Promise<void> {
-	pi.registerFlag("chappie", {
-		description: "Serve Chappie over MCP",
-		type: "boolean",
-	});
-
-	if (process.argv.includes("--chappie")) {
-		try {
-			const { serveChappie } = await import("./stdio.ts");
-			await serveChappie();
-		} catch (error) {
-			console.error(error instanceof Error ? error.message : String(error));
-			process.exit(1);
-		}
-	}
-
 	const agentDir = getAgentDir();
 	const [
 		{ readConfig },
@@ -31,7 +16,7 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 		import("./session.ts"),
 		import("./transfer.ts"),
 	]);
-	const config = await readConfig(agentDir);
+	const config = await readConfig();
 	const session = new LocalSession(pi, agentDir, config.connect);
 	session.install();
 	pi.registerTool({
