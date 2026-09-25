@@ -16,7 +16,7 @@ export interface NativeResult {
 export interface NativeTool {
 	name: string;
 	description: string;
-	parameters: z.ZodType;
+	parameters: z.ZodObject;
 	execute(
 		args: unknown,
 		signal?: AbortSignal,
@@ -24,85 +24,86 @@ export interface NativeTool {
 	): Promise<NativeResult>;
 }
 
-export function localTools(session: Session): NativeTool[] {
-	const tools = [
-		tool(
-			"sessions",
-			"List connected Chappie sessions and identify this local session.",
-			z.object({
-				sessionId: z.string().optional(),
-			}),
-			async ({ sessionId }, signal) =>
-				textResult(await session.sessions(sessionId, signal)),
-		),
-		tool(
-			"remote_tools",
-			"Read native tool definitions from a Chappie session.",
-			z.object({
-				sessionId: z.string().min(1),
-				names: z.array(z.string()).min(1).optional(),
-			}),
-			async ({ sessionId, names }, signal) =>
-				textResult(await session.tools(sessionId, names, signal)),
-		),
-		tool(
-			"remote_call",
-			"Execute one native tool batch in a Chappie session using definitions from remote_tools.",
-			z.object({
-				sessionId: z.string().min(1),
-				calls: callsInput,
-			}),
-			async ({ sessionId, calls }, signal) => {
-				const result = await session.call(sessionId, calls, signal);
-				return {
-					content: nativeContent(
-						toolResult(result.toolResults, sessionId, result.cwd, result.inputs)
-							.content,
-					),
-					details: {
-						resources: result.toolResults.flatMap((result) =>
-							resourceDescriptors(result.details),
-						),
-					},
-					isError: result.toolResults.some((result) => result.isError),
-				};
-			},
-		),
-		tool(
-			"history",
-			"Read this session's history, or a Chappie session identified by sessionId. Use before/after to page and wait to follow remote progress.",
-			historyInput.extend({
-				sessionId: z.string().optional(),
-			}),
-			async ({ sessionId, ...range }, signal) => {
-				const { content, ...page } = await session.history(
-					range,
-					sessionId,
-					signal,
-				);
-				return {
-					content: [...textResult(page).content, ...nativeContent(content)],
-				};
-			},
-		),
-		tool(
-			"transfer",
-			transferDescription,
-			transferInput,
-			(args, signal, update) =>
-				session.transfer(args, signal, (details) =>
-					update?.({ content: [], details }),
+export const definitions = [
+	tool(
+		"sessions",
+		"List connected Chappie sessions and identify this local session.",
+		z.object({
+			sessionId: z.string().optional(),
+		}),
+		async (session, { sessionId }, signal) =>
+			textResult(await session.sessions(sessionId, signal)),
+	),
+	tool(
+		"remote_tools",
+		"Read native tool definitions from a Chappie session.",
+		z.object({
+			sessionId: z.string().min(1),
+			names: z.array(z.string()).min(1).optional(),
+		}),
+		async (session, { sessionId, names }, signal) =>
+			textResult(await session.tools(sessionId, names, signal)),
+	),
+	tool(
+		"remote_call",
+		"Execute one native tool batch in a Chappie session using definitions from remote_tools.",
+		z.object({
+			sessionId: z.string().min(1),
+			calls: callsInput,
+		}),
+		async (session, { sessionId, calls }, signal) => {
+			const result = await session.call(sessionId, calls, signal);
+			return {
+				content: nativeContent(
+					toolResult(result.toolResults, sessionId, result.cwd, result.inputs)
+						.content,
 				),
-		),
-	];
-	return tools.map((tool) => ({
+				details: {
+					resources: result.toolResults.flatMap((result) =>
+						resourceDescriptors(result.details),
+					),
+				},
+				isError: result.toolResults.some((result) => result.isError),
+			};
+		},
+	),
+	tool(
+		"history",
+		"Read this session's history, or a Chappie session identified by sessionId. Use before/after to page and wait to follow remote progress.",
+		historyInput.extend({
+			sessionId: z.string().optional(),
+		}),
+		async (session, { sessionId, ...range }, signal) => {
+			const { content, ...page } = await session.history(
+				range,
+				sessionId,
+				signal,
+			);
+			return {
+				content: [...textResult(page).content, ...nativeContent(content)],
+			};
+		},
+	),
+	tool(
+		"transfer",
+		transferDescription,
+		transferInput,
+		(session, args, signal, update) =>
+			session.transfer(args, signal, (details) =>
+				update?.({ content: [], details }),
+			),
+	),
+];
+
+export function localTools(session: Session): NativeTool[] {
+	return definitions.map((tool) => ({
 		...tool,
 		async execute(
 			args: unknown,
 			signal?: AbortSignal,
 			update?: (result: NativeResult) => void,
 		) {
-			const result = await tool.execute(args, signal, update);
+			const result = await tool.execute(session, args, signal, update);
 			return {
 				...result,
 				content: [...result.content, ...localDeliveries(session)],
@@ -115,22 +116,27 @@ export function localDeliveries(session: Session): Content[] {
 	return nativeContent(deliveryContent(session.deliveries()));
 }
 
-function tool<S extends z.ZodType>(
+function tool<S extends z.ZodObject>(
 	name: string,
 	description: string,
 	parameters: S,
 	execute: (
+		session: Session,
 		args: z.output<S>,
 		signal?: AbortSignal,
 		update?: (result: NativeResult) => void,
 	) => Promise<NativeResult>,
-): NativeTool {
+) {
 	return {
 		name,
 		description,
 		parameters,
-		execute: (args, signal, update) =>
-			execute(parameters.parse(args), signal, update),
+		execute: (
+			session: Session,
+			args: unknown,
+			signal?: AbortSignal,
+			update?: (result: NativeResult) => void,
+		) => execute(session, parameters.parse(args), signal, update),
 	};
 }
 

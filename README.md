@@ -16,6 +16,12 @@ OMP installs the same package through its plugin manager:
 omp plugin install @zetaloop/chappie
 ```
 
+OpenCode loads Chappie as a server plugin:
+
+```sh
+opencode plugin @zetaloop/chappie
+```
+
 Install the broker:
 
 ```sh

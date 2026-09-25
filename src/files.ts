@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { link, mkdir, mkdtempDisposable, rename, stat } from "node:fs/promises";
+import { link, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -208,19 +208,21 @@ async function importFile(
 	const write = async () => {
 		signal?.throwIfAborted();
 		await mkdir(dirname(path), { recursive: true });
-		await using temporary = await mkdtempDisposable(
-			join(dirname(path), ".chappie-"),
-		);
-		const staged = join(temporary.path, "file");
-		const readable = Readable.from(content, { objectMode: false });
-		const writable = createWriteStream(staged, { flags: "wx" });
-		if (signal) await pipeline(readable, writable, { signal });
-		else await pipeline(readable, writable);
-		signal?.throwIfAborted();
-		const bytes = (await stat(staged)).size;
-		if (overwrite) await rename(staged, path);
-		else await link(staged, path);
-		return bytes;
+		const temporary = await mkdtemp(join(dirname(path), ".chappie-"));
+		try {
+			const staged = join(temporary, "file");
+			const readable = Readable.from(content, { objectMode: false });
+			const writable = createWriteStream(staged, { flags: "wx" });
+			if (signal) await pipeline(readable, writable, { signal });
+			else await pipeline(readable, writable);
+			signal?.throwIfAborted();
+			const bytes = (await stat(staged)).size;
+			if (overwrite) await rename(staged, path);
+			else await link(staged, path);
+			return bytes;
+		} finally {
+			await rm(temporary, { recursive: true, force: true });
+		}
 	};
 	return mutate ? mutate(path, write) : write();
 }
