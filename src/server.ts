@@ -13,7 +13,7 @@ import {
 	questionInstructions,
 	questionOutput,
 } from "./questions.ts";
-import { inputContent, toolResult } from "./tools.ts";
+import { callInput, inputContent, parseCalls, toolResult } from "./tools.ts";
 
 const instructions = readFileSync(
 	new URL("./instructions.md", import.meta.url),
@@ -323,15 +323,7 @@ export function createServer(broker: Broker): McpServer {
 			description:
 				"Execute Pi tools using the definitions returned by tools. Each calls array is one native Pi batch.",
 			outputSchema,
-			inputSchema: z.object({
-				calls: z
-					.array(
-						z.object({
-							name: z.string(),
-							arguments: z.record(z.string(), z.unknown()),
-						}),
-					)
-					.min(1),
+			inputSchema: callInput.safeExtend({
 				sessionId: z
 					.string()
 					.optional()
@@ -345,7 +337,7 @@ export function createServer(broker: Broker): McpServer {
 			const result = await broker.call(
 				requireChatId(context),
 				args.sessionId,
-				args.calls,
+				parseCalls(args),
 				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);

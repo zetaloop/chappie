@@ -67,6 +67,8 @@ A `call` array is one Pi tool batch:
 }
 ```
 
+`call` also accepts `base64`, containing the UTF-8 JSON encoding of the same `calls` array. Supply one representation; `sessionId` stays outside the encoded array.
+
 Pi controls execution inside that batch. Separate requests run in order within one Pi session, while different Pi sessions can work independently. Extension tools retain their native Pi behavior, including interactive interfaces.
 
 `chat` creates a normal assistant message in Pi:
