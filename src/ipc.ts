@@ -19,9 +19,9 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { Activity } from "./activity.ts";
 import type { DeliveryRecord } from "./delivery.ts";
+import type { TransferDetails } from "./files.ts";
 import type { HistoryRange, HistoryResult } from "./history.ts";
 import type { ResourceData, ResourceDescriptor } from "./resources.ts";
-import type { TransferDetails } from "./transfer.ts";
 
 const defaultPort = 24274;
 

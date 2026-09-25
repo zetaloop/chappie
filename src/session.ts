@@ -7,15 +7,17 @@ import type {
 	ToolResultMessage,
 	UserMessage,
 } from "@earendil-works/pi-ai";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-	SessionEntry,
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	type SessionEntry,
+	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { type Activity, chatLabel, source } from "./activity.ts";
 import { getDirectory } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
+import { copyFiles, transferResult } from "./files.ts";
 import { historyResult } from "./history.ts";
 import {
 	type BrokerMessage,
@@ -34,7 +36,7 @@ import {
 	rememberImages,
 	resourceSessionId,
 } from "./resources.ts";
-import { copyFiles, transfer, transferResult } from "./transfer.ts";
+import { transfer } from "./transfer.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
 
@@ -419,6 +421,7 @@ export class LocalSession {
 						message.overwrite === true,
 						(resource) => this.#readChunks(resource, controller.signal),
 						controller.signal,
+						withFileMutationQueue,
 					);
 					return {
 						type: "result",
