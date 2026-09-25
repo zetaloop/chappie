@@ -1,49 +1,39 @@
 import { randomUUID } from "node:crypto";
-import { access } from "node:fs/promises";
 import { hostname } from "node:os";
-import { resolve } from "node:path";
-import type {
-	AssistantMessage,
-	ToolResultMessage,
-	UserMessage,
-} from "@earendil-works/pi-ai";
-import {
-	type ExtensionAPI,
-	type ExtensionContext,
-	type SessionEntry,
-	withFileMutationQueue,
-} from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
 import { type Activity, chatLabel, source } from "./activity.ts";
 import { getDirectory } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
-import { copyFiles, transferResult } from "./files.ts";
-import { historyResult } from "./history.ts";
+import {
+	copyFiles,
+	type TransferDetails,
+	type TransferInput,
+	type TransferResult,
+	transferFiles,
+	transferResult,
+} from "./files.ts";
+import type {
+	AssistantMessage,
+	Host,
+	Output,
+	ToolResultMessage,
+} from "./host.ts";
 import {
 	type BrokerMessage,
 	IpcClient,
 	type SessionDescription,
 	type SessionInput,
-	type SessionInspection,
 	type SessionRequest,
 	type SessionResult,
 	type SessionStatus,
 } from "./ipc.ts";
-import type { ProviderOutput } from "./provider.ts";
 import {
 	type ResourceDescriptor,
 	readSessionResource,
 	rememberImages,
 	resourceSessionId,
 } from "./resources.ts";
-import { transfer } from "./transfer.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
-
-interface Notice extends Activity {
-	message: string;
-	type: "info" | "warning" | "error";
-}
 
 interface SyncRequest {
 	resolve(): void;
@@ -74,9 +64,8 @@ interface ActiveRequest {
 	toolResults: ToolResultMessage[];
 }
 
-export class LocalSession {
-	readonly #pi: ExtensionAPI;
-	readonly #agentDir: string;
+export class Session {
+	readonly #host: Host;
 	readonly #connect: string | undefined;
 	readonly #syncs = new Map<number, SyncRequest>();
 	readonly #stores = new Map<string, StoreRequest>();
@@ -86,105 +75,40 @@ export class LocalSession {
 	readonly #histories = new Map<number, HistoryRequest>();
 	readonly #requests = new Map<number, PendingRequest>();
 	readonly #copies = new Map<number, AbortController>();
-	#context: ExtensionContext | undefined;
 	#connection: IpcClient | undefined;
-	#output: ProviderOutput | undefined;
+	#output: Output | undefined;
 	#active: ActiveRequest | undefined;
 	#status: SessionStatus = "idle";
 	#nextRequestId = 1;
 	#starting = false;
 	#sessionId: string | undefined;
-	#inputCursor: string | null = null;
 	#flushing = Promise.resolve();
 
-	constructor(pi: ExtensionAPI, agentDir: string, connect?: string) {
-		this.#pi = pi;
-		this.#agentDir = agentDir;
+	constructor(host: Host, connect?: string) {
+		this.#host = host;
 		this.#connect = connect;
 	}
 
-	install(): void {
-		this.#pi.registerEntryRenderer<Notice>(
-			"chappie.notice",
-			({ data }, _options, theme) => {
-				if (!data) return;
-				return new Text(
-					theme.fg(data.type === "info" ? "dim" : data.type, data.message),
-					1,
-					0,
-				);
-			},
-		);
-		this.#pi.on("session_start", (_event, context) => this.#update(context));
-		this.#pi.on("model_select", (event, context) =>
-			this.#update(context, event.model.provider === "chappie"),
-		);
-		this.#pi.on("session_info_changed", (_event, context) => {
-			this.#context = context;
-			void this.#sync().catch(() => {});
-		});
-		this.#pi.on("session_tree", (event, context) => {
-			this.#context = context;
-			if (context.model?.provider === "chappie") {
-				this.#resetInputs(context, event.newLeafId);
-			}
-			this.#historyChanged();
-		});
-		// Pi persists messages after message_end handlers finish.
-		this.#pi.on("message_start", (_event, context) => {
-			this.#context = context;
-			this.#historyChanged();
-		});
-		this.#pi.on("tool_call", (_event, context) => {
-			this.#context = context;
-			this.#historyChanged();
-		});
-		this.#pi.on("session_compact", (_event, context) => {
-			this.#context = context;
-			this.#historyChanged();
-		});
-		this.#pi.on("context", (event, context) => ({
-			messages:
-				context.model?.provider === "chappie"
-					? []
-					: event.messages.filter(
-							(message) =>
-								message.role !== "custom" ||
-								message.customType !== "chappie.request",
-						),
-		}));
-		this.#pi.on("turn_end", (event, context) =>
-			this.#turnEnd(event.message, event.toolResults, context),
-		);
-		this.#pi.on("agent_settled", async (_event, context) => {
-			this.#context = context;
-			this.#starting = false;
-			this.#collectInputs();
-			this.#historyChanged();
-			await this.#completeActive();
-			this.#dispatch();
-		});
-		this.#pi.on("session_shutdown", () => this.close());
+	async settled(): Promise<void> {
+		this.#starting = false;
+		this.#collectInputs();
+		this.historyChanged();
+		await this.#completeActive();
+		this.#dispatch();
 	}
 
 	#notify(
 		message: string,
-		type: Notice["type"] = "info",
+		type: "info" | "warning" | "error" = "info",
 		activity: Activity = {},
 	): void {
-		if (this.#context)
-			this.#pi.appendEntry<Notice>("chappie.notice", {
-				message,
-				type,
-				...activity,
-			});
-		if (activity.event !== "history") this.#historyChanged();
+		this.#host.notify?.(message, type, activity);
+		if (activity.event !== "history") this.historyChanged();
 	}
 
-	async start(output: ProviderOutput): Promise<void> {
-		const context = this.#context;
+	async start(output: Output): Promise<void> {
 		const connection = this.#connection;
-		if (context?.model?.provider !== "chappie" || !connection) {
+		if (!this.#host.active() || !connection) {
 			throw new Error("Chappie is not active for this session");
 		}
 		if (this.#output && !this.#output.closed) {
@@ -197,7 +121,7 @@ export class LocalSession {
 			await connection.connect();
 			if (output.closed) return;
 			this.#collectInputs();
-			this.#historyChanged();
+			this.historyChanged();
 			await this.#completeActive();
 			this.#status = "ready";
 			await this.#sync();
@@ -213,10 +137,15 @@ export class LocalSession {
 	}
 
 	async transfer(
-		...parameters: Parameters<typeof transfer.execute>
-	): ReturnType<typeof transfer.execute> {
-		const [id, args, signal, update, context] = parameters;
-		if (!args.to) return transfer.execute(...parameters);
+		args: TransferInput,
+		signal?: AbortSignal,
+		update?: (details: TransferDetails) => void,
+	): Promise<TransferResult> {
+		const context = {
+			...this.#host.describe(),
+			...(this.#host.mutate ? { mutate: this.#host.mutate } : {}),
+		};
+		if (!args.to) return transferFiles(args, context, signal, update);
 		if (args.files) throw new Error("files and to are mutually exclusive");
 		if (args.paths.length !== args.to.paths.length)
 			throw new Error("Source and destination counts must match");
@@ -225,22 +154,17 @@ export class LocalSession {
 			signal,
 		);
 		if (!("inspection" in inspected))
-			throw new Error("Pi session returned no environment");
-		const exported = await transfer.execute(
-			id,
+			throw new Error("Session returned no environment");
+		const exported = await transferFiles(
 			{ paths: args.paths },
-			signal,
-			undefined,
 			context,
+			signal,
 		);
 		update?.({
-			content: [],
-			details: {
-				...exported.details,
-				to: {
-					sessionId: args.to.sessionId,
-					device: inspected.inspection.session.device,
-				},
+			...exported.details,
+			to: {
+				sessionId: args.to.sessionId,
+				device: inspected.inspection.session.device,
 			},
 		});
 		const result = await this.#request(
@@ -254,12 +178,12 @@ export class LocalSession {
 			signal,
 		);
 		if (!("transfer" in result))
-			throw new Error("Pi session returned no transfer result");
+			throw new Error("Session returned no transfer result");
 		return transferResult({ ...result.transfer, device: hostname() });
 	}
 
 	close(): void {
-		const sessionId = this.#context?.sessionManager.getSessionId();
+		const sessionId = this.#sessionId;
 		if (sessionId && this.#connection?.connected) {
 			void this.#connection
 				.send({ type: "unregister", sessionId })
@@ -272,26 +196,27 @@ export class LocalSession {
 		this.#starting = false;
 		this.#connection?.close();
 		this.#connection = undefined;
-		this.#context = undefined;
-		this.#resetInputs();
+		this.resetInputs();
 		this.#cancelRequests(new Error("Chappie session ended"));
 		this.#rejectSyncs(new Error("Chappie session ended"));
 		this.#rejectStores(new Error("Chappie session ended"));
 		for (const id of this.#histories.keys()) this.#finishHistory(id);
 	}
 
-	#update(
-		context: ExtensionContext,
-		active = context.model?.provider === "chappie",
-	): void {
-		this.#context = context;
-		if (!active) {
+	update(): void {
+		if (!this.#host.active()) {
 			this.close();
 			return;
 		}
-		if (this.#sessionId !== context.sessionManager.getSessionId()) {
-			this.#resetInputs(context);
+		if (this.#sessionId !== this.#host.describe().id) {
+			if (this.#sessionId && this.#connection?.connected) {
+				void this.#connection
+					.send({ type: "unregister", sessionId: this.#sessionId })
+					.catch(() => {});
+			}
+			this.resetInputs();
 		}
+
 		if (!this.#connection) {
 			this.#connection = new IpcClient(getDirectory(), this.#connect, {
 				onOpen: async () => {
@@ -319,26 +244,12 @@ export class LocalSession {
 	}
 
 	#description(): SessionDescription {
-		const context = this.#context;
-		if (!context) throw new Error("Chappie session is not available");
-		const name = this.#pi.getSessionName();
-		return {
-			id: context.sessionManager.getSessionId(),
-			cwd: context.cwd,
-			device: hostname(),
-			status: this.#status,
-			...(name ? { name } : {}),
-		};
+		return { ...this.#host.describe(), status: this.#status };
 	}
 
 	async #sync(): Promise<void> {
 		const connection = this.#connection;
-		if (
-			!connection?.connected ||
-			!this.#context ||
-			this.#context.model?.provider !== "chappie"
-		)
-			return;
+		if (!connection?.connected || !this.#host.active()) return;
 		const id = this.#nextRequestId++;
 		const completion = Promise.withResolvers<void>();
 		this.#syncs.set(id, completion);
@@ -369,19 +280,17 @@ export class LocalSession {
 				this.#stores.get(message.id)?.resolve();
 				break;
 			case "notice":
-				if (
-					message.sessionId === this.#context?.sessionManager.getSessionId()
-				) {
+				if (message.sessionId === this.#sessionId) {
 					this.#notify(message.message, "info", message.activity);
 				}
 				break;
 			case "inspect":
 				await this.#reply(message.id, message.sessionId, async () => {
-					const globalAgents = await this.#globalAgents();
+					const { globalAgents, ...environment } = await this.#host.inspect();
 					return {
 						type: "result",
 						id: message.id,
-						inspection: this.#inspection(),
+						inspection: { session: this.#description(), ...environment },
 						inputs: this.#inputs(),
 						...(globalAgents ? { globalAgents } : {}),
 					};
@@ -391,9 +300,7 @@ export class LocalSession {
 				await this.#readHistory(message);
 				break;
 			case "ackInputs":
-				if (
-					message.sessionId === this.#context?.sessionManager.getSessionId()
-				) {
+				if (message.sessionId === this.#sessionId) {
 					for (const id of message.ids) this.#pendingInputs.delete(id);
 				}
 				break;
@@ -412,8 +319,7 @@ export class LocalSession {
 				const controller = new AbortController();
 				this.#copies.set(message.id, controller);
 				void this.#reply(message.id, message.sessionId, async () => {
-					const context = this.#context;
-					if (!context) throw new Error("Chappie session is not available");
+					const context = this.#host.describe();
 					const files = await copyFiles(
 						message.paths,
 						message.resources,
@@ -421,7 +327,7 @@ export class LocalSession {
 						message.overwrite === true,
 						(resource) => this.#readChunks(resource, controller.signal),
 						controller.signal,
-						withFileMutationQueue,
+						this.#host.mutate,
 					);
 					return {
 						type: "result",
@@ -477,17 +383,15 @@ export class LocalSession {
 				if (!active) break;
 				active.cancelled = message.reason;
 				if (active.completed) await this.#completeActive();
-				else this.#context?.abort();
+				else await this.#host.abort();
 				break;
 			}
 			case "chat":
 			case "call":
-				if (
-					message.sessionId !== this.#context?.sessionManager.getSessionId()
-				) {
+				if (message.sessionId !== this.#sessionId) {
 					await this.#sendError(
 						message.id,
-						"The requested Pi session is no longer active",
+						"The requested session is no longer active",
 					);
 					break;
 				}
@@ -538,7 +442,7 @@ export class LocalSession {
 				signal,
 			);
 			if (!("resource" in result))
-				throw new Error("Pi session returned no resource");
+				throw new Error("Session returned no resource");
 			const data = Buffer.from(result.resource.blob, "base64");
 			if (data.length === 0)
 				throw new Error(
@@ -561,14 +465,10 @@ export class LocalSession {
 		wait = request.range.wait,
 	): Promise<void> {
 		try {
-			const context = this.#context;
-			if (context?.sessionManager.getSessionId() !== request.sessionId)
-				throw new Error("The requested Pi session is no longer active");
-			const history = historyResult(
-				context.sessionManager.getBranch(),
-				request.sessionId,
-				request.range,
-			);
+			const context = this.#host.describe();
+			if (context.id !== request.sessionId)
+				throw new Error("The requested session is no longer active");
+			const history = await this.#host.history(request.range);
 			if (wait && !request.range.before && history.count === 0) {
 				if (!this.#histories.has(request.id)) {
 					this.#histories.set(request.id, {
@@ -603,7 +503,7 @@ export class LocalSession {
 		}
 	}
 
-	#historyChanged(): void {
+	historyChanged(): void {
 		for (const { request } of this.#histories.values()) {
 			void this.#readHistory(request).catch(() => {});
 		}
@@ -614,31 +514,6 @@ export class LocalSession {
 		if (!pending) return;
 		clearTimeout(pending.timeout);
 		this.#histories.delete(id);
-	}
-
-	#inspection(): SessionInspection {
-		const activeTools = new Set(this.#pi.getActiveTools());
-		this.#collectInputs();
-		return {
-			session: this.#description(),
-			tools: this.#pi
-				.getAllTools()
-				.filter((tool) => activeTools.has(tool.name)),
-			skills: this.#pi
-				.getCommands()
-				.filter((command) => command.source === "skill"),
-		};
-	}
-
-	async #globalAgents(): Promise<{ path: string } | undefined> {
-		const path = resolve(this.#agentDir, "AGENTS.md");
-		try {
-			await access(path);
-			return { path };
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-			throw error;
-		}
 	}
 
 	#dispatch(): void {
@@ -678,27 +553,25 @@ export class LocalSession {
 			this.#output ||
 			this.#active ||
 			this.#queue.length === 0 ||
-			!this.#context?.isIdle()
+			!this.#host.isIdle()
 		)
 			return;
 		this.#starting = true;
-		this.#pi.sendMessage(
-			{
-				customType: "chappie.request",
-				content: "",
-				display: false,
-			},
-			{ triggerTurn: true },
-		);
+		void Promise.resolve()
+			.then(() => this.#host.wake())
+			.catch((error: unknown) => {
+				this.#starting = false;
+				const request = this.#queue.shift();
+				if (request)
+					return this.#sendError(
+						request.id,
+						error instanceof Error ? error.message : String(error),
+					);
+			});
 	}
 
-	async #turnEnd(
-		message: unknown,
-		toolResults: ToolResultMessage[],
-		context: ExtensionContext,
-	): Promise<void> {
-		this.#context = context;
-		this.#historyChanged();
+	complete(message: unknown, toolResults: ToolResultMessage[]): void {
+		this.historyChanged();
 		const active = this.#active;
 		if (!active || message !== active.message) return;
 		const sessionId = active.session.id;
@@ -740,47 +613,19 @@ export class LocalSession {
 		void this.#sync().catch(() => {});
 	}
 
-	#resetInputs(
-		context?: ExtensionContext,
-		cursor = context?.sessionManager.getLeafId() ?? null,
-	): void {
-		this.#sessionId = context?.sessionManager.getSessionId();
-		this.#inputCursor = cursor;
+	resetInputs(): void {
+		this.#sessionId = this.#host.describe().id;
 		this.#pendingInputs.clear();
+		this.#host.resetInputs();
 	}
 
 	#collectInputs(): void {
-		const context = this.#context;
-		if (!context) return;
-		const sessionManager = context.sessionManager;
-		const sessionId = sessionManager.getSessionId();
-		if (this.#sessionId !== sessionId) {
-			this.#resetInputs(context);
-			return;
+		if (!this.#host.active()) return;
+		for (const input of this.#host.inputs()) {
+			if (typeof input.message.content !== "string")
+				rememberImages(input.sessionId, input.message.content);
+			this.#pendingInputs.set(input.id, input);
 		}
-		const leafId = sessionManager.getLeafId();
-		if (leafId === this.#inputCursor) return;
-		const entries: SessionEntry[] = [];
-		let current = sessionManager.getLeafEntry();
-		while (current && current.id !== this.#inputCursor) {
-			entries.push(current);
-			current = current.parentId
-				? sessionManager.getEntry(current.parentId)
-				: undefined;
-		}
-		if (this.#inputCursor !== null && !current) {
-			this.#resetInputs(context);
-			return;
-		}
-		for (const entry of entries.reverse()) {
-			if (entry.type !== "message" || entry.message.role !== "user") continue;
-			const message = entry.message as UserMessage;
-			if (typeof message.content !== "string") {
-				rememberImages(sessionId, message.content);
-			}
-			this.#pendingInputs.set(entry.id, { id: entry.id, sessionId, message });
-		}
-		this.#inputCursor = leafId;
 	}
 
 	#inputs(): SessionInput[] {
@@ -824,8 +669,8 @@ export class LocalSession {
 			| Promise<Parameters<IpcClient["send"]>[0]>,
 	): Promise<void> {
 		try {
-			if (sessionId !== this.#context?.sessionManager.getSessionId()) {
-				throw new Error("The requested Pi session is no longer active");
+			if (sessionId !== this.#sessionId) {
+				throw new Error("The requested session is no longer active");
 			}
 			await this.#connection?.send(await response());
 		} catch (error) {

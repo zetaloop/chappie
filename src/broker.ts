@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { type Activity, chatLabel, source } from "./activity.ts";
 import { readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import { type HistoryRange, historyInstructions } from "./history.ts";
+import type { ToolCall, ToolResultMessage } from "./host.ts";
 import {
 	type BrokerMessage,
 	IpcServer,

@@ -1,6 +1,6 @@
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Initialization } from "./broker.ts";
 import { toolResultsContent } from "./delivery.ts";
+import type { ToolResultMessage } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
 import { contentWithImageReferences } from "./resources.ts";
 

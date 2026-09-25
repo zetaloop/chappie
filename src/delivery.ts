@@ -1,5 +1,5 @@
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Source } from "./activity.ts";
+import type { ToolResultMessage } from "./host.ts";
 import {
 	contentWithImageReferences,
 	resourceDescriptors,

@@ -7,20 +7,18 @@ import {
 	type Socket,
 } from "node:net";
 import { join, resolve } from "node:path";
-import type {
-	AssistantMessage,
-	ToolCall,
-	ToolResultMessage,
-	UserMessage,
-} from "@earendil-works/pi-ai";
-import type {
-	SlashCommandInfo,
-	ToolInfo,
-} from "@earendil-works/pi-coding-agent";
 import type { Activity } from "./activity.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { TransferDetails } from "./files.ts";
 import type { HistoryRange, HistoryResult } from "./history.ts";
+import type {
+	AssistantMessage,
+	SkillInfo,
+	ToolCall,
+	ToolInfo,
+	ToolResultMessage,
+	UserMessage,
+} from "./host.ts";
 import type { ResourceData, ResourceDescriptor } from "./resources.ts";
 
 const defaultPort = 24274;
@@ -29,6 +27,8 @@ export type SessionStatus = "idle" | "ready" | "executing";
 
 export interface SessionDescription {
 	id: string;
+	agent: string;
+	model?: string;
 	cwd: string;
 	device: string;
 	name?: string;
@@ -38,7 +38,7 @@ export interface SessionDescription {
 export interface SessionInspection {
 	session: SessionDescription;
 	tools: ToolInfo[];
-	skills: SlashCommandInfo[];
+	skills: SkillInfo[];
 }
 
 export interface SessionInput {

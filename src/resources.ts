@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { open, readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import mime from "mime";
+import type { ImageContent, TextContent } from "./host.ts";
 
 export interface ResourceDescriptor {
 	uri: string;
