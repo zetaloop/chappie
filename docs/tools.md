@@ -176,3 +176,29 @@ Both Pi sessions need to stay connected during the transfer. `overwrite: true` r
 `read` and Pi tool results send images directly to ChatGPT for visual inspection. Chappie also returns a `chappie://` image reference with Pi images. Pass that reference to `transfer.paths` when the same bytes are needed as a file in ChatGPT's cloud environment.
 
 Use the original local path with `transfer` when the original image file is required; Pi can resize or convert images used only for display.
+
+## Local models
+
+With `localTools: true`, ordinary model sessions provide the following tools:
+
+| Tool | Purpose |
+|---|---|
+| `sessions` | List active Chappie sessions and return the local session ID as `self`. |
+| `remote_tools` | Read a target session's tool definitions. |
+| `remote_call` | Execute a native tool batch in the specified Chappie session. |
+| `history` | Read this session's history, or a Chappie session named by `sessionId`. |
+| `transfer` | Export local files, send files to a Chappie session, or retrieve files from one. |
+
+Sessions appear in the shared list while the Chappie provider is selected. Ordinary models use their existing provider for local work.
+
+To retrieve files, pair local destination `paths` with `from`:
+
+```json
+{
+  "paths": ["downloads/output.zip"],
+  "from": {
+    "sessionId": "<source-session>",
+    "paths": ["build/output.zip"]
+  }
+}
+```

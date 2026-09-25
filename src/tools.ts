@@ -67,7 +67,7 @@ export function inputContent(inputs: SessionInput[]) {
 	return inputs.flatMap(({ id, sessionId, message }) => [
 		{
 			type: "text" as const,
-			text: JSON.stringify({ piInput: id, sessionId }),
+			text: JSON.stringify({ input: id, sessionId }),
 		},
 		...(typeof message.content === "string"
 			? [{ type: "text" as const, text: message.content }]

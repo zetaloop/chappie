@@ -1,5 +1,6 @@
 export interface Source {
-	chatId: string;
+	clientId: string;
+	label: string;
 	requestId?: string;
 }
 
@@ -8,14 +9,19 @@ export interface Activity extends Partial<Source> {
 	initialization?: "explicit" | "implicit";
 }
 
-export function source(chatId: string, requestId: unknown): Source {
+export function source(
+	clientId: string,
+	requestId: unknown,
+	label = "ChatGPT",
+): Source {
 	return {
-		chatId,
+		clientId,
+		label,
 		...(typeof requestId === "string" ? { requestId } : {}),
 	};
 }
 
-export function chatLabel({ chatId, requestId }: Source): string {
+export function sourceLabel({ clientId, label, requestId }: Source): string {
 	const workflow = requestId?.match(/^wfr_([^/]+)\//)?.[1];
-	return `ChatGPT ${chatId.slice(-4)}${workflow ? `(${workflow.slice(-4)})` : ""}`;
+	return `${label} ${clientId.slice(-4)}${workflow ? `(${workflow.slice(-4)})` : ""}`;
 }

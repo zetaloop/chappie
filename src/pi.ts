@@ -10,11 +10,14 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import * as z from "zod";
 import type { Activity } from "./activity.ts";
 import { readConfig } from "./config.ts";
 import { historyResult } from "./history.ts";
 import type { Host } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
+import { localDeliveries, localTools } from "./local.ts";
 import { createChappieProvider } from "./provider.ts";
 import { Session } from "./session.ts";
 import { transfer } from "./transfer.ts";
@@ -115,14 +118,33 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 		notify(message, type, activity) {
 			pi.appendEntry<Notice>("chappie.notice", { message, type, ...activity });
 		},
+		toolsChanged: () => updateTools(),
 		mutate: withFileMutationQueue,
 	};
 
-	const session = new Session(host, config.connect);
+	const session = new Session(host, config);
+	const tools = localTools(session);
+	const names = new Set(tools.map((tool) => tool.name));
+	let exposed: string | undefined;
+	function updateTools(): void {
+		const desired = session.active
+			? ["transfer"]
+			: session.localTools
+				? [...names]
+				: [];
+		const key = desired.join(",");
+		if (key === exposed) return;
+		exposed = key;
+		pi.setActiveTools([
+			...pi.getActiveTools().filter((name) => !names.has(name)),
+			...desired,
+		]);
+	}
 	const update = (ctx: ExtensionContext, selected = ctx.model): void => {
 		context = ctx;
 		model = selected;
 		session.update();
+		updateTools();
 	};
 
 	pi.registerEntryRenderer<Notice>(
@@ -178,12 +200,33 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 		await session.settled();
 	});
 	pi.on("session_shutdown", () => session.close());
+	for (const tool of tools) {
+		if (tool.name === "transfer") continue;
+		pi.registerTool({
+			name: tool.name,
+			label: tool.name,
+			description: tool.description,
+			parameters: Type.Unsafe<Record<string, unknown>>(
+				z.toJSONSchema(tool.parameters),
+			),
+			async execute(_id, args, signal, update) {
+				const result = await tool.execute(args, signal, (result) =>
+					update?.({ ...result, details: result.details }),
+				);
+				return { ...result, details: result.details };
+			},
+		});
+	}
 	pi.registerTool({
 		...transfer,
-		execute(_id, args, signal, update) {
-			return session.transfer(args, signal, (details) =>
+		async execute(_id, args, signal, update) {
+			const result = await session.transfer(args, signal, (details) =>
 				update?.({ content: [], details }),
 			);
+			return {
+				...result,
+				content: [...result.content, ...localDeliveries(session)],
+			};
 		},
 	});
 	pi.registerProvider(createChappieProvider((output) => session.start(output)));

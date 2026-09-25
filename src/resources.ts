@@ -84,7 +84,7 @@ export function contentWithImageReferences(
 					{
 						type: "text" as const,
 						text: JSON.stringify({
-							piImage: imageDescriptor(sessionId, block).uri,
+							image: imageDescriptor(sessionId, block).uri,
 						}),
 					},
 				]

@@ -60,7 +60,7 @@ export class State {
 
 	deliveries(chatId: string): DeliveryRecord[] {
 		return [...this.#deliveries.values()].filter(
-			(delivery) => delivery.chatId === chatId,
+			(delivery) => delivery.clientId === chatId,
 		);
 	}
 

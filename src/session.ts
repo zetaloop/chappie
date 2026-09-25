@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
-import { type Activity, chatLabel, source } from "./activity.ts";
-import { getDirectory } from "./config.ts";
+import { type Activity, source, sourceLabel } from "./activity.ts";
+import { type Config, getDirectory } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import {
 	copyFiles,
@@ -11,6 +11,7 @@ import {
 	transferFiles,
 	transferResult,
 } from "./files.ts";
+import type { HistoryRange } from "./history.ts";
 import type {
 	AssistantMessage,
 	Host,
@@ -19,19 +20,22 @@ import type {
 } from "./host.ts";
 import {
 	type BrokerMessage,
+	type ClientRequest,
 	IpcClient,
 	type SessionDescription,
 	type SessionInput,
-	type SessionRequest,
 	type SessionResult,
 	type SessionStatus,
 } from "./ipc.ts";
 import {
+	imageDescriptor,
 	type ResourceDescriptor,
 	readSessionResource,
 	rememberImages,
+	resourceDescriptors,
 	resourceSessionId,
 } from "./resources.ts";
+import type { ToolInput } from "./tools.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
 
@@ -66,7 +70,7 @@ interface ActiveRequest {
 
 export class Session {
 	readonly #host: Host;
-	readonly #connect: string | undefined;
+	readonly #config: Config;
 	readonly #syncs = new Map<number, SyncRequest>();
 	readonly #stores = new Map<string, StoreRequest>();
 	readonly #queue: RemoteRequest[] = [];
@@ -75,6 +79,8 @@ export class Session {
 	readonly #histories = new Map<number, HistoryRequest>();
 	readonly #requests = new Map<number, PendingRequest>();
 	readonly #copies = new Map<number, AbortController>();
+	readonly #resources = new Map<string, ResourceDescriptor>();
+	readonly #receivedDeliveries: DeliveryRecord[] = [];
 	#connection: IpcClient | undefined;
 	#output: Output | undefined;
 	#active: ActiveRequest | undefined;
@@ -83,10 +89,89 @@ export class Session {
 	#starting = false;
 	#sessionId: string | undefined;
 	#flushing = Promise.resolve();
+	#provider: boolean | undefined;
 
-	constructor(host: Host, connect?: string) {
+	constructor(host: Host, config: Config = {}) {
 		this.#host = host;
-		this.#connect = connect;
+		this.#config = config;
+	}
+
+	get localTools(): boolean {
+		return Boolean(
+			this.#config.localTools &&
+				!this.#host.active() &&
+				this.#connection?.connected,
+		);
+	}
+
+	get active(): boolean {
+		return this.#host.active();
+	}
+
+	deliveries(): DeliveryRecord[] {
+		return this.#receivedDeliveries.splice(0);
+	}
+
+	get id(): string {
+		return this.#host.describe().id;
+	}
+
+	async sessions(sessionId?: string, signal?: AbortSignal) {
+		const result = await this.#request(
+			{ type: "sessions", ...(sessionId ? { sessionId } : {}) },
+			signal,
+		);
+		if (!("sessions" in result))
+			throw new Error("Broker returned no session list");
+		return { self: this.id, sessions: result.sessions };
+	}
+
+	async tools(sessionId: string, names?: string[], signal?: AbortSignal) {
+		const result = await this.#request({ type: "inspect", sessionId }, signal);
+		if (!("inspection" in result))
+			throw new Error("Session returned no tool catalog");
+		return {
+			...result.inspection,
+			tools: result.inspection.tools.filter(
+				(tool) => !names || names.includes(tool.name),
+			),
+		};
+	}
+
+	async history(range: HistoryRange, sessionId?: string, signal?: AbortSignal) {
+		if (!sessionId || sessionId === this.id) return this.#host.history(range);
+		const self = this.#host.describe();
+		const result = await this.#request(
+			{
+				type: "history",
+				sessionId,
+				range,
+				...source(self.id, randomUUID(), self.name ?? self.agent),
+			},
+			signal,
+		);
+		if (!("history" in result)) throw new Error("Session returned no history");
+		return result.history;
+	}
+
+	async call(sessionId: string, calls: ToolInput[], signal?: AbortSignal) {
+		const self = this.#host.describe();
+		const result = await this.#request(
+			{
+				type: "call",
+				sessionId,
+				calls: calls.map((call) => ({
+					...call,
+					type: "toolCall",
+					id: `chappie-${randomUUID()}`,
+				})),
+				...source(self.id, randomUUID(), self.name ?? self.agent),
+			},
+			signal,
+		);
+		if (!("toolResults" in result))
+			throw new Error("Session returned no tool results");
+		return { sessionId, ...result };
 	}
 
 	async settled(): Promise<void> {
@@ -145,7 +230,44 @@ export class Session {
 			...this.#host.describe(),
 			...(this.#host.mutate ? { mutate: this.#host.mutate } : {}),
 		};
-		if (!args.to) return transferFiles(args, context, signal, update);
+		if ([args.files, args.from, args.to].filter(Boolean).length > 1)
+			throw new Error("Supply one of files, from, or to");
+		if (args.from) {
+			const result = await this.#request(
+				{
+					type: "export",
+					sessionId: args.from.sessionId,
+					paths: args.from.paths,
+				},
+				signal,
+			);
+			if (!("transfer" in result))
+				throw new Error("Session returned no resources");
+			const copying = signal ?? new AbortController().signal;
+			const files = await copyFiles(
+				args.paths,
+				result.transfer.resources,
+				context.cwd,
+				args.overwrite === true,
+				(resource) => this.#readChunks(resource, copying),
+				copying,
+				context.mutate,
+			);
+			return transferResult({
+				device: hostname(),
+				files,
+				resources: [],
+				from: {
+					sessionId: args.from.sessionId,
+					device: result.transfer.device,
+				},
+			});
+		}
+		if (!args.to) {
+			const result = await transferFiles(args, context, signal, update);
+			this.#publish(result.details.resources);
+			return result;
+		}
 		if (args.files) throw new Error("files and to are mutually exclusive");
 		if (args.paths.length !== args.to.paths.length)
 			throw new Error("Source and destination counts must match");
@@ -160,6 +282,7 @@ export class Session {
 			context,
 			signal,
 		);
+		this.#publish(exported.details.resources);
 		update?.({
 			...exported.details,
 			to: {
@@ -196,6 +319,7 @@ export class Session {
 		this.#starting = false;
 		this.#connection?.close();
 		this.#connection = undefined;
+		this.#host.toolsChanged?.();
 		this.resetInputs();
 		this.#cancelRequests(new Error("Chappie session ended"));
 		this.#rejectSyncs(new Error("Chappie session ended"));
@@ -204,27 +328,28 @@ export class Session {
 	}
 
 	update(): void {
-		if (!this.#host.active()) {
+		const active = this.#host.active();
+		const id = this.#host.describe().id;
+		if (
+			this.#connection &&
+			(this.#sessionId !== id || this.#provider !== active)
+		)
 			this.close();
-			return;
-		}
-		if (this.#sessionId !== this.#host.describe().id) {
-			if (this.#sessionId && this.#connection?.connected) {
-				void this.#connection
-					.send({ type: "unregister", sessionId: this.#sessionId })
-					.catch(() => {});
-			}
-			this.resetInputs();
-		}
+		this.#provider = active;
+		if (!active && !this.#config.localTools) return;
+		if (this.#sessionId !== id) this.resetInputs();
 
 		if (!this.#connection) {
-			this.#connection = new IpcClient(getDirectory(), this.#connect, {
+			this.#connection = new IpcClient(getDirectory(), this.#config.connect, {
 				onOpen: async () => {
+					this.#publish([...this.#resources.values()]);
 					await this.#sync();
 					await this.#flushDeliveries();
+					this.#host.toolsChanged?.();
 				},
 				onMessage: (message) => this.#receive(message),
 				onClose: (error) => {
+					this.#host.toolsChanged?.();
 					this.#cancelRequests(error);
 					for (const id of this.#histories.keys()) this.#finishHistory(id);
 					this.#rejectSyncs(error);
@@ -268,7 +393,8 @@ export class Session {
 				if (!pending) break;
 				if ("error" in message) pending.reject(new Error(message.error));
 				else {
-					const { type: _type, id: _id, ...result } = message;
+					const { type: _type, id: _id, deliveries, ...result } = message;
+					this.#receivedDeliveries.push(...(deliveries ?? []));
 					pending.resolve(result);
 				}
 				break;
@@ -314,6 +440,12 @@ export class Session {
 						message.offset,
 					),
 				}));
+				break;
+			case "export":
+				await this.#reply(message.id, message.sessionId, async () => {
+					const result = await this.transfer({ paths: message.paths });
+					return { type: "result", id: message.id, transfer: result.details };
+				});
 				break;
 			case "copy": {
 				const controller = new AbortController();
@@ -368,11 +500,11 @@ export class Session {
 						? [...new Set(request.calls.map((call) => call.name))].join(", ")
 						: "chat";
 				this.#notify(
-					`${name} cancelled for ${chatLabel(request)}: ${message.reason}`,
+					`${name} cancelled for ${sourceLabel(request)}: ${message.reason}`,
 					"warning",
 					{
 						event: "cancelled",
-						...source(request.chatId, request.requestId),
+						...source(request.clientId, request.requestId, request.label),
 					},
 				);
 				if (queued !== -1) {
@@ -401,8 +533,19 @@ export class Session {
 		}
 	}
 
+	#publish(resources: ResourceDescriptor[]): void {
+		if (!resources.length) return;
+		for (const resource of resources)
+			this.#resources.set(resource.uri, resource);
+		if (this.#connection?.connected) {
+			void this.#connection
+				.send({ type: "resources", resources })
+				.catch(() => {});
+		}
+	}
+
 	async #request(
-		request: SessionRequest,
+		request: ClientRequest,
 		signal?: AbortSignal,
 	): Promise<SessionResult> {
 		signal?.throwIfAborted();
@@ -417,7 +560,7 @@ export class Session {
 		this.#requests.set(id, completion);
 		signal?.addEventListener("abort", onAbort, { once: true });
 		void connection
-			.send({ type: "request", id, request })
+			.send({ type: "request", id, clientId: this.id, request })
 			.catch(completion.reject);
 		try {
 			return await completion.promise;
@@ -469,6 +612,13 @@ export class Session {
 			if (context.id !== request.sessionId)
 				throw new Error("The requested session is no longer active");
 			const history = await this.#host.history(request.range);
+			this.#publish(
+				history.content.flatMap((block) =>
+					block.type === "image"
+						? [imageDescriptor(request.sessionId, block)]
+						: [],
+				),
+			);
 			if (wait && !request.range.before && history.count === 0) {
 				if (!this.#histories.has(request.id)) {
 					this.#histories.set(request.id, {
@@ -483,9 +633,12 @@ export class Session {
 			this.#finishHistory(request.id);
 			if (!request.range.observer) {
 				this.#notify(
-					`${chatLabel(request)} read history: ${history.count} entries`,
+					`${sourceLabel(request)} read history: ${history.count} entries`,
 					"info",
-					{ event: "history", ...source(request.chatId, request.requestId) },
+					{
+						event: "history",
+						...source(request.clientId, request.requestId, request.label),
+					},
 				);
 			}
 			await this.#connection?.send({
@@ -527,7 +680,11 @@ export class Session {
 		}
 
 		this.#queue.shift();
-		output.message.chappie = source(request.chatId, request.requestId);
+		output.message.chappie = source(
+			request.clientId,
+			request.requestId,
+			request.label,
+		);
 		this.#active = {
 			request,
 			session: this.#description(),
@@ -575,7 +732,15 @@ export class Session {
 		const active = this.#active;
 		if (!active || message !== active.message) return;
 		const sessionId = active.session.id;
-		for (const result of toolResults) rememberImages(sessionId, result.content);
+		for (const result of toolResults) {
+			rememberImages(sessionId, result.content);
+			this.#publish([
+				...resourceDescriptors(result.details),
+				...result.content.flatMap((block) =>
+					block.type === "image" ? [imageDescriptor(sessionId, block)] : [],
+				),
+			]);
+		}
 		active.completed = true;
 		active.toolResults = toolResults;
 	}
@@ -588,7 +753,11 @@ export class Session {
 		if (active.cancelled !== undefined) {
 			const delivery: DeliveryRecord = {
 				id: randomUUID(),
-				...source(active.request.chatId, active.request.requestId),
+				...source(
+					active.request.clientId,
+					active.request.requestId,
+					active.request.label,
+				),
 				sessionId: active.session.id,
 				cwd: active.session.cwd,
 				toolResults: active.toolResults,
@@ -622,8 +791,16 @@ export class Session {
 	#collectInputs(): void {
 		if (!this.#host.active()) return;
 		for (const input of this.#host.inputs()) {
-			if (typeof input.message.content !== "string")
+			if (typeof input.message.content !== "string") {
 				rememberImages(input.sessionId, input.message.content);
+				this.#publish(
+					input.message.content.flatMap((block) =>
+						block.type === "image"
+							? [imageDescriptor(input.sessionId, block)]
+							: [],
+					),
+				);
+			}
 			this.#pendingInputs.set(input.id, input);
 		}
 	}
@@ -644,14 +821,10 @@ export class Session {
 					await connection.send({ type: "delivery", delivery });
 					await completion.promise;
 					this.#deliveries.delete(delivery.id);
-					this.#notify(
-						`Result saved for ChatGPT ${delivery.chatId.slice(-4)}`,
-						"info",
-						{
-							event: "result_saved",
-							...source(delivery.chatId, delivery.requestId),
-						},
-					);
+					this.#notify(`Result saved for ${sourceLabel(delivery)}`, "info", {
+						event: "result_saved",
+						...source(delivery.clientId, delivery.requestId, delivery.label),
+					});
 				} finally {
 					this.#stores.delete(delivery.id);
 				}

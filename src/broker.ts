@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import { type Activity, chatLabel, source } from "./activity.ts";
+import { type Activity, source, sourceLabel } from "./activity.ts";
 import { readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import { type HistoryRange, historyInstructions } from "./history.ts";
 import type { ToolCall, ToolResultMessage } from "./host.ts";
 import {
 	type BrokerMessage,
+	type ClientRequest,
 	IpcServer,
 	type JsonLinePeer,
 	type SessionDescription,
@@ -27,7 +28,7 @@ import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
 
 const observerInstructions =
-	"This ChatGPT conversation recently initialized or resumed work in this Pi session. A parallel execution is already continuing the task. Participate as an observer for this task: read history with observer: true, follow new entries with after and wait: true, and think independently. Leave execution and Pi communication to the ongoing work. Once its completion is recorded, explain the actual results in ChatGPT and finish your response. Continue observing this task rather than reinitializing to take over.";
+	"This ChatGPT conversation recently initialized or resumed work in this session. A parallel execution is already continuing the task. Participate as an observer for this task: read history with observer: true, follow new entries with after and wait: true, and think independently. Leave execution and session communication to the ongoing work. Once its completion is recorded, explain the actual results in ChatGPT and finish your response. Continue observing this task rather than reinitializing to take over.";
 
 interface RegisteredSession {
 	description: SessionDescription;
@@ -83,6 +84,10 @@ export class Broker {
 	readonly #ipc: IpcServer;
 	readonly #state: State;
 	readonly #sessions = new Map<string, RegisteredSession>();
+	readonly #resources = new Map<
+		string,
+		JsonLinePeer<SessionMessage, BrokerMessage>
+	>();
 	readonly #pending = new Map<number, PendingRequest>();
 	readonly #waiters = new Set<ChangeWaiter>();
 	readonly #cooldowns = new Map<string, number>();
@@ -128,6 +133,7 @@ export class Broker {
 		}
 		this.#waiters.clear();
 		this.#sessions.clear();
+		this.#resources.clear();
 		await this.#ipc.close();
 	}
 
@@ -214,7 +220,7 @@ export class Broker {
 				...(initialization ? { initialization } : {}),
 			};
 		}
-		throw new Error("Pi session returned no assistant message");
+		throw new Error("Session returned no assistant message");
 	}
 
 	async tools(
@@ -283,7 +289,7 @@ export class Broker {
 				inputs: result.inputs,
 			};
 		}
-		throw new Error("Pi session returned no tool results");
+		throw new Error("Session returned no tool results");
 	}
 
 	async history(
@@ -294,7 +300,7 @@ export class Broker {
 		signal: AbortSignal,
 	) {
 		const target = sessionId ?? this.#state.binding(chatId);
-		if (!target) throw new Error("Specify a Pi sessionId to read history");
+		if (!target) throw new Error("Specify a sessionId to read history");
 		await this.#waitForSession(target, signal);
 		const result = await this.#request(
 			target,
@@ -308,7 +314,7 @@ export class Broker {
 			signal,
 		);
 		if ("history" in result) return { sessionId: target, ...result };
-		throw new Error("Pi session returned no history");
+		throw new Error("Session returned no history");
 	}
 
 	async inputs(
@@ -338,7 +344,7 @@ export class Broker {
 		);
 		signal.throwIfAborted();
 		const session = this.#sessions.get(target);
-		if (!session) throw new Error(`Pi session ${target} is offline`);
+		if (!session) throw new Error(`Session ${target} is offline`);
 		const question: QuestionRecord = {
 			...input,
 			id: randomUUID(),
@@ -351,7 +357,7 @@ export class Broker {
 		const activity = source(chatId, requestId);
 		void this.#notify(
 			target,
-			`${chatLabel(activity)} asked: ${question.question}`,
+			`${sourceLabel(activity)} asked: ${question.question}`,
 			{
 				event: "asked",
 				...activity,
@@ -391,11 +397,11 @@ export class Broker {
 				void this.#notify(
 					question.sessionId,
 					`Question skipped after display timeout: ${question.question}`,
-					{ event: "skipped", chatId },
+					{ event: "skipped", clientId: chatId },
 				).catch(() => {});
 			}
 			throw new Error(
-				"Question widget did not load within 10 seconds. The question was automatically skipped. Use an installed Pi interactive tool through call if an answer is needed.",
+				"Question widget did not load within 10 seconds. The question was automatically skipped. Use an installed native interactive tool through call if an answer is needed.",
 			);
 		}
 	}
@@ -432,7 +438,7 @@ export class Broker {
 						: `Answered in ChatGPT ${chatId.slice(-4)}: ${question.question} — ${response}`;
 				void this.#notify(question.sessionId, message, {
 					event: question.answer?.skipped ? "skipped" : "answered",
-					chatId,
+					clientId: chatId,
 				}).catch(() => {});
 			}
 		}
@@ -449,7 +455,6 @@ export class Broker {
 		requested.search = "";
 		const sessionId = resourceSessionId(requested.href);
 		if (chatId) this.#cooldown(chatId, sessionId);
-		await this.#waitForSession(sessionId, signal);
 		const result = await this.#request(
 			sessionId,
 			(id) => ({ type: "readResource", id, sessionId, uri: requested.href }),
@@ -459,7 +464,7 @@ export class Broker {
 			if (chatId) this.#cooldown(chatId, sessionId);
 			return { ...result.resource, uri };
 		}
-		throw new Error("Pi session returned no resource");
+		throw new Error("Session returned no resource");
 	}
 
 	deliveries(chatId: string): DeliveryRecord[] {
@@ -472,6 +477,26 @@ export class Broker {
 		signal: AbortSignal,
 	): Promise<void> {
 		return this.#state.acknowledge(deliveries, answers, signal);
+	}
+
+	async request(
+		request: ClientRequest,
+		signal: AbortSignal,
+	): Promise<SessionResult> {
+		if (request.type === "sessions")
+			return { sessions: this.listSessions(request.sessionId) };
+		const result = await this.#request(
+			request.sessionId,
+			(id) => ({ ...request, id }),
+			signal,
+		);
+		if (
+			(request.type === "call" || request.type === "chat") &&
+			"inputs" in result
+		) {
+			await this.#ackInputs(request.sessionId, result.inputs, signal);
+		}
+		return result;
 	}
 
 	async #receive(
@@ -487,14 +512,18 @@ export class Broker {
 				}
 				const controller = new AbortController();
 				relays.set(message.id, controller);
-				void this.#request(
-					message.request.sessionId,
-					(id) => ({ ...message.request, id }),
-					controller.signal,
-				)
+				void this.request(message.request, controller.signal)
 					.then(
-						(result) =>
-							peer.send({ ...result, type: "response", id: message.id }),
+						async (result) => {
+							const deliveries = this.#state.deliveries(message.clientId);
+							await peer.send({
+								...result,
+								type: "response",
+								id: message.id,
+								...(deliveries.length ? { deliveries } : {}),
+							});
+							await this.#state.acknowledge(deliveries, [], controller.signal);
+						},
 						(error: unknown) =>
 							peer.send({
 								type: "response",
@@ -506,11 +535,15 @@ export class Broker {
 					.catch(() => {});
 				break;
 			}
+			case "resources":
+				for (const resource of message.resources)
+					this.#resources.set(resource.uri, peer);
+				break;
 			case "cancelRequest":
 				this.#relays
 					.get(peer)
 					?.get(message.id)
-					?.abort(new Error("Transfer cancelled"));
+					?.abort(new Error("Request cancelled"));
 				break;
 			case "sync": {
 				const registered =
@@ -613,13 +646,13 @@ export class Broker {
 		if (previous !== sessionId) {
 			this.#notifyChange();
 			if (previous)
-				await this.#notify(previous, `${chatLabel(activity)} left`, {
+				await this.#notify(previous, `${sourceLabel(activity)} left`, {
 					...activity,
 					event: "left",
 				});
 		}
 		signal.throwIfAborted();
-		await this.#notify(sessionId, `${chatLabel(activity)} joined`, {
+		await this.#notify(sessionId, `${sourceLabel(activity)} joined`, {
 			...activity,
 			event: "joined",
 			initialization: explicit ? "explicit" : "implicit",
@@ -662,7 +695,7 @@ export class Broker {
 			signal,
 		);
 		if ("inspection" in result) return result;
-		throw new Error("Pi session returned no inspection");
+		throw new Error("Session returned no inspection");
 	}
 
 	async #ackInputs(
@@ -673,7 +706,7 @@ export class Broker {
 		signal.throwIfAborted();
 		if (inputs.length === 0) return;
 		const session = this.#sessions.get(sessionId);
-		if (!session) throw new Error(`Pi session ${sessionId} is offline`);
+		if (!session) throw new Error(`Session ${sessionId} is offline`);
 		await session.peer.send({
 			type: "ackInputs",
 			sessionId,
@@ -686,10 +719,17 @@ export class Broker {
 		message: (id: number) => BrokerMessage,
 		signal: AbortSignal,
 	): Promise<SessionResult> {
-		const session = this.#sessions.get(sessionId);
-		if (!session) throw new Error(`Pi session ${sessionId} is offline`);
 		if (signal.aborted) throw abortError(signal);
 		const id = this.#nextRequestId++;
+		const request = message(id);
+		const peer =
+			request.type === "readResource"
+				? this.#resources.get(request.uri)
+				: this.#sessions.get(sessionId)?.peer;
+		if (!peer)
+			throw new Error(
+				`Session resource or target is unavailable: ${sessionId}`,
+			);
 		const completion = Promise.withResolvers<SessionResult>();
 		const onAbort = (): void => {
 			const pending = this.#pending.get(id);
@@ -706,7 +746,7 @@ export class Broker {
 			pending.reject(abortError(signal));
 		};
 		const pending: PendingRequest = {
-			peer: session.peer,
+			peer,
 			resolve: completion.resolve,
 			reject: completion.reject,
 			signal,
@@ -714,7 +754,7 @@ export class Broker {
 		};
 		this.#pending.set(id, pending);
 		signal.addEventListener("abort", onAbort, { once: true });
-		void session.peer.send(message(id)).catch((error: unknown) => {
+		void peer.send(request).catch((error: unknown) => {
 			this.#finishRequest(id, pending);
 			pending.reject(error instanceof Error ? error : new Error(String(error)));
 		});
@@ -754,16 +794,19 @@ export class Broker {
 
 	#removePeer(peer: JsonLinePeer<SessionMessage, BrokerMessage>): void {
 		for (const controller of this.#relays.get(peer)?.values() ?? []) {
-			controller.abort(new Error("Pi session disconnected"));
+			controller.abort(new Error("Session disconnected"));
 		}
 		this.#relays.delete(peer);
+		for (const [uri, owner] of this.#resources) {
+			if (owner === peer) this.#resources.delete(uri);
+		}
 		for (const [sessionId, session] of this.#sessions) {
 			if (session.peer === peer) this.#removeSession(sessionId);
 		}
 		for (const [id, pending] of this.#pending) {
 			if (pending.peer !== peer) continue;
 			this.#finishRequest(id, pending);
-			pending.reject(new Error("Pi session disconnected"));
+			pending.reject(new Error("Session disconnected"));
 		}
 	}
 

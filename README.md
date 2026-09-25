@@ -60,3 +60,13 @@ The default port is `24274`. Set `listen` to a port number or append `:port` to 
 Set `ask` to `false` to disable webpage questions.
 
 Closely spaced initializations from the same ChatGPT conversation receive guidance to observe the ongoing work through `history` and explain its results. See [participation](docs/tools.md#participation).
+
+Local models can access Chappie sessions with `localTools`:
+
+```json
+{
+  "localTools": true
+}
+```
+
+This provides `sessions`, `remote_tools`, `remote_call`, `history`, and `transfer`. Local requests can inspect and exchange files with Chappie sessions on other devices.

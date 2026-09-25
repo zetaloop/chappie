@@ -37,10 +37,15 @@ export const transfer = {
 	},
 	renderCall(args, theme, context) {
 		const device = context.state.device ?? hostname();
-		const from = args.files ? "ChatGPT" : device;
-		const to = args.files
-			? device
-			: (context.state.to ?? (args.to ? "Pi" : "ChatGPT"));
+		const from = args.files
+			? "ChatGPT"
+			: args.from
+				? (context.state.from ?? "Session")
+				: device;
+		const to =
+			args.files || args.from
+				? device
+				: (context.state.to ?? (args.to ? "Session" : "ChatGPT"));
 		const header =
 			context.lastComponent instanceof Text
 				? context.lastComponent
@@ -64,8 +69,14 @@ export const transfer = {
 		const args = context.args;
 		context.state.device = details.device;
 		context.state.to = details.to?.device ?? "ChatGPT";
-		const from = args.files ? "ChatGPT" : details.device;
-		const to = args.files ? details.device : (details.to?.device ?? "ChatGPT");
+		context.state.from = details.from?.device;
+		const from = args.files
+			? "ChatGPT"
+			: (details.from?.device ?? details.device);
+		const to =
+			args.files || args.from
+				? details.device
+				: (details.to?.device ?? "ChatGPT");
 		context.state.header?.setText(
 			theme.fg("toolTitle", theme.bold(`${from} → ${to}`)),
 		);
@@ -80,7 +91,7 @@ export const transfer = {
 					? details.files.map((file, index) => {
 							const source = args.to
 								? args.paths?.[index]
-								: args.files?.[index]?.file_name;
+								: (args.from?.paths[index] ?? args.files?.[index]?.file_name);
 							const path = source
 								? `${displayPath(source)} → ${file.path}`
 								: file.path;
@@ -98,7 +109,7 @@ export const transfer = {
 } satisfies ToolDefinition<
 	typeof parameters,
 	TransferDetails,
-	{ header?: Text; device?: string; to?: string }
+	{ header?: Text; device?: string; to?: string; from?: string | undefined }
 >;
 
 function displayPath(path: string): string {

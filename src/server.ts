@@ -24,7 +24,7 @@ const outputSchema = z.object({
 	text: z
 		.string()
 		.describe(
-			"Complete text output, including Pi user input, submitted webpage answers, and deferred results. Images and file resources accompany it as native content blocks.",
+			"Complete text output, including local user input, submitted webpage answers, and deferred results. Images and file resources accompany it as native content blocks.",
 		),
 });
 
@@ -71,15 +71,15 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"init",
 		{
-			title: "Connect to Pi",
+			title: "Connect to a session",
 			description:
-				"Select this chat's default Pi session and return its environment, tool catalog, and participation instructions. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session. Read recent history when resuming work.",
+				"Select this chat's default session and return its environment, tool catalog, and participation instructions. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session. Read recent history when resuming work.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Default Pi session ID; may be shared with other chats"),
+					.describe("Default session ID; may be shared with other chats"),
 			}),
 			annotations: toolAnnotations,
 		},
@@ -98,8 +98,8 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"chat",
 		{
-			title: "Reply in Pi",
-			description: "Send a Markdown assistant message to Pi.",
+			title: "Reply in the session",
+			description: "Send a Markdown assistant message to the session.",
 			outputSchema,
 			inputSchema: z.object({
 				text: z.string().min(1).describe("Assistant message in Markdown"),
@@ -107,7 +107,7 @@ export function createServer(broker: Broker): McpServer {
 					.string()
 					.optional()
 					.describe(
-						"Pi session for this operation; becomes the default if none is set",
+						"session for this operation; becomes the default if none is set",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -144,7 +144,7 @@ export function createServer(broker: Broker): McpServer {
 						.string()
 						.optional()
 						.describe(
-							"Pi session for this question; defaults to this chat's session",
+							"session for this question; defaults to this chat's session",
 						),
 				}),
 				outputSchema: questionSchema,
@@ -180,7 +180,7 @@ export function createServer(broker: Broker): McpServer {
 			{
 				title: "Assert question display",
 				description:
-					"Confirm that an ask widget loaded in ChatGPT. Call immediately after ask with question.id. Fails after 10 seconds without loading and records the question as skipped. Use a Pi interactive tool if an answer is needed. User answers arrive separately as webAnswer.",
+					"Confirm that an ask widget loaded in ChatGPT. Call immediately after ask with question.id. Fails after 10 seconds without loading and records the question as skipped. Use a native interactive tool if an answer is needed. User answers arrive separately as webAnswer.",
 				inputSchema: z.object({
 					questionId: z.string().describe("question.id returned by ask"),
 				}),
@@ -272,9 +272,9 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"tools",
 		{
-			title: "Pi tools",
+			title: "Native tools",
 			description:
-				"Get full definitions of Pi tools for call. Filter by names, or omit names to list all active tools.",
+				"Get full definitions of native tools for call. Filter by names, or omit names to list all active tools.",
 			outputSchema,
 			inputSchema: z.object({
 				names: z
@@ -286,7 +286,7 @@ export function createServer(broker: Broker): McpServer {
 					.string()
 					.optional()
 					.describe(
-						"Pi session for this operation; becomes the default if none is set",
+						"session for this operation; becomes the default if none is set",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -319,16 +319,16 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"call",
 		{
-			title: "Call Pi tools",
+			title: "Call Native tools",
 			description:
-				"Execute Pi tools using the definitions returned by tools. Each calls array is one native Pi batch.",
+				"Execute native tools using the definitions returned by tools. Each calls array is one native tool batch.",
 			outputSchema,
 			inputSchema: callInput.safeExtend({
 				sessionId: z
 					.string()
 					.optional()
 					.describe(
-						"Pi session for this operation; becomes the default if none is set",
+						"session for this operation; becomes the default if none is set",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -399,12 +399,12 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Session history",
 			description:
-				"Read Pi history with entry IDs and timestamps. Use before/after to page the current branch, and wait to follow new progress when caught up. Set observer when reading as an observer. An explicit sessionId applies only to this read.",
+				"Read session history with entry IDs and timestamps. Use before/after to page the current branch, and wait to follow new progress when caught up. Set observer when reading as an observer. An explicit sessionId applies only to this read.",
 			inputSchema: historyInput.extend({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Pi session to read; defaults to this chat's session"),
+					.describe("session to read; defaults to this chat's session"),
 			}),
 			outputSchema,
 			annotations: toolAnnotations,
@@ -435,13 +435,13 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Local sessions",
 			description:
-				"List online Pi sessions with their IDs, devices, cwd, names, execution status, and saved binding counts. Also returns this chat's default.",
+				"List online sessions with their IDs, agents, devices, cwd, names, execution status, and saved binding counts. Also returns this chat's default.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Filter the online list to this Pi session"),
+					.describe("Filter the online list to this session"),
 			}),
 			annotations: toolAnnotations,
 		},
@@ -462,14 +462,14 @@ export function createServer(broker: Broker): McpServer {
 	);
 
 	server.registerResource(
-		"Pi resource",
+		"Session resource",
 		new ResourceTemplate(
 			"chappie://session/{sessionId}/{kind}/{id}/{name}{?chatId}",
 			{
 				list: undefined,
 			},
 		),
-		{ title: "Pi resource" },
+		{ title: "Session resource" },
 		async (uri, _variables, context) => {
 			const resource = await broker.readResource(
 				uri.href,

@@ -7,7 +7,7 @@ import {
 	type Socket,
 } from "node:net";
 import { join, resolve } from "node:path";
-import type { Activity } from "./activity.ts";
+import type { Activity, Source } from "./activity.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { TransferDetails } from "./files.ts";
 import type { HistoryRange, HistoryResult } from "./history.ts";
@@ -47,7 +47,7 @@ export interface SessionInput {
 	message: UserMessage;
 }
 
-export type SessionResult =
+export type SessionResult = (
 	| {
 			inspection: SessionInspection;
 			inputs: SessionInput[];
@@ -60,27 +60,38 @@ export type SessionResult =
 			toolResults: ToolResultMessage[];
 			inputs: SessionInput[];
 	  }
+	| { sessions: SessionDescription[] }
 	| { history: HistoryResult; cwd: string }
 	| { resource: ResourceData }
 	| { transfer: TransferDetails }
-	| { error: string };
+	| { error: string }
+) & { deliveries?: DeliveryRecord[] };
 
 export type SessionRequest =
 	| { type: "inspect"; sessionId: string }
 	| { type: "readResource"; sessionId: string; uri: string; offset?: number }
+	| { type: "export"; sessionId: string; paths: string[] }
 	| {
 			type: "copy";
 			sessionId: string;
 			resources: ResourceDescriptor[];
 			paths: string[];
 			overwrite?: boolean;
-	  };
+	  }
+	| ({ type: "history"; sessionId: string; range: HistoryRange } & Source)
+	| ({ type: "chat"; sessionId: string; text: string } & Source)
+	| ({ type: "call"; sessionId: string; calls: ToolCall[] } & Source);
+
+export type ClientRequest =
+	| SessionRequest
+	| { type: "sessions"; sessionId?: string };
 
 export type SessionMessage =
 	| { type: "sync"; id: number; session: SessionDescription }
 	| { type: "unregister"; sessionId: string }
+	| { type: "resources"; resources: ResourceDescriptor[] }
 	| { type: "delivery"; delivery: DeliveryRecord }
-	| { type: "request"; id: number; request: SessionRequest }
+	| { type: "request"; id: number; clientId: string; request: ClientRequest }
 	| { type: "cancelRequest"; id: number }
 	| ({ type: "result"; id: number } & SessionResult);
 
@@ -88,30 +99,6 @@ export type BrokerMessage =
 	| { type: "synced"; id: number; sessionId: string }
 	| { type: "stored"; id: string }
 	| { type: "notice"; sessionId: string; message: string; activity?: Activity }
-	| {
-			type: "history";
-			id: number;
-			sessionId: string;
-			range: HistoryRange;
-			chatId: string;
-			requestId?: string;
-	  }
-	| {
-			type: "chat";
-			id: number;
-			chatId: string;
-			requestId?: string;
-			sessionId: string;
-			text: string;
-	  }
-	| {
-			type: "call";
-			id: number;
-			chatId: string;
-			requestId?: string;
-			sessionId: string;
-			calls: ToolCall[];
-	  }
 	| { type: "cancel"; id: number; sessionId: string; reason: string }
 	| (SessionRequest & { id: number })
 	| ({ type: "response"; id: number } & SessionResult)
