@@ -1,9 +1,12 @@
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import * as z from "zod";
 import type { Activity, Source } from "./activity.ts";
-import { toolResultsContent } from "./delivery.ts";
-import type { AssistantMessage } from "./host.ts";
-import { contentWithImageReferences, rememberImages } from "./resources.ts";
+import type { toolResultsContent } from "./delivery.ts";
+import type { AssistantMessage, Content } from "./host.ts";
+import {
+	contentWithImageReferences,
+	rememberImages,
+	resourceDescriptors,
+} from "./resources.ts";
 
 export const historyInput = z.object({
 	limit: z
@@ -35,26 +38,38 @@ export const historyInput = z.object({
 });
 
 export type HistoryRange = z.infer<typeof historyInput>;
-export type HistoryResult = ReturnType<typeof historyResult>;
+
+export interface HistoryResult {
+	count: number;
+	hasMore: boolean;
+	content: ReturnType<typeof toolResultsContent>;
+}
+
+export interface HistoryEntry {
+	id: string;
+	type: string;
+	message?: unknown;
+	customType?: string;
+	data?: unknown;
+}
 
 export const historyInstructions =
 	"When resuming work, read recent history to recover progress, then continue from the current request.";
 
 export function historyResult(
-	branch: SessionEntry[],
+	branch: readonly HistoryEntry[],
 	sessionId: string,
 	{ limit, before, after }: HistoryRange,
-) {
+): HistoryResult {
 	const start = after ? entryIndex(branch, after) + 1 : 0;
 	const end = before ? entryIndex(branch, before) : branch.length;
 	if (start > end) throw new Error("History after must precede before");
 	const entries = branch.slice(start, end).filter((entry) => {
 		switch (entry.type) {
-			case "message":
-				return (
-					entry.message.role !== "custom" ||
-					entry.message.customType !== "chappie.request"
-				);
+			case "message": {
+				const message = entry.message as { customType?: string };
+				return message.customType !== "chappie.request";
+			}
 			case "custom_message":
 				return entry.customType !== "chappie.request";
 			case "custom":
@@ -72,10 +87,9 @@ export function historyResult(
 	const selected = after ? entries.slice(0, limit) : entries.slice(-limit);
 	const sources = new Map<string, Source>();
 	for (const entry of branch) {
-		if (entry.type !== "message" || entry.message.role !== "assistant")
-			continue;
+		if (entry.type !== "message") continue;
 		const message = entry.message as AssistantMessage;
-		if (!message.chappie) continue;
+		if (message.role !== "assistant" || !message.chappie) continue;
 		for (const block of message.content) {
 			if (block.type === "toolCall") sources.set(block.id, message.chappie);
 		}
@@ -89,7 +103,7 @@ export function historyResult(
 	};
 }
 
-function entryIndex(entries: SessionEntry[], id: string): number {
+function entryIndex(entries: readonly HistoryEntry[], id: string): number {
 	const index = entries.findIndex((entry) => entry.id === id);
 	if (index === -1)
 		throw new Error(`History entry ${id} is not on the current branch`);
@@ -97,40 +111,49 @@ function entryIndex(entries: SessionEntry[], id: string): number {
 }
 
 function entryContent(
-	entry: SessionEntry,
+	entry: HistoryEntry,
 	sessionId: string,
 	sources: Map<string, Source>,
-): ReturnType<typeof toolResultsContent> {
+): HistoryResult["content"] {
 	const record: Record<string, unknown> = { ...entry };
-	const message = entry.type === "message" ? entry.message : entry;
-	if (!("content" in message)) {
+	const message = (entry.type === "message" ? entry.message : entry) as Record<
+		string,
+		unknown
+	>;
+	if (!("content" in message))
 		return [{ type: "text", text: JSON.stringify(record) }];
-	}
 	const { content, ...metadata } = message;
 	if (entry.type === "message") {
 		const source =
-			entry.message.role === "toolResult"
-				? sources.get(entry.message.toolCallId)
+			message.role === "toolResult" && typeof message.toolCallId === "string"
+				? sources.get(message.toolCallId)
 				: undefined;
 		record.message = { ...metadata, ...(source ? { chappie: source } : {}) };
 	} else delete record.content;
-	const header = { type: "text" as const, text: JSON.stringify(record) };
-	if (entry.type === "message" && entry.message.role === "toolResult") {
-		rememberImages(sessionId, entry.message.content);
-		return [header, ...toolResultsContent([entry.message], sessionId)];
-	}
-	const blocks =
-		typeof content === "string"
-			? [{ type: "text" as const, text: content }]
-			: content;
-	return [
-		header,
-		...blocks.flatMap((block): ReturnType<typeof toolResultsContent> => {
-			if (block.type === "text" || block.type === "image") {
-				rememberImages(sessionId, [block]);
-				return contentWithImageReferences(sessionId, [block]);
-			}
-			return [{ type: "text", text: JSON.stringify(block) }];
-		}),
+	const result: HistoryResult["content"] = [
+		{ type: "text", text: JSON.stringify(record) },
 	];
+	const blocks: unknown[] =
+		typeof content === "string"
+			? [{ type: "text", text: content }]
+			: Array.isArray(content)
+				? content
+				: [];
+	for (const value of blocks) {
+		if (
+			value &&
+			typeof value === "object" &&
+			"type" in value &&
+			(value.type === "text" || value.type === "image")
+		) {
+			const block = value as Content;
+			rememberImages(sessionId, [block]);
+			result.push(...contentWithImageReferences(sessionId, [block]));
+		} else {
+			result.push({ type: "text", text: JSON.stringify(value) });
+		}
+	}
+	for (const resource of resourceDescriptors(message.details))
+		result.push({ type: "resource_link", ...resource });
+	return result;
 }

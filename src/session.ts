@@ -730,7 +730,15 @@ export class Session {
 	complete(message: unknown, toolResults: ToolResultMessage[]): void {
 		this.historyChanged();
 		const active = this.#active;
-		if (!active || message !== active.message) return;
+		const origin = (message as Partial<AssistantMessage> | undefined)?.chappie;
+		if (
+			!active ||
+			(message !== active.message &&
+				(!origin ||
+					origin.clientId !== active.request.clientId ||
+					origin.requestId !== active.request.requestId))
+		)
+			return;
 		const sessionId = active.session.id;
 		for (const result of toolResults) {
 			rememberImages(sessionId, result.content);

@@ -10,6 +10,12 @@ Install the Pi package:
 pi install npm:@zetaloop/chappie
 ```
 
+OMP installs the same package through its plugin manager:
+
+```sh
+omp plugin install @zetaloop/chappie
+```
+
 Install the broker:
 
 ```sh

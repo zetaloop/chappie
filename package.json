@@ -6,6 +6,9 @@
 		"@earendil-works/pi-ai": "^0.85.1",
 		"@earendil-works/pi-coding-agent": "^0.85.1",
 		"@earendil-works/pi-tui": "^0.85.1",
+		"@oh-my-pi/pi-ai": "^18.3.0",
+		"@oh-my-pi/pi-coding-agent": "^18.3.0",
+		"@oh-my-pi/pi-utils": "^18.3.0",
 		"@types/node": "^26.5.1",
 		"typebox": "^1.3.30",
 		"typescript": "^7.0.2"
@@ -38,6 +41,9 @@
 		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",
 		"@earendil-works/pi-tui": "*",
+		"@oh-my-pi/pi-ai": "*",
+		"@oh-my-pi/pi-coding-agent": "*",
+		"@oh-my-pi/pi-utils": "*",
 		"typebox": "*"
 	},
 	"dependencies": {
@@ -71,6 +77,20 @@
 		},
 		"typebox": {
 			"optional": true
+		},
+		"@oh-my-pi/pi-ai": {
+			"optional": true
+		},
+		"@oh-my-pi/pi-coding-agent": {
+			"optional": true
+		},
+		"@oh-my-pi/pi-utils": {
+			"optional": true
 		}
+	},
+	"omp": {
+		"extensions": [
+			"./dist/omp.js"
+		]
 	}
 }
