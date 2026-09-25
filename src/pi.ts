@@ -1,7 +1,16 @@
 import { access } from "node:fs/promises";
 import { hostname } from "node:os";
 import { resolve } from "node:path";
-import type { UserMessage } from "@earendil-works/pi-ai";
+import {
+	type Api,
+	type AssistantMessage,
+	type Context,
+	createAssistantMessageEventStream,
+	createProvider,
+	type Model,
+	type StreamOptions,
+	type UserMessage,
+} from "@earendil-works/pi-ai";
 import {
 	type ExtensionAPI,
 	type ExtensionContext,
@@ -15,10 +24,10 @@ import * as z from "zod";
 import type { Activity } from "./activity.ts";
 import { readConfig } from "./config.ts";
 import { historyResult } from "./history.ts";
-import type { Host } from "./host.ts";
+import type { Host, Output } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
 import { localDeliveries, localTools } from "./local.ts";
-import { createChappieProvider } from "./provider.ts";
+import { createMessage, ProviderOutput } from "./provider.ts";
 import { Session } from "./session.ts";
 import { transfer } from "./transfer.ts";
 
@@ -230,4 +239,53 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 		},
 	});
 	pi.registerProvider(createChappieProvider((output) => session.start(output)));
+}
+
+function createChappieProvider(start: (output: Output) => Promise<void>) {
+	const stream = (
+		model: Model<Api>,
+		_context: Context,
+		options?: StreamOptions,
+	) => {
+		const native = createAssistantMessageEventStream();
+		const message = createMessage<AssistantMessage["stopReason"]>(
+			model,
+			"pending",
+		);
+		const output = new ProviderOutput(message, native, options?.signal);
+		if (!output.closed) {
+			queueMicrotask(() => {
+				void start(output).catch((error: unknown) => output.fail(error));
+			});
+		}
+		return native;
+	};
+
+	return createProvider({
+		id: "chappie",
+		name: "Chappie",
+		auth: {
+			apiKey: {
+				name: "Local Chappie",
+				async resolve() {
+					return { auth: { headers: {} }, source: "local" };
+				},
+			},
+		},
+		models: [
+			{
+				id: "chatgpt",
+				name: "ChatGPT",
+				api: "chappie",
+				provider: "chappie",
+				baseUrl: "",
+				reasoning: false,
+				input: ["text", "image"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 1_000_000_000,
+				maxTokens: 1_000_000_000,
+			},
+		],
+		api: { stream, streamSimple: stream },
+	});
 }

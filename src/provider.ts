@@ -1,44 +1,69 @@
-import {
-	type Api,
-	type AssistantMessage,
-	type AssistantMessageEventStream,
-	type Context,
-	createAssistantMessageEventStream,
-	createProvider,
-	type Model,
-	type StreamOptions,
-	type ToolCall,
-} from "@earendil-works/pi-ai";
-import type { Source } from "./activity.ts";
+import type { AssistantMessage, TextContent, ToolCall } from "./host.ts";
 
-export class ProviderOutput {
-	readonly stream: AssistantMessageEventStream;
-	readonly message: AssistantMessage & { chappie?: Source };
+export interface StreamMessage extends AssistantMessage {
+	stopReason: string;
+	errorMessage?: string;
+}
+
+export type StreamEvent<M> =
+	| { type: "start"; partial: M }
+	| { type: "text_start" | "toolcall_start"; contentIndex: number; partial: M }
+	| {
+			type: "text_delta" | "toolcall_delta";
+			contentIndex: number;
+			delta: string;
+			partial: M;
+	  }
+	| { type: "text_end"; contentIndex: number; content: string; partial: M }
+	| {
+			type: "toolcall_end";
+			contentIndex: number;
+			toolCall: ToolCall;
+			partial: M;
+	  }
+	| { type: "done"; reason: "stop" | "toolUse"; message: M }
+	| { type: "error"; reason: "error" | "aborted"; error: M };
+
+interface Stream<M> {
+	push(event: StreamEvent<M>): void;
+	end(): void;
+}
+
+export function createMessage<Reason extends string>(
+	model: { api: string; provider: string; id: string },
+	stopReason: Reason,
+) {
+	return {
+		role: "assistant" as const,
+		content: [] as (TextContent | ToolCall)[],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason,
+		timestamp: Date.now(),
+	};
+}
+
+export class ProviderOutput<M extends StreamMessage> {
+	readonly stream: Stream<M>;
+	readonly message: M;
 	readonly finished: Promise<void>;
 	#resolveFinished: () => void;
 	#removeAbort?: () => void;
 	#started = false;
 	#closed = false;
 
-	constructor(model: Model<Api>, signal?: AbortSignal) {
-		this.stream = createAssistantMessageEventStream();
-		this.message = {
-			role: "assistant",
-			content: [],
-			api: model.api,
-			provider: model.provider,
-			model: model.id,
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "pending",
-			timestamp: Date.now(),
-		};
+	constructor(message: M, stream: Stream<M>, signal?: AbortSignal) {
+		this.stream = stream;
+		this.message = message;
 		const completion = Promise.withResolvers<void>();
 		this.finished = completion.promise;
 		this.#resolveFinished = completion.resolve;
@@ -133,7 +158,7 @@ export class ProviderOutput {
 			error instanceof Error ? error.message : String(error);
 		this.stream.push({
 			type: "error",
-			reason: this.message.stopReason,
+			reason: aborted ? "aborted" : "error",
 			error: this.message,
 		});
 		this.#finish();
@@ -145,50 +170,4 @@ export class ProviderOutput {
 		this.stream.end();
 		this.#resolveFinished();
 	}
-}
-
-export function createChappieProvider(
-	start: (output: ProviderOutput) => Promise<void>,
-) {
-	const stream = (
-		model: Model<Api>,
-		_context: Context,
-		options?: StreamOptions,
-	) => {
-		const output = new ProviderOutput(model, options?.signal);
-		if (!output.closed) {
-			queueMicrotask(() => {
-				void start(output).catch((error: unknown) => output.fail(error));
-			});
-		}
-		return output.stream;
-	};
-
-	return createProvider({
-		id: "chappie",
-		name: "Chappie",
-		auth: {
-			apiKey: {
-				name: "Local Chappie",
-				async resolve() {
-					return { auth: { headers: {} }, source: "local" };
-				},
-			},
-		},
-		models: [
-			{
-				id: "chatgpt",
-				name: "ChatGPT",
-				api: "chappie",
-				provider: "chappie",
-				baseUrl: "",
-				reasoning: false,
-				input: ["text", "image"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: 1_000_000_000,
-				maxTokens: 1_000_000_000,
-			},
-		],
-		api: { stream, streamSimple: stream },
-	});
 }

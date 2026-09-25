@@ -2,7 +2,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import * as z from "zod";
 import type { Activity, Source } from "./activity.ts";
 import { toolResultsContent } from "./delivery.ts";
-import type { ProviderOutput } from "./provider.ts";
+import type { AssistantMessage } from "./host.ts";
 import { contentWithImageReferences, rememberImages } from "./resources.ts";
 
 export const historyInput = z.object({
@@ -74,7 +74,7 @@ export function historyResult(
 	for (const entry of branch) {
 		if (entry.type !== "message" || entry.message.role !== "assistant")
 			continue;
-		const message = entry.message as ProviderOutput["message"];
+		const message = entry.message as AssistantMessage;
 		if (!message.chappie) continue;
 		for (const block of message.content) {
 			if (block.type === "toolCall") sources.set(block.id, message.chappie);
