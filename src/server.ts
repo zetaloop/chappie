@@ -4,6 +4,7 @@ import * as z from "zod";
 import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
 import { deliveryContent } from "./delivery.ts";
+import { transferDescription, transferInput } from "./files.ts";
 import { historyInput } from "./history.ts";
 import {
 	answerContent,
@@ -12,12 +13,7 @@ import {
 	questionInstructions,
 	questionOutput,
 } from "./questions.ts";
-import {
-	directTools,
-	inputContent,
-	type ToolInput,
-	toolResult,
-} from "./tools.ts";
+import { inputContent, toolResult } from "./tools.ts";
 
 const instructions = readFileSync(
 	new URL("./instructions.md", import.meta.url),
@@ -367,47 +363,44 @@ export function createServer(broker: Broker): McpServer {
 		}),
 	);
 
-	for (const tool of directTools) {
-		server.registerTool(
-			tool.name,
-			{
-				title: tool.name,
-				description: tool.description,
-				outputSchema,
-				inputSchema: tool.inputSchema,
-				annotations: toolAnnotations,
-				...(tool.fileParams
-					? { _meta: { "openai/fileParams": tool.fileParams } }
-					: {}),
-			},
-			handle(async (args, context) => {
-				const input = { ...args } as Record<string, unknown> & {
-					sessionId?: string;
-				};
-				const sessionId = input.sessionId;
-				delete input.sessionId;
-				const calls: ToolInput[] = [{ name: tool.name, arguments: input }];
-				const result = await broker.call(
-					requireChatId(context),
-					sessionId,
-					calls,
-					context.mcpReq._meta?.["otunnel/requestId"],
-					context.mcpReq.signal,
-				);
-				return finishResult(
-					broker,
-					context,
-					toolResult(
-						result.toolResults,
-						result.sessionId,
-						result.cwd,
-						result.inputs,
-						result.initialization,
+	server.registerTool(
+		"transfer",
+		{
+			title: "Transfer files",
+			description: transferDescription,
+			outputSchema,
+			inputSchema: transferInput.extend({
+				sessionId: z
+					.string()
+					.optional()
+					.describe(
+						"Session for this operation; defaults to this chat's session",
 					),
-				);
 			}),
-		);
-	}
+			annotations: toolAnnotations,
+			_meta: { "openai/fileParams": ["files"] },
+		},
+		handle(async ({ sessionId, ...input }, context) => {
+			const result = await broker.call(
+				requireChatId(context),
+				sessionId,
+				[{ name: "transfer", arguments: input }],
+				context.mcpReq._meta?.["otunnel/requestId"],
+				context.mcpReq.signal,
+			);
+			return finishResult(
+				broker,
+				context,
+				toolResult(
+					result.toolResults,
+					result.sessionId,
+					result.cwd,
+					result.inputs,
+					result.initialization,
+				),
+			);
+		}),
+	);
 
 	server.registerTool(
 		"history",

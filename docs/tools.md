@@ -10,10 +10,6 @@
 | `ask` | Create a persistent question in ChatGPT. |
 | `ask_assert` | Confirm that an `ask` widget loaded. |
 | `call` | Run one or more Pi tools as one native batch. |
-| `read` | Read local text or images. |
-| `bash` | Run a shell command. |
-| `edit` | Apply text replacements. |
-| `write` | Write text to a file. |
 | `transfer` | Move files between ChatGPT and Pi, copy between Pi sessions, or export a Pi image. |
 
 ## Sessions
@@ -52,7 +48,7 @@ The executing assistant uses `chat` to share progress and completion in Pi. When
 
 ChatGPT truncates tool responses exceeding 10,000 tokens.
 
-`read`, `bash`, `edit`, `write`, and `transfer` are available directly. `init` includes a short catalog of the active Pi tools; use `tools` for their complete definitions and `call` to invoke extension tools.
+`init` includes a short catalog of the active Pi tools; use `tools` for their complete definitions and `call` to invoke them. `transfer` handles file exchange.
 
 For example:
 

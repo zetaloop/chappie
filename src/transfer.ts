@@ -19,6 +19,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import * as z from "zod";
+import {
+	type TransferInput,
+	transferDescription,
+	transferInput,
+} from "./files.ts";
 import {
 	describeResource,
 	type ResourceDescriptor,
@@ -32,45 +38,12 @@ export interface TransferDetails {
 	to?: { sessionId: string; device: string };
 }
 
-export const transferFile = Type.Object({
-	file_id: Type.String({ description: "Host file identifier" }),
-	download_url: Type.String({ description: "Host-provided download URL" }),
-	file_name: Type.Optional(Type.String()),
-	mime_type: Type.Optional(Type.String()),
-});
-
-const parameters = Type.Object({
-	paths: Type.Array(Type.String(), {
-		minItems: 1,
-		description:
-			"Pi destinations for import; Pi source paths or chappie:// image references for export or session copies",
-	}),
-	files: Type.Optional(
-		Type.Array(transferFile, {
-			minItems: 1,
-			description:
-				"ChatGPT files paired with paths in order; omit for Pi sources",
-		}),
-	),
-	to: Type.Optional(
-		Type.Object({
-			sessionId: Type.String({ description: "Destination Pi session" }),
-			paths: Type.Array(Type.String(), {
-				minItems: 1,
-				description: "Destinations paired with source paths in order",
-			}),
-		}),
-	),
-	overwrite: Type.Optional(
-		Type.Boolean({ description: "Overwrite existing target files" }),
-	),
-});
+const parameters = Type.Unsafe<TransferInput>(z.toJSONSchema(transferInput));
 
 export const transfer = {
 	name: "transfer",
 	label: "transfer",
-	description:
-		"Copy ChatGPT files into Pi paths with files, or copy Pi files to another session with to. Otherwise, return resource links for Pi paths or Chappie image references.",
+	description: transferDescription,
 	parameters,
 	async execute(
 		_id,

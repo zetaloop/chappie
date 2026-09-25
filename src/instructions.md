@@ -8,7 +8,7 @@ Prefer ChatGPT's web search, connectors, and cloud tools for remote research and
 
 Respond promptly to new Pi user input with a substantive reply, interaction, or immediate action that makes the response apparent in Pi before continuing lengthy work. Address inputs received together in one response; an immediate answer or result serves as its own acknowledgment.
 
-When executing work, use chat for assistant messages in Pi, including progress, explanations, and completion results. Use read, bash, edit, write, and transfer directly. init.tools is a Pi tool catalog; tools returns full definitions for call. Invoke Chappie's MCP tools directly. Each call array is one native Pi batch; separate calls are separate Pi turns. For Pi interaction, call an installed interactive tool.
+When executing work, use chat for assistant messages in Pi, including progress, explanations, and completion results. init.tools is a session tool catalog; tools returns full definitions for call. Use call for native tools and transfer for files. Invoke Chappie's MCP tools directly. Each call array is one native Pi batch; separate calls are separate Pi turns. For Pi interaction, call an installed interactive tool.
 
 transfer pairs files from ChatGPT with Pi destination paths in order. To copy between Pi sessions, use paths on the selected source session and to: { sessionId, paths } for the destination. Each side resolves paths in its own working directory. Omit files and to to return resource links for Pi paths or chappie:// image references. Relative paths use the Pi working directory; overwrite: true replaces existing targets. The host may request confirmation when retrieving exported bytes.
 

@@ -1,38 +1,13 @@
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
-import {
-	createBashToolDefinition,
-	createEditToolDefinition,
-	createReadToolDefinition,
-	createWriteToolDefinition,
-} from "@earendil-works/pi-coding-agent";
-import { fromJsonSchema } from "@modelcontextprotocol/server";
 import type { Initialization } from "./broker.ts";
 import { toolResultsContent } from "./delivery.ts";
 import type { SessionInput } from "./ipc.ts";
 import { contentWithImageReferences } from "./resources.ts";
-import { transfer } from "./transfer.ts";
 
 export interface ToolInput {
 	name: string;
 	arguments: Record<string, unknown>;
 }
-
-const definitions = [
-	createReadToolDefinition("."),
-	createBashToolDefinition("."),
-	createEditToolDefinition("."),
-	createWriteToolDefinition("."),
-	transfer,
-];
-
-export const directTools = definitions.map((definition) => ({
-	name: definition.name,
-	description: definition.description,
-	inputSchema: fromJsonSchema<Record<string, unknown>>(
-		withSessionId(definition.parameters as unknown as Record<string, unknown>),
-	),
-	fileParams: definition.name === "transfer" ? ["files"] : undefined,
-}));
 
 export function toolResult(
 	toolResults: ToolResultMessage[],
@@ -68,24 +43,4 @@ export function inputContent(inputs: SessionInput[]) {
 			? [{ type: "text" as const, text: message.content }]
 			: contentWithImageReferences(sessionId, message.content)),
 	]);
-}
-
-function withSessionId(
-	schema: Record<string, unknown>,
-): Record<string, unknown> {
-	const copy = structuredClone(schema) as {
-		properties?: Record<string, unknown>;
-	};
-	return {
-		...copy,
-		properties: {
-			...copy.properties,
-			sessionId: {
-				type: "string",
-				description:
-					"Pi session for this operation; becomes the default if none is set",
-			},
-		},
-		additionalProperties: false,
-	};
 }
