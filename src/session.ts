@@ -138,6 +138,19 @@ export class Session {
 		};
 	}
 
+	async resource(uri: string, signal?: AbortSignal) {
+		signal?.throwIfAborted();
+		const sessionId = resourceSessionId(uri);
+		if (sessionId === this.id) return readSessionResource(sessionId, uri);
+		const result = await this.#request(
+			{ type: "readResource", sessionId, uri },
+			signal,
+		);
+		if (!("resource" in result))
+			throw new Error("Session returned no resource");
+		return result.resource;
+	}
+
 	async history(range: HistoryRange, sessionId?: string, signal?: AbortSignal) {
 		if (!sessionId || sessionId === this.id) return this.#host.history(range);
 		const self = this.#host.describe();
@@ -773,6 +786,8 @@ export class Session {
 			};
 			this.#deliveries.set(delivery.id, delivery);
 			void this.#flushDeliveries().catch(() => {});
+		} else if (active.message.errorMessage) {
+			await this.#sendError(active.request.id, active.message.errorMessage);
 		} else {
 			await this.#connection?.send({
 				type: "result",

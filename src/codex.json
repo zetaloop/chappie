@@ -1,0 +1,23 @@
+{
+	"models": [
+		{
+			"slug": "chatgpt",
+			"display_name": "ChatGPT",
+			"description": "ChatGPT through Chappie",
+			"model_messages": { "instructions_template": "" },
+			"supported_reasoning_levels": [],
+			"shell_type": "unified_exec",
+			"visibility": "list",
+			"supported_in_api": true,
+			"priority": 0,
+			"support_verbosity": false,
+			"apply_patch_tool_type": "freeform",
+			"truncation_policy": { "mode": "tokens", "limit": 10000 },
+			"context_window": 1000000000,
+			"max_context_window": 1000000000,
+			"experimental_supported_tools": [],
+			"input_modalities": ["text", "image"],
+			"tool_mode": "direct"
+		}
+	]
+}

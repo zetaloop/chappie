@@ -39,6 +39,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
+	errorMessage?: string;
 	content: (Content | ToolCall | { type: "thinking"; thinking: string })[];
 	chappie?: Source;
 }
