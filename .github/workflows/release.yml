@@ -46,4 +46,6 @@ jobs:
           fi
           version=$(jq -r .version package.json)
           test "$tag" = "v$version"
-          gh release create "$tag" zetaloop-chappie-*.tgz --verify-tag --draft --title "$tag" --generate-notes
+          prerelease=()
+          if [[ "$version" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$tag" zetaloop-chappie-*.tgz --verify-tag --draft --title "$tag" --generate-notes "${prerelease[@]}"
