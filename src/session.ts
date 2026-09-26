@@ -381,7 +381,9 @@ export class Session {
 		}
 	}
 
-	#description(): SessionDescription {
+	#description(sessionId = this.#sessionId): SessionDescription {
+		if (sessionId !== this.#sessionId)
+			throw new Error("The requested session is no longer active");
 		return { ...this.#host.describe(), status: this.#status };
 	}
 
@@ -424,12 +426,15 @@ export class Session {
 				}
 				break;
 			case "inspect":
-				await this.#reply(message.id, message.sessionId, async () => {
+				await this.#reply(message.id, async () => {
 					const { globalAgents, ...environment } = await this.#host.inspect();
 					return {
 						type: "result",
 						id: message.id,
-						inspection: { session: this.#description(), ...environment },
+						inspection: {
+							session: this.#description(message.sessionId),
+							...environment,
+						},
 						inputs: this.#inputs(),
 						...(globalAgents ? { globalAgents } : {}),
 					};
@@ -444,7 +449,7 @@ export class Session {
 				}
 				break;
 			case "readResource":
-				await this.#reply(message.id, message.sessionId, async () => ({
+				await this.#reply(message.id, async () => ({
 					type: "result",
 					id: message.id,
 					resource: await readSessionResource(
@@ -455,7 +460,8 @@ export class Session {
 				}));
 				break;
 			case "export":
-				await this.#reply(message.id, message.sessionId, async () => {
+				await this.#reply(message.id, async () => {
+					this.#description(message.sessionId);
 					const result = await this.transfer({ paths: message.paths });
 					return { type: "result", id: message.id, transfer: result.details };
 				});
@@ -463,8 +469,8 @@ export class Session {
 			case "copy": {
 				const controller = new AbortController();
 				this.#copies.set(message.id, controller);
-				void this.#reply(message.id, message.sessionId, async () => {
-					const context = this.#host.describe();
+				void this.#reply(message.id, async () => {
+					const context = this.#description(message.sessionId);
 					const files = await copyFiles(
 						message.paths,
 						message.resources,
@@ -859,15 +865,11 @@ export class Session {
 
 	async #reply(
 		id: number,
-		sessionId: string,
 		response: () =>
 			| Parameters<IpcClient["send"]>[0]
 			| Promise<Parameters<IpcClient["send"]>[0]>,
 	): Promise<void> {
 		try {
-			if (sessionId !== this.#sessionId) {
-				throw new Error("The requested session is no longer active");
-			}
 			await this.#connection?.send(await response());
 		} catch (error) {
 			await this.#sendError(

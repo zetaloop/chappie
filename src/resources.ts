@@ -114,7 +114,7 @@ export function describeResource(
 ): ResourceDescriptor {
 	const parsed = parseResourceUri(uri);
 	if (parsed.sessionId !== sessionId) {
-		throw new Error("The resource belongs to another Pi session");
+		throw new Error("The resource belongs to another session");
 	}
 	const entry = store(sessionId).get(uri);
 	if (!entry) throw new Error(`Unknown Chappie resource: ${uri}`);
