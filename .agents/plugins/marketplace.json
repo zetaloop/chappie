@@ -1,0 +1,9 @@
+{
+	"name": "chappie",
+	"plugins": [
+		{
+			"name": "chappie",
+			"source": { "source": "npm", "package": "@zetaloop/chappie" }
+		}
+	]
+}

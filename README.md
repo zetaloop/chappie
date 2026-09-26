@@ -1,34 +1,25 @@
 # Chappie
 
-Use ChatGPT to work through [Pi](https://github.com/earendil-works/pi): edit local files, run commands, call Pi extensions, exchange files and images, and move between sessions on one or more devices.
+Use ChatGPT through Pi, Oh My Pi, OpenCode, or Codex. Run their native tools, work with local files, exchange images and artifacts, and move between sessions across devices.
 
 ## Setup
 
-Install the Pi package:
+Install Chappie in the agent:
 
-```sh
-pi install npm:@zetaloop/chappie
-```
+| Agent | Install |
+|---|---|
+| [Pi](https://github.com/earendil-works/pi) | `pi install npm:@zetaloop/chappie` |
+| [Oh My Pi](https://github.com/can1357/oh-my-pi) | `omp plugin install @zetaloop/chappie` |
+| [OpenCode](https://github.com/anomalyco/opencode) | `opencode plugin @zetaloop/chappie` |
+| [Codex](https://github.com/openai/codex) | See [Codex](#codex) below. |
 
-OMP installs the same package through its plugin manager:
-
-```sh
-omp plugin install @zetaloop/chappie
-```
-
-OpenCode loads Chappie as a server plugin:
-
-```sh
-opencode plugin @zetaloop/chappie
-```
-
-Install the broker:
+Install the broker on the device running the tunnel:
 
 ```sh
 pnpm add -g @zetaloop/chappie
 ```
 
-Run Chappie as the MCP server managed by [otunnel](https://github.com/zetaloop/otunnel):
+Use `chappie` as the MCP command in [otunnel](https://github.com/zetaloop/otunnel):
 
 ```yaml
 mcp:
@@ -37,48 +28,72 @@ mcp:
       command: chappie
 ```
 
-Add the tunnel as a developer-mode app in ChatGPT, then start Pi in a project:
+The same executable is available through `pnpx -y @zetaloop/chappie`.
+
+Add the tunnel as a developer-mode app in ChatGPT. Select `chappie/chatgpt` in Pi, OMP, or OpenCode, or configure Codex as described below.
+
+Call `init` from ChatGPT. `sessions` finds connected sessions by agent, device, directory, and name. An existing task can be resumed with its session ID from another chat or branch.
+
+### Codex
+
+Install the plugin from this repository's marketplace:
 
 ```sh
-pi --provider chappie --model chatgpt
+codex plugin marketplace add zetaloop/chappie
+codex plugin add chappie@chappie
 ```
 
-Call `init` from ChatGPT to connect the conversation to Pi. A conversation can resume an existing task with its Pi session ID, while `sessions` can find connected sessions by device, directory, or name.
+Save the [model catalog](src/codex.json) locally and reference its absolute path in Codex's user configuration, `~/.codex/config.toml` or `$CODEX_HOME/config.toml`:
+
+```toml
+model_provider = "chappie"
+model = "chatgpt"
+model_catalog_json = "/absolute/path/to/codex.json"
+
+[model_providers.chappie]
+name = "Chappie"
+base_url = "http://127.0.0.1:24275/v1"
+
+[mcp_servers.chappie]
+command = "pnpx"
+args = ["-y", "@zetaloop/chappie", "codex", "--chatgpt"]
+env_vars = ["CODEX_HOME"]
+```
+
+Restart the Codex app after changing its provider configuration. The plugin starts its local Responses service and connects to Codex's app-server.
 
 ## Usage
 
-Chappie exposes every active Pi tool through `tools` and `call`. `chat` sends an assistant message to Pi, Pi input accompanies later tool results, and `transfer` moves files between ChatGPT and Pi or between connected devices. `history` reads recent Pi messages and activity with timestamps. `ask` can present a persistent question in ChatGPT when webpage questions are enabled.
+`tools` returns the selected session's native tool definitions; `call` executes them. `chat` sends an assistant message, and local user input accompanies later results. `history` reads the agent's transcript, `transfer` moves files, and `ask` presents a question in ChatGPT.
 
-See the [tool guide](docs/tools.md) for session selection, history, Pi tools, webpage questions, and file transfer.
+See the [tool guide](docs/tools.md) for parameters and examples.
 
 ## Configuration
 
-`~/.chappie/config.json` configures Chappie.
+Settings live in `~/.chappie/config.json`. Local connections use the defaults when this file is absent.
 
-A broker can accept Pi sessions from other devices on the local network:
+A broker accepts sessions from other devices with:
 
 ```json
 { "listen": true }
 ```
 
-Remote Pi sessions connect through the broker device's mDNS name:
+On another device, point the agent's plugin to that broker:
 
 ```json
 { "connect": "<broker>.local" }
 ```
 
-The default port is `24274`. Set `listen` to a port number or append `:port` to `connect` to use another one. Only the broker device runs otunnel; local and remote sessions appear in the same session list.
+The default TCP port is `24274`. Set `listen` to a port number or append `:port` to `connect` to change it. All connected devices use the same session list and file transfer service.
 
-Set `ask` to `false` to disable webpage questions.
+Set `ask` to `false` to disable ChatGPT question widgets.
 
-Closely spaced initializations from the same ChatGPT conversation receive guidance to observe the ongoing work through `history` and explain its results. See [participation](docs/tools.md#participation).
-
-Local models can access Chappie sessions with `localTools`:
+Ordinary models can access Chappie sessions with:
 
 ```json
-{
-  "localTools": true
-}
+{ "localTools": true }
 ```
 
-This provides `sessions`, `remote_tools`, `remote_call`, `history`, and `transfer`. Local requests can inspect and exchange files with Chappie sessions on other devices.
+This enables `sessions`, `remote_tools`, `remote_call`, `history`, and `transfer` for local collaboration. `history` can read the current session; remote operations name a session using the Chappie provider.
+
+Codex uses port `24275` for its local Responses service and the default app-server control socket. Use `codex.port` to change the Responses port and `codex.appServer` for an explicit `unix://<path>` or WebSocket URL. Set `model_providers.chappie.base_url` in Codex to match the Responses port.

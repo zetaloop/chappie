@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
 import { Duplex, Readable, Writable } from "node:stream";
+import { spawn } from "cross-spawn";
 import WebSocket from "ws";
 import packageJson from "../package.json" with { type: "json" };
 

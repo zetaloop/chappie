@@ -1,0 +1,12 @@
+{
+	"name": "chappie",
+	"description": "Connect ChatGPT and local agents across devices",
+	"mcpServers": {
+		"chappie": {
+			"command": "node",
+			"args": ["dist/cli.js", "codex"],
+			"env_vars": ["CODEX_HOME"],
+			"cwd": "."
+		}
+	}
+}

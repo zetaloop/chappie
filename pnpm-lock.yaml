@@ -196,12 +196,18 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.18.32
         version: 1.18.32
+      '@types/cross-spawn':
+        specifier: ^6.0.6
+        version: 6.0.6
       '@types/node':
         specifier: ^26.5.1
         version: 26.5.1
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+      cross-spawn:
+        specifier: ^7.0.6
+        version: 7.0.6
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -1328,6 +1334,9 @@ packages:
 
   '@tailwindcss/node@4.3.3':
     resolution: {integrity: sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg==}
+
+  '@types/cross-spawn@6.0.6':
+    resolution: {integrity: sha512-fXRhhUkG4H3TQk5dBhQ7m/JDdSNHKwR2BBia62lhwEIq9xGiQKLxd6LymNhn47SjXhsUEPmxi+PKw2OkW4LLjA==}
 
   '@types/node@26.5.1':
     resolution: {integrity: sha512-CzNm2FezW4VR/LjG6yUdiEgLE/rAQ9Slj5gCu/C2VrdcW7I0ahNZ8DRbHT7zOZ6r3ONgd/bsQIeSaoDGrd1C6g==}
@@ -3211,6 +3220,10 @@ snapshots:
       magic-string: 0.30.21
       source-map-js: 1.2.1
       tailwindcss: 4.3.3
+
+  '@types/cross-spawn@6.0.6':
+    dependencies:
+      '@types/node': 26.5.1
 
   '@types/node@26.5.1':
     dependencies:
