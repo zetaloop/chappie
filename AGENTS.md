@@ -1,25 +1,23 @@
 # Chappie
 
-Chappie is a single TypeScript Pi package that connects ChatGPT developer-mode tools to native Pi sessions.
+Chappie connects ChatGPT to native coding-agent sessions. One TypeScript package contains the broker CLI and integrations for Pi, Oh My Pi, OpenCode, and Codex.
 
 ## Architecture
 
-The package provides a `chappie` executable for the MCP broker over stdio and a Pi extension. An ordinary Pi process registers the `chappie/chatgpt` provider and connects its current session through `node:net`: locally through a Unix socket or Windows named pipe derived from Chappie's directory, or through TCP when `connect` targets another device.
+`Host` supplies native session data and execution callbacks. `Session` handles request ordering, provider output, input delivery, and file operations. Each adapter translates its host's events and messages into those shared interfaces.
 
-Chappie-provider sessions register as addressable targets. Ordinary models with `localTools` connect as requesters and use the same request routing. Resources are associated with their producing connection, including files exported by requesters.
+The broker manages ChatGPT conversation bindings, initialization participation, pending results, questions, and resource routing. Each `call` array becomes one native tool batch. Separate requests are ordered per session; different sessions execute independently. `chat` produces an assistant message and completes a native turn.
 
-The broker owns ChatGPT conversation bindings, initialization cooldowns, MCP request routing, deferred-result descriptors, and resource dispatch. The Pi extension owns provider output, native tool execution, session input, branch history, cancellation, and the bytes behind exported resources.
+Sessions using the Chappie provider register as addressable targets. Ordinary models with `localTools` connect as requesters. Their local tools use the same broker operations, with local history and files supplied by their host context.
 
-One MCP tool request becomes one native Pi tool batch. A `call` array requests Pi's native batch execution explicitly; Chappie does not combine separate MCP requests. Requests are ordered within a Pi session, while different sessions operate independently.
+Configuration and persisted broker state live in `~/.chappie`. Session connections use Unix sockets or Windows named pipes locally and TCP across devices. Files belong to the connection that produced their resource descriptors. Transfers reuse those connections, including when the source is an unregistered requester.
 
-`chat` completes one assistant turn. Remote work arriving while Pi is idle starts a new turn through an invisible custom control message that is removed from model context.
+Native transcripts remain in their host's storage. History returns native IDs and recorded timestamps through an independent request. Its cursor is separate from input and pending-result delivery.
 
-File bytes belong to the originating Pi session. Resource reads retain that ownership across conversation binding changes. Session-to-session copies use the existing broker connections so the devices only need to reach the broker.
-
-`state.json` under `~/.chappie` stores conversation bindings, questions, and interrupted-result descriptors. Initialization cooldowns live in broker memory and are scoped to a ChatGPT conversation and Pi session. They address duplicate execution bursts during initialization or resumption after host-side widget and file interactions.
-
-Native messages, tool results, and activity records stay in Pi's session transcript. History reads the current branch through an independent IPC request and returns original entry IDs and timestamps. Its response remains separate from input and pending-result delivery.
+Pi and OMP register native streaming providers. OpenCode registers a server plugin and AI SDK provider sharing a session map. The Codex plugin starts a local Responses service and joins native threads through app-server. Its control socket carries WebSocket traffic. The Codex MCP configuration invokes the same package by name and selects its Chappie-mode tool catalog.
 
 ## Development
 
-Use `pnpm format` and `pnpm check` during development. Version tags and manual release runs check the source and produce an npm package with a release draft. Publishing the draft runs the npm publishing workflow.
+Use `pnpm format`, `pnpm check`, and `pnpm build`. The build bundles runtime dependencies and leaves host SDKs external so adapters share the host's runtime instances.
+
+Version tags and manual release runs produce an npm archive and a release draft. Publishing the draft publishes that archive to npm.

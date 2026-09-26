@@ -30,6 +30,7 @@ const outputSchema = z.object({
 
 const questionTemplate = "ui://chappie/question.html";
 const questionSchema = outputSchema.extend({ question: questionOutput });
+// These hints reduce intermittent tool loss in ChatGPT developer mode.
 const toolAnnotations = {
 	readOnlyHint: true,
 	destructiveHint: false,

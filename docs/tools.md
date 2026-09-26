@@ -2,61 +2,35 @@
 
 | Tool | Purpose |
 |---|---|
-| `init` | Select this ChatGPT conversation's default Pi session and read its environment. |
-| `history` | Read the current Pi branch with timestamps and entry IDs. |
-| `sessions` | List connected Pi sessions and the current default. |
-| `tools` | Read full definitions of active Pi tools for `call`. |
-| `chat` | Send an assistant message to Pi. |
+| `sessions` | Find sessions by agent, device, directory, or name. |
+| `init` | Select this ChatGPT conversation's default session and read its environment. |
+| `tools` | Read the selected session's native tool definitions. |
+| `call` | Execute a native tool batch. |
+| `chat` | Send an assistant message and finish the native turn. |
+| `history` | Read the agent's transcript with entry IDs and timestamps. |
+| `transfer` | Exchange files and images with ChatGPT or another session. |
 | `ask` | Create a persistent question in ChatGPT. |
-| `ask_assert` | Confirm that an `ask` widget loaded. |
-| `call` | Run one or more Pi tools as one native batch. |
-| `transfer` | Move files between ChatGPT and Pi, copy between Pi sessions, or export a Pi image. |
+| `ask_assert` | Confirm that its widget loaded. |
 
 ## Sessions
 
-Call `init` at the start of local work. Without `sessionId`, it reuses the conversation's saved default or selects an online Pi session with no saved ChatGPT binding. Pass a Pi session ID to resume a specific task, including from another ChatGPT conversation or branch. Read recent `history` to recover progress before continuing the current task.
+`init` accepts a `sessionId` to resume a task, including from another ChatGPT conversation or branch. Read recent `history` to recover its progress. When `globalAgents` is present, its path identifies the host's global instruction file.
 
-When `globalAgents` is present, read and follow the instructions at `globalAgents.path` on the selected Pi session. Follow the participation guidance in `initialization.instructions`.
+Without `sessionId`, `init` reuses the saved default or selects an online session with no saved ChatGPT binding. The first execution tool can also establish a default. Once a default exists, another tool's `sessionId` selects only that operation's target; `init({ sessionId })` changes the default.
 
-`sessions` lists connected sessions with their ID, device, working directory, name, execution status, and binding count. The first execution tool call establishes the default using its `sessionId` or an online session with no saved bindings. Once a default exists, another tool's `sessionId` selects only that operation's target; `init({ sessionId })` changes the default.
+Several conversations can share a session, and one conversation can work with several sessions. An operation stays associated with the target selected when it started. Conversation bindings survive broker restarts.
 
-Several ChatGPT conversations can use the same Pi session. One conversation can also operate on several Pi sessions explicitly. Requests already assigned to a session continue there even if the conversation later changes its default.
+`sessions` returns IDs, agents, devices, working directories, names, models, execution status, and binding counts. A session registers while its Chappie provider is selected. Devices using `listen` and `connect` share this directory of sessions.
 
-Remote Pi sessions appear in the same list when they connect to a broker exposed through `listen` and `connect`. Their tools, global `AGENTS.md`, files, images, and Pi interfaces come from the remote device.
+## Native tools
 
-## History
-
-`history` reads the current branch of a Pi session. It uses the saved default or an explicit `sessionId`, independently of default-session selection.
+`init` includes a short tool catalog. `tools` returns full definitions, optionally selected by name:
 
 ```json
-{ "sessionId": "<session-id>", "limit": 20, "before": "<entry-id>" }
+{ "names": ["read", "bash"] }
 ```
 
-Omit `before` for the latest entries. Use `after` to read forward from an entry. Both fields can delimit a range, with the named entries outside the returned range. The default limit is 20 readable entries. Results follow branch order and contain each entry's original ID and timestamp. `hasMore` indicates additional entries in the requested direction.
-
-To follow progress, pass `after` with `wait: true`. Available entries return immediately; at the end of the branch, the request waits up to 30 seconds for new readable entries. A timeout returns an empty page. Reads with `before` return immediately. Cancellation, disconnection, or an invalidated branch cursor ends the request. Waiting for history leaves the session available for other requests.
-
-Set `observer: true` to read as an observer. New messages and work activity wake waiting readers; idle status alone does not indicate task completion.
-
-History includes saved messages, tool calls and results, summaries, images, file links, and work activity. Truncation notices and full-output paths are included so complete output can be read when needed. Reading history leaves new input and pending results available for normal delivery.
-
-## Participation
-
-The executing assistant uses `chat` to share progress and completion in Pi. When initialization directs an assistant to observe, it follows that work through `history` with `observer: true` and `wait: true`, thinks independently, and explains the recorded results in ChatGPT when the task is complete.
-
-## Pi tools
-
-ChatGPT truncates tool responses exceeding 10,000 tokens.
-
-`init` includes a short catalog of the active Pi tools; use `tools` for their complete definitions and `call` to invoke them. `transfer` handles file exchange.
-
-For example:
-
-```json
-{ "names": ["ask_user", "ctx_search"] }
-```
-
-A `call` array is one Pi tool batch:
+Names and parameters come from the selected agent. For example, a Pi session accepts this batch:
 
 ```json
 {
@@ -67,57 +41,43 @@ A `call` array is one Pi tool batch:
 }
 ```
 
-`call` also accepts `base64`, containing the UTF-8 JSON encoding of the same `calls` array. Supply one representation; `sessionId` stays outside the encoded array.
+A `calls` array executes as one native batch. Separate requests are ordered within a session; different sessions can execute independently. Tools retain their host's execution, interaction, and transcript behavior.
 
-Pi controls execution inside that batch. Separate requests run in order within one Pi session, while different Pi sessions can work independently. Extension tools retain their native Pi behavior, including interactive interfaces.
+`call` also accepts `base64`: the same `calls` array serialized as UTF-8 JSON and encoded as Base64. Supply either representation, with `sessionId` outside the encoded array.
 
-`chat` creates a normal assistant message in Pi:
+`chat` produces a normal assistant message and completes the native turn:
 
 ```json
 { "text": "Updated the parser and its callers." }
 ```
 
-Pi user input consumed during the work accompanies later Chappie results, including images.
+Local user input accompanies later results, including images. Completed output from an interrupted request can be delivered to its originating conversation with a later response.
 
-If a request is explicitly cancelled after local work has produced results, those results can accompany a later response to the originating ChatGPT conversation. Long-running local work is better run through the environment's persistent process facilities instead of occupying one tool request.
+## History
 
-The active model remains the current ChatGPT conversation. Starting another `chappie/chatgpt` agent inside Pi does not create another browser conversation; tools that need another model should use a separately configured provider.
-
-## Webpage questions
-
-When enabled, `ask` saves a question and requests a widget in ChatGPT, returning its ID immediately. Display depends on the host:
+`history` reads the native transcript using the saved default or an explicit `sessionId`:
 
 ```json
-{
-  "header": "Export format",
-  "question": "Which export format should the command use?",
-  "context": "Both preserve the required data.",
-  "options": [
-    { "title": "JSON", "description": "Convenient for programs.", "recommended": true },
-    { "title": "CSV", "description": "Convenient for spreadsheets." }
-  ]
-}
+{ "sessionId": "<session-id>", "limit": 20, "before": "<entry-id>" }
 ```
 
-Call `ask_assert` with the returned ID to confirm that the widget loaded:
+The default is the latest 20 readable entries. `before` pages backward and `after` pages forward; both can delimit a range. Named entries are excluded from that range. Results follow transcript order, with native IDs and recorded timestamps. `hasMore` indicates more entries in the requested direction.
 
-```json
-{ "questionId": "<question-id>" }
-```
+Use `after` with `wait: true` to follow progress. Available entries return immediately; at the end of the transcript the request waits up to 30 seconds, returning an empty page when no entries arrive. Reads with `before` return immediately.
 
-If the widget has not loaded within 10 seconds, `ask_assert` fails and saves the unanswered question as skipped. Use a Pi interactive tool when an answer is needed. The user can still answer or edit the saved question when its widget is available.
+History includes native messages, tool calls and results, summaries, images, and resource references. Reading it uses an independent cursor from local input and pending-result delivery.
 
-Answers, revisions, and skips arrive later as `webAnswer` in normal Chappie results. `options` can be omitted for a text answer, and `allowMultiple: true` allows several choices. `sessionId` associates the question with a Pi session using the session selection rules above.
+### Participation
 
-Questions remain available after the assistant response and across broker restarts. Pi's own interactive tools remain ordinary Pi tools and can be invoked through `call`.
+The executing assistant uses `chat` for progress and completion. When `initialization.instructions` assigns observation, read that work through `history` with `observer: true` and `wait: true`, then report its recorded outcome in ChatGPT.
 
-## Files
+## Files and images
 
-`transfer.paths` always names paths or image references on the Pi side. Relative paths resolve from the selected Pi session's working directory; absolute paths and `~/` are accepted.
+`paths` names files on the selected session's device. Relative paths use its working directory; absolute paths and `~/` are accepted. Each transfer pairs source and destination paths by position.
 
-### ChatGPT to Pi
+### From ChatGPT
 
-Pair Pi destinations with ChatGPT files:
+Pair destination paths with ChatGPT attachments:
 
 ```json
 {
@@ -126,35 +86,23 @@ Pair Pi destinations with ChatGPT files:
 }
 ```
 
-The ChatGPT host turns the cloud paths or attachment references into downloadable file objects before the call reaches Chappie. Parent directories are created as needed.
+ChatGPT converts the attachment references into downloadable file objects. Chappie creates parent directories. `overwrite: true` replaces existing targets.
 
-Existing targets produce an error by default. Use `overwrite: true` when replacement is intended:
+### To ChatGPT
 
-```json
-{
-  "paths": ["assets/reference.png"],
-  "files": ["/mnt/data/reference.png"],
-  "overwrite": true
-}
-```
-
-A failed or cancelled transfer removes the incomplete destination opened by that operation. Successful members of a multi-file transfer remain in place.
-
-### Pi to ChatGPT
-
-Omit `files` to export existing Pi files:
+Export files from the selected session:
 
 ```json
 { "paths": ["build/output.zip", "renders/preview.png"] }
 ```
 
-Chappie returns MCP resource links. ChatGPT retrieves the bytes when it materializes those resources, which can require user confirmation. A resource remains associated with the Pi session that exported it, so that Pi process and source file need to remain available until the bytes are read.
+The returned resource links identify the original session and file. ChatGPT retrieves their bytes through resource materialization, which may prompt for approval. The producing connection and source file provide those bytes even after the conversation changes its default session.
 
-For a directory, create an archive with a Pi tool and export the resulting file.
+Native image results also carry `chappie://` references. Pass a reference to `transfer.paths` to retrieve those exact bytes, or use the original file path to export the source image.
 
-### Pi to Pi
+### Between sessions
 
-Supply `to` to copy files to another connected Pi session:
+Send files using `to`:
 
 ```json
 {
@@ -167,31 +115,7 @@ Supply `to` to copy files to another connected Pi session:
 }
 ```
 
-Source and destination paths correspond by position. Each session resolves its own relative paths, absolute paths, and `~/`. Image references can also be copied. `files` and `to` select different sources and are mutually exclusive.
-
-Both Pi sessions need to stay connected during the transfer. `overwrite: true` replaces an existing destination. Cancellation or failure discards the incomplete file; successfully copied files remain available.
-
-### Images
-
-`read` and Pi tool results send images directly to ChatGPT for visual inspection. Chappie also returns a `chappie://` image reference with Pi images. Pass that reference to `transfer.paths` when the same bytes are needed as a file in ChatGPT's cloud environment.
-
-Use the original local path with `transfer` when the original image file is required; Pi can resize or convert images used only for display.
-
-## Local models
-
-With `localTools: true`, ordinary model sessions provide the following tools:
-
-| Tool | Purpose |
-|---|---|
-| `sessions` | List active Chappie sessions and return the local session ID as `self`. |
-| `remote_tools` | Read a target session's tool definitions. |
-| `remote_call` | Execute a native tool batch in the specified Chappie session. |
-| `history` | Read this session's history, or a Chappie session named by `sessionId`. |
-| `transfer` | Export local files, send files to a Chappie session, or retrieve files from one. |
-
-Sessions appear in the shared list while the Chappie provider is selected. Ordinary models use their existing provider for local work.
-
-To retrieve files, pair local destination `paths` with `from`:
+Retrieve files using `from`:
 
 ```json
 {
@@ -202,3 +126,38 @@ To retrieve files, pair local destination `paths` with `from`:
   }
 }
 ```
+
+Both sides use their existing broker connections and resolve paths on their own devices. Different agents use the same transfer operations. Completed files remain available when another file in the batch fails or is cancelled.
+
+## Local models
+
+Enable `localTools` in Chappie's configuration to provide these tools to ordinary models:
+
+| Tool | Target |
+|---|---|
+| `sessions` | Online Chappie sessions, with the current local ID reported as `self`. |
+| `remote_tools` | Tool definitions from the required `sessionId`. |
+| `remote_call` | One native tool batch in the required `sessionId`. |
+| `history` | The current local transcript, or a Chappie session named by `sessionId`. |
+| `transfer` | Local files and resources exchanged with Chappie sessions. |
+
+Ordinary models use their existing provider for local work and connect as requesters. Chappie-model sessions are addressable targets. Local `history` and file operations use the host's current session context.
+
+## Questions in ChatGPT
+
+`ask` saves a question and requests its widget:
+
+```json
+{
+  "header": "Export format",
+  "question": "Which export format should the command use?",
+  "options": [
+    { "title": "JSON", "description": "Structured data for programs.", "recommended": true },
+    { "title": "CSV", "description": "Tabular data for spreadsheets." }
+  ]
+}
+```
+
+Call `ask_assert` with the returned `question.id`. It confirms loading or marks the question skipped after 10 seconds. Native agent interaction tools are also available through `call`.
+
+Answers, revisions, and skips arrive as `webAnswer` in later results. Omit `options` for a text answer; use `allowMultiple: true` for multiple choices. Questions persist across replies and broker restarts.
