@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { addAbortListener } from "node:events";
 import { hostname } from "node:os";
 import { type Activity, source, sourceLabel } from "./activity.ts";
 import { type Config, getDirectory } from "./config.ts";
@@ -39,21 +40,6 @@ import type { ToolInput } from "./tools.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
 
-interface SyncRequest {
-	resolve(): void;
-	reject(error: Error): void;
-}
-
-interface StoreRequest {
-	resolve(): void;
-	reject(error: Error): void;
-}
-
-interface PendingRequest {
-	resolve(result: SessionResult): void;
-	reject(error: Error): void;
-}
-
 interface HistoryRequest {
 	request: Extract<BrokerMessage, { type: "history" }>;
 	timeout: NodeJS.Timeout;
@@ -71,14 +57,15 @@ interface ActiveRequest {
 export class Session {
 	readonly #host: Host;
 	readonly #config: Config;
-	readonly #syncs = new Map<number, SyncRequest>();
-	readonly #stores = new Map<string, StoreRequest>();
+	readonly #syncs = new Map<number, PromiseWithResolvers<void>>();
+	readonly #stores = new Map<string, PromiseWithResolvers<void>>();
+	readonly #ready = new Set<PromiseWithResolvers<void>>();
 	readonly #queue: RemoteRequest[] = [];
 	readonly #pendingInputs = new Map<string, SessionInput>();
 	readonly #deliveries = new Map<string, DeliveryRecord>();
 	readonly #histories = new Map<number, HistoryRequest>();
-	readonly #requests = new Map<number, PendingRequest>();
-	readonly #copies = new Map<number, AbortController>();
+	readonly #requests = new Map<number, PromiseWithResolvers<SessionResult>>();
+	readonly #operations = new Map<number, AbortController>();
 	readonly #resources = new Map<string, ResourceDescriptor>();
 	readonly #receivedDeliveries: DeliveryRecord[] = [];
 	#connection: IpcClient | undefined;
@@ -187,8 +174,27 @@ export class Session {
 		return { sessionId, ...result };
 	}
 
-	async settled(): Promise<void> {
+	async ready(signal: AbortSignal): Promise<void> {
+		signal.throwIfAborted();
+		if (this.#output && !this.#output.closed) return;
+		const completion = Promise.withResolvers<void>();
+		using _abort = addAbortListener(signal, () =>
+			completion.reject(signal.reason),
+		);
+		this.#ready.add(completion);
+		try {
+			this.#wake();
+			await completion.promise;
+		} finally {
+			this.#ready.delete(completion);
+		}
+	}
+
+	async settled(error?: unknown): Promise<void> {
 		this.#starting = false;
+		this.#rejectReady(
+			error ?? new Error("Session turn ended before tools became available"),
+		);
 		this.#collectInputs();
 		this.historyChanged();
 		await this.#completeActive();
@@ -215,6 +221,7 @@ export class Session {
 
 		this.#starting = false;
 		this.#output = output;
+		for (const pending of this.#ready) pending.resolve();
 		try {
 			await connection.connect();
 			if (output.closed) return;
@@ -335,6 +342,7 @@ export class Session {
 		this.#host.toolsChanged?.();
 		this.resetInputs();
 		this.#cancelRequests(new Error("Chappie session ended"));
+		this.#rejectReady(new Error("Chappie session ended"));
 		this.#rejectSyncs(new Error("Chappie session ended"));
 		this.#rejectStores(new Error("Chappie session ended"));
 		for (const id of this.#histories.keys()) this.#finishHistory(id);
@@ -364,6 +372,7 @@ export class Session {
 				onClose: (error) => {
 					this.#host.toolsChanged?.();
 					this.#cancelRequests(error);
+					this.#rejectReady(error);
 					for (const id of this.#histories.keys()) this.#finishHistory(id);
 					this.#rejectSyncs(error);
 					this.#rejectStores(error);
@@ -426,8 +435,9 @@ export class Session {
 				}
 				break;
 			case "inspect":
-				await this.#reply(message.id, async () => {
-					const { globalAgents, ...environment } = await this.#host.inspect();
+				await this.#reply(message.id, async (signal) => {
+					const { globalAgents, ...environment } =
+						await this.#host.inspect(signal);
 					return {
 						type: "result",
 						id: message.id,
@@ -460,24 +470,22 @@ export class Session {
 				}));
 				break;
 			case "export":
-				await this.#reply(message.id, async () => {
+				await this.#reply(message.id, async (signal) => {
 					this.#description(message.sessionId);
-					const result = await this.transfer({ paths: message.paths });
+					const result = await this.transfer({ paths: message.paths }, signal);
 					return { type: "result", id: message.id, transfer: result.details };
 				});
 				break;
 			case "copy": {
-				const controller = new AbortController();
-				this.#copies.set(message.id, controller);
-				void this.#reply(message.id, async () => {
+				await this.#reply(message.id, async (signal) => {
 					const context = this.#description(message.sessionId);
 					const files = await copyFiles(
 						message.paths,
 						message.resources,
 						context.cwd,
 						message.overwrite === true,
-						(resource) => this.#readChunks(resource, controller.signal),
-						controller.signal,
+						(resource) => this.#readChunks(resource, signal),
+						signal,
 						this.#host.mutate,
 					);
 					return {
@@ -490,15 +498,13 @@ export class Session {
 							to: { sessionId: message.sessionId, device: hostname() },
 						},
 					};
-				})
-					.finally(() => this.#copies.delete(message.id))
-					.catch(() => {});
+				});
 				break;
 			}
 			case "cancel": {
-				const copying = this.#copies.get(message.id);
-				if (copying) {
-					copying.abort(new Error(message.reason));
+				const operation = this.#operations.get(message.id);
+				if (operation) {
+					operation.abort(new Error(message.reason));
 					break;
 				}
 				if (this.#histories.has(message.id)) {
@@ -618,8 +624,8 @@ export class Session {
 	#cancelRequests(error: Error): void {
 		for (const pending of this.#requests.values()) pending.reject(error);
 		this.#requests.clear();
-		for (const controller of this.#copies.values()) controller.abort(error);
-		this.#copies.clear();
+		for (const controller of this.#operations.values()) controller.abort(error);
+		this.#operations.clear();
 	}
 
 	async #readHistory(
@@ -728,7 +734,7 @@ export class Session {
 			this.#starting ||
 			this.#output ||
 			this.#active ||
-			this.#queue.length === 0 ||
+			(this.#queue.length === 0 && this.#ready.size === 0) ||
 			!this.#host.isIdle()
 		)
 			return;
@@ -737,6 +743,7 @@ export class Session {
 			.then(() => this.#host.wake())
 			.catch((error: unknown) => {
 				this.#starting = false;
+				this.#rejectReady(error);
 				const request = this.#queue.shift();
 				if (request)
 					return this.#sendError(
@@ -865,18 +872,28 @@ export class Session {
 
 	async #reply(
 		id: number,
-		response: () =>
+		response: (
+			signal: AbortSignal,
+		) =>
 			| Parameters<IpcClient["send"]>[0]
 			| Promise<Parameters<IpcClient["send"]>[0]>,
 	): Promise<void> {
+		const controller = new AbortController();
+		this.#operations.set(id, controller);
 		try {
-			await this.#connection?.send(await response());
+			await this.#connection?.send(await response(controller.signal));
 		} catch (error) {
 			await this.#sendError(
 				id,
 				error instanceof Error ? error.message : String(error),
 			);
+		} finally {
+			this.#operations.delete(id);
 		}
+	}
+
+	#rejectReady(error: unknown): void {
+		for (const pending of this.#ready) pending.reject(error);
 	}
 
 	async #sendError(id: number, error: string): Promise<void> {

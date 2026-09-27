@@ -116,7 +116,6 @@ export class JsonLinePeer<Incoming, Outgoing> {
 	readonly #onMessage: (message: Incoming) => Promise<void> | void;
 	readonly #onClose: () => void;
 	#buffer = "";
-	#messages = Promise.resolve();
 	#writes = Promise.resolve();
 	#closed = false;
 
@@ -171,7 +170,7 @@ export class JsonLinePeer<Incoming, Outgoing> {
 			const line = this.#buffer.slice(0, end);
 			this.#buffer = this.#buffer.slice(end + 1);
 			if (line.length > 0) {
-				this.#messages = this.#messages
+				void Promise.resolve()
 					.then(() => this.#onMessage(JSON.parse(line) as Incoming))
 					.catch((error: unknown) => {
 						this.#socket.destroy(

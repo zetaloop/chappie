@@ -60,7 +60,6 @@ class OpenSession implements Host {
 	readonly session: Session;
 	readonly tools;
 	readonly #input: PluginInput;
-	readonly #ready = Promise.withResolvers<void>();
 	readonly #inputs = new Map<string, SessionInput>();
 	readonly #controls = new Set<string>();
 	info: SessionInfo;
@@ -98,11 +97,8 @@ class OpenSession implements Host {
 	isIdle(): boolean {
 		return !this.busy;
 	}
-	async inspect(): Promise<Environment> {
-		if (!this.catalog) {
-			await this.wake();
-			await this.#ready.promise;
-		}
+	async inspect(signal: AbortSignal): Promise<Environment> {
+		if (!this.catalog) await this.session.ready(signal);
 		const path = join(
 			process.env.OPENCODE_CONFIG_DIR ??
 				join(
@@ -280,7 +276,6 @@ class OpenSession implements Host {
 					]
 				: [],
 		);
-		this.#ready.resolve();
 		let cancelled = false;
 		const native = new ReadableStream<LanguageModelV3StreamPart>({
 			start: (controller) => {

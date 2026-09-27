@@ -82,7 +82,6 @@ class CodexSession implements Host {
 	readonly session: Session;
 	readonly tools;
 	readonly #server: AppServer;
-	readonly #ready = Promise.withResolvers<void>();
 	readonly #inputs = new Map<string, SessionInput>();
 	readonly #results = new Map<string, Item>();
 	#attached = false;
@@ -119,11 +118,8 @@ class CodexSession implements Host {
 		return this.thread.status.type === "idle";
 	}
 
-	async inspect(): Promise<Environment> {
-		if (!this.catalog) {
-			await this.wake();
-			await this.#ready.promise;
-		}
+	async inspect(signal: AbortSignal): Promise<Environment> {
+		if (!this.catalog) await this.session.ready(signal);
 		const result = await this.#server.request<{
 			data: { skills: { name: string; description: string; path: string }[] }[];
 		}>("skills/list", { cwds: [this.thread.cwd] });
@@ -316,7 +312,6 @@ class CodexSession implements Host {
 					: []
 				: [tool];
 		});
-		this.#ready.resolve();
 		const output = new ResponsesOutput(request, this.catalog, response, signal);
 		this.output = output;
 		try {
