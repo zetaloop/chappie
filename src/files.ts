@@ -5,11 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import * as z from "zod";
-import {
-	describeResource,
-	type ResourceDescriptor,
-	registerFile,
-} from "./resources.ts";
+import type { ResourceDescriptor, Resources } from "./resources.ts";
 
 export interface TransferDetails {
 	device: string;
@@ -27,6 +23,7 @@ export type FileMutation = <T>(
 export interface FileContext {
 	id: string;
 	cwd: string;
+	resources: Resources;
 	mutate?: FileMutation;
 }
 
@@ -94,8 +91,11 @@ export async function transferFiles(
 		const resources = await Promise.all(
 			args.paths.map((requested) =>
 				requested.startsWith("chappie://")
-					? describeResource(context.id, requested)
-					: registerFile(context.id, localPath(requested, context.cwd)),
+					? context.resources.describe(context.id, requested)
+					: context.resources.registerFile(
+							context.id,
+							localPath(requested, context.cwd),
+						),
 			),
 		);
 		return transferResult({ device, files: [], resources });

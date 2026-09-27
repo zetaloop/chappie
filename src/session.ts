@@ -30,11 +30,8 @@ import {
 	type SessionStatus,
 } from "./ipc.ts";
 import {
-	imageDescriptor,
 	type ResourceDescriptor,
-	readSessionResource,
-	rememberImages,
-	resourceDescriptors,
+	Resources,
 	resourceSessionId,
 } from "./resources.ts";
 import type { ToolInput } from "./tools.ts";
@@ -72,7 +69,7 @@ export class Session {
 	readonly #histories = new Map<number, HistoryRequest>();
 	readonly #requests = new Map<number, PromiseWithResolvers<SessionResult>>();
 	readonly #operations = new Map<number, AbortController>();
-	readonly #resources = new Map<string, ResourceDescriptor>();
+	readonly #resources = new Resources();
 	readonly #receivedDeliveries: DeliveryRecord[] = [];
 	#connection: IpcClient | undefined;
 	#output: Output | undefined;
@@ -134,7 +131,7 @@ export class Session {
 	async resource(uri: string, signal?: AbortSignal) {
 		signal?.throwIfAborted();
 		const sessionId = resourceSessionId(uri);
-		if (sessionId === this.id) return readSessionResource(sessionId, uri);
+		if (sessionId === this.id) return this.#resources.read(sessionId, uri);
 		const result = await this.#request(
 			{ type: "readResource", sessionId, uri },
 			signal,
@@ -145,8 +142,12 @@ export class Session {
 	}
 
 	async history(range: HistoryRange, sessionId?: string, signal?: AbortSignal) {
-		if (!sessionId || sessionId === this.id) return this.#host.history(range);
 		const self = this.#host.describe();
+		if (!sessionId || sessionId === self.id) {
+			const history = await this.#host.history(range);
+			this.#publish(this.#resources.rememberImages(self.id, history.content));
+			return history;
+		}
 		const result = await this.#request(
 			{
 				type: "history",
@@ -295,6 +296,7 @@ export class Session {
 	): Promise<TransferResult> {
 		const context = {
 			...this.#host.describe(),
+			resources: this.#resources,
 			...(this.#host.mutate ? { mutate: this.#host.mutate } : {}),
 		};
 		if ([args.files, args.from, args.to].filter(Boolean).length > 1)
@@ -410,7 +412,7 @@ export class Session {
 		if (!this.#connection) {
 			this.#connection = new IpcClient(getDirectory(), this.#config.connect, {
 				onOpen: async () => {
-					this.#publish([...this.#resources.values()]);
+					this.#publish(this.#resources.list());
 					await this.#sync();
 					await this.#flushDeliveries();
 					this.#host.toolsChanged?.();
@@ -514,7 +516,7 @@ export class Session {
 				await this.#reply(message.id, async () => ({
 					type: "result",
 					id: message.id,
-					resource: await readSessionResource(
+					resource: await this.#resources.read(
 						message.sessionId,
 						message.uri,
 						message.offset,
@@ -654,8 +656,6 @@ export class Session {
 
 	#publish(resources: ResourceDescriptor[]): void {
 		if (!resources.length) return;
-		for (const resource of resources)
-			this.#resources.set(resource.uri, resource);
 		if (this.#connection?.connected) {
 			void this.#connection
 				.send({ type: "resources", resources })
@@ -730,14 +730,7 @@ export class Session {
 			const context = this.#host.describe();
 			if (context.id !== request.sessionId)
 				throw new Error("The requested session is no longer active");
-			const history = await this.#host.history(request.range);
-			this.#publish(
-				history.content.flatMap((block) =>
-					block.type === "image"
-						? [imageDescriptor(request.sessionId, block)]
-						: [],
-				),
-			);
+			const history = await this.history(request.range);
 			if (wait && !request.range.before && history.count === 0) {
 				if (!this.#histories.has(request.id)) {
 					this.#histories.set(request.id, {
@@ -867,15 +860,8 @@ export class Session {
 		)
 			return;
 		const sessionId = active.session.id;
-		for (const result of toolResults) {
-			rememberImages(sessionId, result.content);
-			this.#publish([
-				...resourceDescriptors(result.details),
-				...result.content.flatMap((block) =>
-					block.type === "image" ? [imageDescriptor(sessionId, block)] : [],
-				),
-			]);
-		}
+		for (const result of toolResults)
+			this.#publish(this.#resources.rememberImages(sessionId, result.content));
 		if (failure !== undefined) active.error = failure;
 		active.toolResults = toolResults;
 		if (active.request.type === "call") {
@@ -942,16 +928,13 @@ export class Session {
 	#collectInputs(): void {
 		if (!this.#host.active()) return;
 		for (const input of this.#host.inputs()) {
-			if ("message" in input && typeof input.message.content !== "string") {
-				rememberImages(input.sessionId, input.message.content);
+			if ("message" in input && typeof input.message.content !== "string")
 				this.#publish(
-					input.message.content.flatMap((block) =>
-						block.type === "image"
-							? [imageDescriptor(input.sessionId, block)]
-							: [],
+					this.#resources.rememberImages(
+						input.sessionId,
+						input.message.content,
 					),
 				);
-			}
 			this.#pendingInputs.set(input.id, input);
 		}
 	}

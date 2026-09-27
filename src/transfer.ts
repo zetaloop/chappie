@@ -3,7 +3,6 @@ import { basename } from "node:path";
 import {
 	formatSize,
 	type ToolDefinition,
-	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -12,7 +11,6 @@ import {
 	type TransferDetails,
 	type TransferInput,
 	transferDescription,
-	transferFiles,
 	transferInput,
 } from "./files.ts";
 
@@ -23,18 +21,6 @@ export const transfer = {
 	label: "transfer",
 	description: transferDescription,
 	parameters,
-	execute(_id, args, signal, update, context) {
-		return transferFiles(
-			args,
-			{
-				id: context.sessionManager.getSessionId(),
-				cwd: context.cwd,
-				mutate: withFileMutationQueue,
-			},
-			signal,
-			(details) => update?.({ content: [], details }),
-		);
-	},
 	renderCall(args, theme, context) {
 		const device = context.state.device ?? hostname();
 		const from = args.files
@@ -106,10 +92,13 @@ export const transfer = {
 						);
 		return new Text(lines.join("\n"), 0, 0);
 	},
-} satisfies ToolDefinition<
-	typeof parameters,
-	TransferDetails,
-	{ header?: Text; device?: string; to?: string; from?: string | undefined }
+} satisfies Omit<
+	ToolDefinition<
+		typeof parameters,
+		TransferDetails,
+		{ header?: Text; device?: string; to?: string; from?: string | undefined }
+	>,
+	"execute"
 >;
 
 function displayPath(path: string): string {

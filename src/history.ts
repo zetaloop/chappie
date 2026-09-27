@@ -4,7 +4,6 @@ import type { Content } from "./host.ts";
 import {
 	contentWithImageReferences,
 	type ResourceDescriptor,
-	rememberImages,
 	resourceDescriptors,
 } from "./resources.ts";
 
@@ -110,7 +109,6 @@ function entryContent(
 			(value.type === "text" || value.type === "image")
 		) {
 			const block = value as Content;
-			rememberImages(sessionId, [block]);
 			result.push(...contentWithImageReferences(sessionId, [block]));
 		} else if (
 			value &&

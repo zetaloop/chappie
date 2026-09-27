@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { open, readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import mime from "mime";
-import type { ImageContent, TextContent } from "./host.ts";
+import type { Content, ImageContent, TextContent } from "./host.ts";
 
 export interface ResourceDescriptor {
 	uri: string;
@@ -19,39 +19,94 @@ type ResourceEntry =
 	| { type: "file"; path: string; descriptor: ResourceDescriptor }
 	| { type: "image"; data: string; descriptor: ResourceDescriptor };
 
-const stores = new Map<string, Map<string, ResourceEntry>>();
+export class Resources {
+	readonly #entries = new Map<string, ResourceEntry>();
 
-export async function registerFile(
-	sessionId: string,
-	path: string,
-): Promise<ResourceDescriptor> {
-	const info = await stat(path);
-	if (!info.isFile()) throw new Error(`${path} is not a file`);
-	const name = basename(path);
-	const descriptor = resourceDescriptor(
-		sessionId,
-		"file",
-		randomUUID(),
-		name,
-		mime.getType(path) ?? "application/octet-stream",
-		info.size,
-	);
-	store(sessionId).set(descriptor.uri, { type: "file", path, descriptor });
-	return descriptor;
-}
+	list(): ResourceDescriptor[] {
+		return [...this.#entries.values()].map((entry) => entry.descriptor);
+	}
 
-export function rememberImages(
-	sessionId: string,
-	content: readonly (TextContent | ImageContent)[],
-): void {
-	for (const block of content) {
-		if (block.type !== "image") continue;
-		const descriptor = imageDescriptor(sessionId, block);
-		store(sessionId).set(descriptor.uri, {
-			type: "image",
-			data: block.data,
-			descriptor,
+	async registerFile(
+		sessionId: string,
+		path: string,
+	): Promise<ResourceDescriptor> {
+		const info = await stat(path);
+		if (!info.isFile()) throw new Error(`${path} is not a file`);
+		const name = basename(path);
+		const descriptor = resourceDescriptor(
+			sessionId,
+			"file",
+			randomUUID(),
+			name,
+			mime.getType(path) ?? "application/octet-stream",
+			info.size,
+		);
+		this.#entries.set(descriptor.uri, { type: "file", path, descriptor });
+		return descriptor;
+	}
+
+	rememberImages(
+		sessionId: string,
+		content: readonly (Content | { type: "resource_link" })[],
+	): ResourceDescriptor[] {
+		return content.flatMap((block) => {
+			if (block.type !== "image") return [];
+			const descriptor = imageDescriptor(sessionId, block);
+			this.#entries.set(descriptor.uri, {
+				type: "image",
+				data: block.data,
+				descriptor,
+			});
+			return [descriptor];
 		});
+	}
+
+	describe(sessionId: string, uri: string): ResourceDescriptor {
+		return this.#entry(sessionId, uri).descriptor;
+	}
+
+	async read(
+		sessionId: string,
+		uri: string,
+		offset?: number,
+	): Promise<ResourceData> {
+		const entry = this.#entry(sessionId, uri);
+		const { descriptor } = entry;
+		if (offset === undefined) {
+			const blob =
+				entry.type === "file"
+					? (await readFile(entry.path)).toString("base64")
+					: entry.data;
+			return { ...descriptor, blob };
+		}
+		if (!Number.isSafeInteger(offset) || offset < 0)
+			throw new Error("Resource offset must be a nonnegative integer");
+		const length = Math.min(1024 * 1024, Math.max(0, descriptor.size - offset));
+		let data: Buffer;
+		if (entry.type === "file") {
+			await using file = await open(entry.path, "r");
+			const { buffer, bytesRead } = await file.read(
+				Buffer.alloc(length),
+				0,
+				length,
+				offset,
+			);
+			data = buffer.subarray(0, bytesRead);
+		} else {
+			data = Buffer.from(entry.data, "base64").subarray(
+				offset,
+				offset + length,
+			);
+		}
+		return { ...descriptor, blob: data.toString("base64") };
+	}
+
+	#entry(sessionId: string, uri: string): ResourceEntry {
+		if (resourceSessionId(uri) !== sessionId)
+			throw new Error("The resource belongs to another session");
+		const entry = this.#entries.get(uri);
+		if (!entry) throw new Error(`Unknown Chappie resource: ${uri}`);
+		return entry;
 	}
 }
 
@@ -108,64 +163,8 @@ export function resourceDescriptors(details: unknown): ResourceDescriptor[] {
 	});
 }
 
-export function describeResource(
-	sessionId: string,
-	uri: string,
-): ResourceDescriptor {
-	const parsed = parseResourceUri(uri);
-	if (parsed.sessionId !== sessionId) {
-		throw new Error("The resource belongs to another session");
-	}
-	const entry = store(sessionId).get(uri);
-	if (!entry) throw new Error(`Unknown Chappie resource: ${uri}`);
-	return entry.descriptor;
-}
-
-export async function readSessionResource(
-	sessionId: string,
-	uri: string,
-	offset?: number,
-): Promise<ResourceData> {
-	const descriptor = describeResource(sessionId, uri);
-	const entry = store(sessionId).get(uri);
-	if (!entry) throw new Error(`Unknown Chappie resource: ${uri}`);
-	if (offset === undefined) {
-		const blob =
-			entry.type === "file"
-				? (await readFile(entry.path)).toString("base64")
-				: entry.data;
-		return { ...descriptor, blob };
-	}
-	if (!Number.isSafeInteger(offset) || offset < 0)
-		throw new Error("Resource offset must be a nonnegative integer");
-	const length = Math.min(1024 * 1024, Math.max(0, descriptor.size - offset));
-	let data: Buffer;
-	if (entry.type === "file") {
-		await using file = await open(entry.path, "r");
-		const { buffer, bytesRead } = await file.read(
-			Buffer.alloc(length),
-			0,
-			length,
-			offset,
-		);
-		data = buffer.subarray(0, bytesRead);
-	} else {
-		data = Buffer.from(entry.data, "base64").subarray(offset, offset + length);
-	}
-	return { ...descriptor, blob: data.toString("base64") };
-}
-
 export function resourceSessionId(uri: string): string {
 	return parseResourceUri(uri).sessionId;
-}
-
-function store(sessionId: string): Map<string, ResourceEntry> {
-	let resources = stores.get(sessionId);
-	if (!resources) {
-		resources = new Map();
-		stores.set(sessionId, resources);
-	}
-	return resources;
 }
 
 function resourceDescriptor(
