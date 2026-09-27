@@ -57,6 +57,8 @@ export const definitions = [
 				sessionId,
 				result.cwd,
 				result.inputs,
+				undefined,
+				"cancelled" in result ? result.cancelled : undefined,
 			);
 			const content = nativeContent(output.content);
 			if (output.isError) {

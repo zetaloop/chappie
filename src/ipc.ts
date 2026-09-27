@@ -23,7 +23,7 @@ import type { ResourceData, ResourceDescriptor } from "./resources.ts";
 
 const defaultPort = 24274;
 
-export type SessionStatus = "idle" | "ready" | "executing";
+export type SessionStatus = "idle" | "ready" | "executing" | "generating";
 
 export interface SessionDescription {
 	id: string;
@@ -41,11 +41,15 @@ export interface SessionInspection {
 	skills: SkillInfo[];
 }
 
-export interface SessionInput {
+export interface ModelRequest {
+	kind: string;
+	input: unknown;
+}
+
+export type SessionInput = {
 	id: string;
 	sessionId: string;
-	message: UserMessage;
-}
+} & ({ message: UserMessage } | { request: ModelRequest });
 
 export type SessionResult = (
 	| {
@@ -59,6 +63,12 @@ export type SessionResult = (
 			cwd: string;
 			toolResults: ToolResultMessage[];
 			inputs: SessionInput[];
+	  }
+	| {
+			cancelled: string;
+			cwd: string;
+			inputs: SessionInput[];
+			toolResults: ToolResultMessage[];
 	  }
 	| { sessions: SessionDescription[] }
 	| { history: HistoryResult; cwd: string }
@@ -79,7 +89,12 @@ export type SessionRequest =
 			overwrite?: boolean;
 	  }
 	| ({ type: "history"; sessionId: string; range: HistoryRange } & Source)
-	| ({ type: "chat"; sessionId: string; text: string } & Source)
+	| ({
+			type: "chat";
+			sessionId: string;
+			text: string;
+			replyTo?: string;
+	  } & Source)
 	| ({ type: "call"; sessionId: string; calls: ToolCall[] } & Source);
 
 export type ClientRequest =

@@ -231,7 +231,7 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 				maxTokens: 1_000_000_000,
 			},
 		],
-		streamSimple(model, _context, options) {
+		streamSimple(model, context, options) {
 			const stream = createAssistantMessageEventStream();
 			const output = new ProviderOutput(
 				createMessage<AssistantMessage["stopReason"]>(model, "stop"),
@@ -239,9 +239,11 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 				options?.signal,
 			);
 			queueMicrotask(() => {
-				void session
-					.start(output)
-					.catch((error: unknown) => output.fail(error));
+				void (
+					options?.codexCompaction
+						? session.generate(output, { kind: "compaction", input: context })
+						: session.start(output)
+				).catch((error: unknown) => output.fail(error));
 			});
 			return stream;
 		},

@@ -4,11 +4,11 @@ import { resolve } from "node:path";
 import {
 	type Api,
 	type AssistantMessage,
-	type Context,
 	createAssistantMessageEventStream,
 	createProvider,
 	type Model,
 	type StreamOptions,
+	type TranscriptContext,
 	type UserMessage,
 } from "@earendil-works/pi-ai";
 import {
@@ -41,6 +41,7 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 	let context: ExtensionContext | undefined;
 	let model: ExtensionContext["model"];
 	let inputCursor: string | null = null;
+	const requests = new WeakMap<AbortSignal, string>();
 
 	const current = (): ExtensionContext => {
 		if (!context) throw new Error("Session has not started");
@@ -187,6 +188,12 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 		context = ctx;
 		session.historyChanged();
 	});
+	pi.on("session_before_compact", (event) => {
+		requests.set(event.signal, "compaction");
+	});
+	pi.on("session_before_tree", (event) => {
+		requests.set(event.signal, "summary");
+	});
 	pi.on("session_compact", (_event, ctx) => {
 		context = ctx;
 		session.historyChanged();
@@ -238,13 +245,26 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 			};
 		},
 	});
-	pi.registerProvider(createChappieProvider((output) => session.start(output)));
+	pi.registerProvider(
+		createChappieProvider((output, input, options) => {
+			const kind = options?.signal ? requests.get(options.signal) : undefined;
+			return kind
+				? session.generate(output, { kind, input })
+				: session.start(output);
+		}),
+	);
 }
 
-function createChappieProvider(start: (output: Output) => Promise<void>) {
+function createChappieProvider(
+	start: (
+		output: Output,
+		input: TranscriptContext,
+		options?: StreamOptions,
+	) => Promise<void>,
+) {
 	const stream = (
 		model: Model<Api>,
-		_context: Context,
+		context: TranscriptContext,
 		options?: StreamOptions,
 	) => {
 		const native = createAssistantMessageEventStream();
@@ -255,7 +275,9 @@ function createChappieProvider(start: (output: Output) => Promise<void>) {
 		const output = new ProviderOutput(message, native, options?.signal);
 		if (!output.closed) {
 			queueMicrotask(() => {
-				void start(output).catch((error: unknown) => output.fail(error));
+				void start(output, context, options).catch((error: unknown) =>
+					output.fail(error),
+				);
 			});
 		}
 		return native;

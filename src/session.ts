@@ -23,6 +23,7 @@ import {
 	type BrokerMessage,
 	type ClientRequest,
 	IpcClient,
+	type ModelRequest,
 	type SessionDescription,
 	type SessionInput,
 	type SessionResult,
@@ -61,6 +62,10 @@ export class Session {
 	readonly #syncs = new Map<number, PromiseWithResolvers<void>>();
 	readonly #stores = new Map<string, PromiseWithResolvers<void>>();
 	readonly #ready = new Set<PromiseWithResolvers<void>>();
+	readonly #generations = new Map<
+		string,
+		{ output: Output; request: ModelRequest }
+	>();
 	readonly #queue: RemoteRequest[] = [];
 	readonly #pendingInputs = new Map<string, SessionInput>();
 	readonly #deliveries = new Map<string, DeliveryRecord>();
@@ -177,7 +182,8 @@ export class Session {
 
 	async ready(signal: AbortSignal): Promise<void> {
 		signal.throwIfAborted();
-		if (this.#output && !this.#output.closed) return;
+		if (this.#generations.size || (this.#output && !this.#output.closed))
+			return;
 		const completion = Promise.withResolvers<void>();
 		using _abort = addAbortListener(signal, () =>
 			completion.reject(signal.reason),
@@ -253,6 +259,32 @@ export class Session {
 			if (this.#output === output) this.#output = undefined;
 			this.#status = this.#active ? "executing" : "idle";
 			void this.#sync().catch(() => {});
+		}
+	}
+
+	async generate(output: Output, request: ModelRequest): Promise<void> {
+		const connection = this.#connection;
+		if (!this.#host.active() || !connection)
+			throw new Error("Chappie is not active for this session");
+		if (output.closed) return;
+		const id = randomUUID();
+		this.#starting = false;
+		this.#generations.set(id, { output, request });
+		for (const pending of this.#ready) pending.resolve();
+		try {
+			await connection.connect();
+			if (output.closed) return;
+			this.historyChanged();
+			await this.#completeActive();
+			output.begin();
+			await this.#sync();
+			for (const queued of this.#queue.splice(0))
+				await this.#cancelPending(queued);
+			await output.finished;
+		} finally {
+			this.#generations.delete(id);
+			void this.#sync().catch(() => {});
+			this.#dispatch();
 		}
 	}
 
@@ -345,6 +377,9 @@ export class Session {
 				.catch(() => {});
 		}
 		this.#output?.fail(new Error("Chappie session ended"), true);
+		for (const { output } of this.#generations.values())
+			output.fail(new Error("Chappie session ended"), true);
+		this.#generations.clear();
 		this.#output = undefined;
 		this.#active = undefined;
 		this.#queue.length = 0;
@@ -390,6 +425,8 @@ export class Session {
 					this.#rejectStores(error);
 					if (this.#output && !this.#output.closed) this.#output.fail(error);
 					else this.#notify(error.message, "error");
+					for (const { output } of this.#generations.values())
+						output.fail(error);
 					this.#active = undefined;
 					this.#queue.length = 0;
 					this.#starting = false;
@@ -405,7 +442,10 @@ export class Session {
 	#description(sessionId = this.#sessionId): SessionDescription {
 		if (sessionId !== this.#sessionId)
 			throw new Error("The requested session is no longer active");
-		return { ...this.#host.describe(), status: this.#status };
+		return {
+			...this.#host.describe(),
+			status: this.#generations.size ? "generating" : this.#status,
+		};
 	}
 
 	async #sync(): Promise<void> {
@@ -564,10 +604,52 @@ export class Session {
 					);
 					break;
 				}
+				if (message.type === "chat" && message.replyTo) {
+					const generation = this.#generations.get(message.replyTo);
+					if (!generation || generation.output.closed) {
+						await this.#sendError(message.id, "The model request has ended");
+						break;
+					}
+					const output = generation.output;
+					output.message.chappie = source(
+						message.clientId,
+						message.requestId,
+						message.label,
+					);
+					output.text(message.text);
+					output.done();
+					this.#generations.delete(message.replyTo);
+					await this.#connection?.send({
+						type: "result",
+						id: message.id,
+						cwd: this.#host.describe().cwd,
+						message: output.message,
+						inputs: this.#inputs(),
+					});
+					break;
+				}
+				if (this.#generations.size) {
+					await this.#cancelPending(message);
+					break;
+				}
 				this.#queue.push(message);
 				this.#dispatch();
 				break;
 		}
+	}
+
+	async #cancelPending(request: RemoteRequest): Promise<void> {
+		await this.#connection?.send({
+			type: "result",
+			id: request.id,
+			cwd: this.#host.describe().cwd,
+			cancelled:
+				request.type === "call"
+					? "The requested tools were not executed. A model request is awaiting a reply."
+					: "A model request is awaiting a reply. Set replyTo to its request ID.",
+			toolResults: [],
+			inputs: this.#inputs(),
+		});
 	}
 
 	#publish(resources: ResourceDescriptor[]): void {
@@ -707,7 +789,7 @@ export class Session {
 	}
 
 	#dispatch(): void {
-		if (this.#active) return;
+		if (this.#active || this.#generations.size) return;
 		const output = this.#output;
 		if (!output || output.closed) {
 			this.#wake();
@@ -743,6 +825,7 @@ export class Session {
 	#wake(): void {
 		if (
 			this.#starting ||
+			this.#generations.size ||
 			this.#output ||
 			this.#active ||
 			(this.#queue.length === 0 && this.#ready.size === 0) ||
@@ -859,7 +942,7 @@ export class Session {
 	#collectInputs(): void {
 		if (!this.#host.active()) return;
 		for (const input of this.#host.inputs()) {
-			if (typeof input.message.content !== "string") {
+			if ("message" in input && typeof input.message.content !== "string") {
 				rememberImages(input.sessionId, input.message.content);
 				this.#publish(
 					input.message.content.flatMap((block) =>
@@ -875,7 +958,19 @@ export class Session {
 
 	#inputs(): SessionInput[] {
 		this.#collectInputs();
-		return [...this.#pendingInputs.values()];
+		const generation = this.#generations.entries().next().value;
+		return [
+			...(generation
+				? [
+						{
+							id: generation[0],
+							sessionId: this.id,
+							request: generation[1].request,
+						},
+					]
+				: []),
+			...this.#pendingInputs.values(),
+		];
 	}
 
 	async #flushDeliveries(): Promise<void> {

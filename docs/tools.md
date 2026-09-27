@@ -53,6 +53,16 @@ A `calls` array executes as one native batch. Separate requests are ordered with
 
 Local user input accompanies later results, including images. Completed output from an interrupted request can be delivered to its originating conversation with a later response.
 
+Hosts can request model output such as a compaction summary. The result includes a `request` ID, instructions, and the original input. Reply to that request with `chat`:
+
+```json
+{ "replyTo": "<request-id>", "text": "The requested summary." }
+```
+
+While a model request is pending, `call` returns `cancelled` with an error status and executes no tools. `history` remains available. Each request has its own ID. A reply can include the next request when the host needs several summaries.
+
+ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Use history pagination or limit native tool output when needed; local tools have no such response limit.
+
 ## History
 
 `history` reads the native transcript using the saved default or an explicit `sessionId`:

@@ -31,6 +31,7 @@ export interface ResponsesRequest {
 	input?: ResponseItem[];
 	tools?: ResponseTool[];
 	stream?: boolean;
+	client_metadata?: Record<string, string>;
 }
 
 export interface ResponseDefinition extends ToolInfo {

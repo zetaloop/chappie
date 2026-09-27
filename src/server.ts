@@ -106,10 +106,15 @@ export function createServer(broker: Broker): McpServer {
 		"chat",
 		{
 			title: "Reply in the session",
-			description: "Send a Markdown assistant message to the session.",
+			description:
+				"Send a Markdown assistant message, or reply to a model request using its request ID as replyTo.",
 			outputSchema,
 			inputSchema: z.object({
-				text: z.string().min(1).describe("Assistant message in Markdown"),
+				text: z
+					.string()
+					.min(1)
+					.describe("Assistant message or requested model output"),
+				replyTo: z.string().optional().describe("Model request ID to answer"),
 				sessionId: z
 					.string()
 					.optional()
@@ -121,21 +126,18 @@ export function createServer(broker: Broker): McpServer {
 		},
 		handle(async (args, context) => {
 			const chatId = requireChatId(context);
-			const { sessionId, cwd, inputs, initialization } = await broker.chat(
+			const { inputs, ...result } = await broker.chat(
 				chatId,
 				args.sessionId,
 				args.text,
 				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
+				args.replyTo,
 			);
-			return finishResult(
-				broker,
-				context,
-				textResult(
-					{ sessionId, cwd, ...(initialization ? { initialization } : {}) },
-					inputs,
-				),
-			);
+			return finishResult(broker, context, {
+				...textResult(result, inputs),
+				isError: Boolean(result.cancelled),
+			});
 		}),
 	);
 
@@ -357,6 +359,7 @@ export function createServer(broker: Broker): McpServer {
 					result.cwd,
 					result.inputs,
 					result.initialization,
+					result.cancelled,
 				),
 			);
 		}),
@@ -396,6 +399,7 @@ export function createServer(broker: Broker): McpServer {
 					result.cwd,
 					result.inputs,
 					result.initialization,
+					result.cancelled,
 				),
 			);
 		}),

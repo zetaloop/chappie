@@ -66,7 +66,6 @@ class OpenSession implements Host {
 	busy = false;
 	output: Output | undefined;
 	catalog: ToolInfo[] | undefined;
-	title = "";
 
 	constructor(
 		info: SessionInfo,
@@ -242,24 +241,30 @@ class OpenSession implements Host {
 		await this.session.settled(error);
 	}
 	async stream(options: LanguageModelV3CallOptions) {
-		await this.#step?.promise;
+		const kind = options.headers?.["x-chappie-kind"];
+		if (!kind) throw new Error("OpenCode did not provide a model request kind");
+		const generation = kind !== "primary";
+		if (!generation) await this.#step?.promise;
 		options.abortSignal?.throwIfAborted();
-		this.#step = Promise.withResolvers<void>();
-		this.catalog = (options.tools ?? []).flatMap((tool) =>
-			tool.type === "function"
-				? [
-						{
-							name: tool.name,
-							description: tool.description ?? "",
-							parameters: { ...tool.inputSchema },
-						},
-					]
-				: [],
-		);
+		if (!generation) {
+			this.#step = Promise.withResolvers<void>();
+			this.catalog = (options.tools ?? []).flatMap((tool) =>
+				tool.type === "function"
+					? [
+							{
+								name: tool.name,
+								description: tool.description ?? "",
+								parameters: { ...tool.inputSchema },
+							},
+						]
+					: [],
+			);
+		}
 		let cancelled = false;
+		let output: Output | undefined;
 		const native = new ReadableStream<LanguageModelV3StreamPart>({
 			start: (controller) => {
-				const output = new ProviderOutput(
+				const response = new ProviderOutput(
 					createMessage(
 						{ api: "chappie", provider: "chappie", id: "chatgpt" },
 						"stop",
@@ -274,16 +279,20 @@ class OpenSession implements Host {
 					},
 					options.abortSignal,
 				);
-				this.output = output;
+				output = response;
+				if (!generation) this.output = response;
 				queueMicrotask(() => {
-					void this.session
-						.start(output)
-						.catch((error: unknown) => output.fail(error));
+					const { abortSignal: _signal, headers: _headers, ...input } = options;
+					void (
+						generation
+							? this.session.generate(response, { kind, input })
+							: this.session.start(response)
+					).catch((error: unknown) => response.fail(error));
 				});
 			},
 			cancel: () => {
 				cancelled = true;
-				this.output?.fail(new Error("Provider stream cancelled"), true);
+				output?.fail(new Error("Provider stream cancelled"), true);
 			},
 		});
 		return { stream: native };
@@ -404,11 +413,6 @@ export default {
 					},
 				});
 		});
-		await context.session.hook("prompt", async (event) => {
-			const state = await get(event.sessionID);
-			if (state.active() && !state.title)
-				state.title = event.prompt.text.split("\n")[0]?.slice(0, 100) ?? "";
-		});
 		await context.session.hook("context", async (event) => {
 			const state = await get(event.sessionID);
 			state.info.model = {
@@ -430,23 +434,9 @@ export default {
 		});
 		await context.session.hook(
 			"model.request",
-			(event) => {
-				event.headers["x-chappie-kind"] = event.kind;
-			},
-			{ providerID },
-		);
-		await context.session.hook(
-			"title",
 			async (event) => {
-				const state = await get(event.sessionID);
-				event.result = state.title || state.info.title || "ChatGPT";
-			},
-			{ providerID },
-		);
-		await context.session.hook(
-			"compaction",
-			(event) => {
-				event.result = { summary: "" };
+				await get(event.sessionID);
+				event.headers["x-chappie-kind"] = event.kind;
 			},
 			{ providerID },
 		);
@@ -586,10 +576,6 @@ function languageModel(modelId: string): LanguageModelV3 {
 		modelId,
 		supportedUrls: {},
 		async doStream(options) {
-			if (options.headers?.["x-chappie-kind"] !== "primary")
-				throw new Error(
-					"Chappie model requests are driven through chat and call",
-				);
 			const id = options.headers?.["x-opencode-session"];
 			if (!id) throw new Error("OpenCode did not provide a session ID");
 			const state = sessions.get(id);

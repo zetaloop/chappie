@@ -70,6 +70,7 @@ export interface InspectedSession extends SessionInspection {
 
 export interface ChatResult {
 	initialization?: Initialization;
+	cancelled?: string;
 	sessionId: string;
 	cwd: string;
 	inputs: SessionInput[];
@@ -192,6 +193,7 @@ export class Broker {
 		text: string,
 		requestId: unknown,
 		signal: AbortSignal,
+		replyTo?: string,
 	): Promise<ChatResult> {
 		const { sessionId: target, initialization } = await this.#selectSession(
 			chatId,
@@ -207,10 +209,11 @@ export class Broker {
 				...source(chatId, requestId),
 				sessionId: target,
 				text,
+				...(replyTo ? { replyTo } : {}),
 			}),
 			signal,
 		);
-		if ("message" in result) {
+		if ("message" in result || "cancelled" in result) {
 			const inputs = result.inputs;
 			await this.#ackInputs(target, inputs, signal);
 			return {
@@ -218,6 +221,7 @@ export class Broker {
 				cwd: result.cwd,
 				inputs,
 				...(initialization ? { initialization } : {}),
+				...("cancelled" in result ? { cancelled: result.cancelled } : {}),
 			};
 		}
 		throw new Error("Session returned no assistant message");
@@ -287,6 +291,7 @@ export class Broker {
 				cwd: result.cwd,
 				toolResults: result.toolResults,
 				inputs: result.inputs,
+				...("cancelled" in result ? { cancelled: result.cancelled } : {}),
 			};
 		}
 		throw new Error("Session returned no tool results");

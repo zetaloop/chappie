@@ -10,6 +10,8 @@ init includes a short native tool catalog. tools returns full definitions, and c
 
 transfer pairs ChatGPT files with destination paths in order. To send files between sessions, use paths on the source and to: { sessionId, paths } for the destination. To retrieve files, use from: { sessionId, paths } with destination paths on the selected session. Each device resolves its own paths. Omit files, from, and to to export file or image resources. overwrite: true replaces existing targets. Resource references retain their source across default-session changes.
 
+ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Use history pagination or limit native tool output when needed.
+
 Results identify the executing sessionId and cwd. Text results include tool output, local input, webpage answers, and deferred results; images and resources use native content blocks. Continue from completed results. Use the agent's persistent process facilities for long-running commands, and read saved output through native file tools when needed.
 
 history reads the native transcript with entry IDs and recorded timestamps. It defaults to the last 20 entries; before pages backward and after pages forward. after with wait: true follows progress, returning immediately when entries exist or waiting up to 30 seconds for new entries. observer: true identifies observation of another execution. Read its completion message before reporting the outcome. History has an independent cursor from input and pending-result delivery.

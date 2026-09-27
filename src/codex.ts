@@ -299,6 +299,20 @@ class CodexSession implements Host {
 				});
 			}
 			this.session.complete(previous.message, results);
+			this.output = undefined;
+		}
+		const metadata = request.client_metadata?.["x-codex-turn-metadata"];
+		const kind = metadata
+			? (JSON.parse(metadata) as { request_kind?: string }).request_kind
+			: undefined;
+		if (kind === "compaction") {
+			const output = new ResponsesOutput(request, [], response, signal);
+			try {
+				await this.session.generate(output, { kind, input: request });
+			} catch (error) {
+				output.fail(error);
+			}
+			return;
 		}
 		this.catalog = responseTools(request.tools ?? []).flatMap((tool) => {
 			const local = ["chappie", "mcp__chappie"].includes(
