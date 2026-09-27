@@ -10,7 +10,7 @@ Install Chappie in the agent:
 |---|---|
 | [Pi](https://github.com/earendil-works/pi) | `pi install npm:@zetaloop/chappie` |
 | [Oh My Pi](https://github.com/can1357/oh-my-pi) | `omp plugin install @zetaloop/chappie` |
-| [OpenCode](https://github.com/anomalyco/opencode) | `opencode plugin @zetaloop/chappie` |
+| [OpenCode](https://github.com/anomalyco/opencode) | `opencode plugin add @zetaloop/chappie` |
 | [Codex](https://github.com/openai/codex) | See [Codex](#codex) below. |
 
 Install the broker on the device running the tunnel:
@@ -95,5 +95,7 @@ Ordinary models can access Chappie sessions with:
 ```
 
 This enables `sessions`, `remote_tools`, `remote_call`, `history`, and `transfer` for local collaboration. `history` can read the current session; remote operations name a session using the Chappie provider.
+
+OpenCode discovers its local background service. For a standalone server, set `opencode.url` to its HTTP address and `opencode.password` when authentication is enabled.
 
 Codex uses port `24275` for its local Responses service and the default app-server control socket. Use `codex.port` to change the Responses port and `codex.appServer` for an explicit `unix://<path>` or WebSocket URL. Set `model_providers.chappie.base_url` in Codex to match the Responses port.

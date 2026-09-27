@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
@@ -10,20 +9,23 @@ import type {
 	LanguageModelV3StreamPart,
 	LanguageModelV3Usage,
 } from "@ai-sdk/provider";
-import type {
-	Plugin,
-	PluginInput,
-	PluginModule,
-	ToolDefinition,
-} from "@opencode-ai/plugin";
-import type { FilePart, Message, Part } from "@opencode-ai/sdk";
-import type { Command, Session as NativeSession } from "@opencode-ai/sdk/v2";
-import type { Source } from "./activity.ts";
-import type { Config } from "./config.ts";
-import { readConfig } from "./config.ts";
+import {
+	OpenCode,
+	type OpenCodeClient,
+	type SessionInfo,
+	type SessionMessageInfo,
+	type SessionMessageUser,
+} from "@opencode/client";
+import { discover, headers } from "@opencode/client/service";
+import type { Model, Plugin, Provider } from "@opencode/plugin";
+import * as z from "zod";
+import { type Config, readConfig } from "./config.ts";
+import { toolResultsContent } from "./delivery.ts";
 import {
 	type HistoryEntry,
 	type HistoryRange,
+	type HistoryResult,
+	historyPage,
 	historyResult,
 } from "./history.ts";
 import type {
@@ -44,37 +46,36 @@ import {
 } from "./provider.ts";
 import { Session } from "./session.ts";
 
-type SessionInfo = Pick<
-	NativeSession,
-	"id" | "directory" | "title" | "model" | "agent" | "revert"
->;
-
-type Transcript = { info: Message; parts: Part[] }[];
-const sessions = new Map<string, OpenSession>();
 const usage: LanguageModelV3Usage = {
 	inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
 	outputTokens: { total: 0, text: 0, reasoning: 0 },
 };
 
+type Client = () => Promise<OpenCodeClient>;
+const sessions = new Map<string, OpenSession>();
+
 class OpenSession implements Host {
 	readonly session: Session;
 	readonly tools;
-	readonly #input: PluginInput;
+	readonly #context: Plugin.Context;
+	readonly #client: Client;
 	readonly #inputs = new Map<string, SessionInput>();
-	readonly #controls = new Set<string>();
+	readonly #results = new Map<string, ToolResultMessage>();
 	info: SessionInfo;
-	model: { providerID: string; modelID: string } | undefined;
 	busy = false;
 	output: Output | undefined;
 	catalog: ToolInfo[] | undefined;
-	firstPrompt = "";
+	title = "";
 
-	constructor(info: SessionInfo, input: PluginInput, config: Config) {
+	constructor(
+		info: SessionInfo,
+		context: Plugin.Context,
+		client: Client,
+		config: Config,
+	) {
 		this.info = info;
-		this.#input = input;
-		this.model = info.model
-			? { providerID: info.model.providerID, modelID: info.model.id }
-			: undefined;
+		this.#context = context;
+		this.#client = client;
 		this.session = new Session(this, config);
 		this.tools = localTools(this.session);
 	}
@@ -83,16 +84,16 @@ class OpenSession implements Host {
 		return {
 			id: this.info.id,
 			agent: "opencode",
-			cwd: this.info.directory,
+			cwd: this.info.location.directory,
 			device: hostname(),
-			name: this.info.title,
-			...(this.model
-				? { model: `${this.model.providerID}/${this.model.modelID}` }
+			...(this.info.title ? { name: this.info.title } : {}),
+			...(this.info.model
+				? { model: `${this.info.model.providerID}/${this.info.model.id}` }
 				: {}),
 		};
 	}
 	active(): boolean {
-		return this.model?.providerID === "chappie";
+		return this.info.model?.providerID === "chappie";
 	}
 	isIdle(): boolean {
 		return !this.busy;
@@ -114,85 +115,49 @@ class OpenSession implements Host {
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
-		const result = await this.#input.client.command.list({
-			throwOnError: true,
-		});
+		const result = await this.#context.skill.list();
 		return {
 			tools: this.catalog ?? [],
-			skills: ((result.data ?? []) as Command[])
-				.filter((command) => command.source === "skill")
-				.map((command) => ({
-					name: command.name,
-					description: command.description ?? "",
-				})),
+			skills: result.data.map((skill) => ({
+				name: skill.name,
+				description: skill.description ?? "",
+			})),
 			...(globalAgents ? { globalAgents } : {}),
 		};
 	}
-	async transcript(): Promise<Transcript> {
-		const result = await this.#input.client.session.messages({
-			path: { id: this.info.id },
-			throwOnError: true,
-		});
-		return result.data ?? [];
-	}
-	async history(range: HistoryRange) {
-		const entries: HistoryEntry[] = [];
-		for (const { info, parts } of await this.transcript()) {
-			if (
-				this.#controls.has(info.id) ||
-				(info.role === "user" && parts.length === 0)
-			)
-				continue;
-			if (this.info.revert && info.id >= this.info.revert.messageID) break;
-			const content = await messageContent(parts);
-			const origin = parts.find(
-				(part) => "metadata" in part && part.metadata?.chappie,
-			);
-			const source =
-				origin && "metadata" in origin
-					? (origin.metadata?.chappie as Source | undefined)
-					: undefined;
-			const calls = parts.flatMap((part) =>
-				part.type === "tool"
-					? [
-							{
-								type: "toolCall" as const,
-								id: part.callID,
-								name: part.tool,
-								arguments: part.state.input,
-							},
-						]
-					: [],
-			);
-			entries.push({
-				id: info.id,
-				type: "message",
-				message: {
-					...info,
-					content: [...content, ...calls],
-					...(source ? { chappie: source } : {}),
-				},
-				...("created" in info.time
-					? { timestamp: new Date(info.time.created).toISOString() }
-					: {}),
+	async history(range: HistoryRange): Promise<HistoryResult> {
+		const client = await this.#client();
+		const messages: SessionMessageInfo[] = [];
+		let cursor: string | undefined;
+		do {
+			const page = await client.message.list({
+				sessionID: this.info.id,
+				limit: 200,
+				...(cursor ? { cursor } : { order: "asc" as const }),
 			});
-			for (const part of parts) {
-				if (part.type !== "tool") continue;
-				entries.push({
-					id: part.id,
-					type: "message",
-					message: {
-						role: "toolResult",
-						...(await resultFromPart(part)),
-						state: part.state,
-					},
-					...("time" in part.state
-						? { timestamp: new Date(part.state.time.start).toISOString() }
-						: {}),
-				});
-			}
-		}
-		return historyResult(entries, this.info.id, range);
+			messages.push(...page.data);
+			cursor = page.cursor.next ?? undefined;
+		} while (cursor);
+		const end = messages.findIndex(
+			(message) =>
+				message.id === this.info.revert?.messageID ||
+				(message.type === "assistant" &&
+					message.time.completed === undefined) ||
+				(message.type === "compaction" && message.status === "running") ||
+				(message.type === "shell" && message.time.completed === undefined),
+		);
+		const page = historyPage(
+			end === -1 ? messages : messages.slice(0, end),
+			range,
+			(message) => message.type !== "synthetic" || !message.metadata?.chappie,
+		);
+		const entries = await Promise.all(
+			page.entries.map((message) => historyEntry(message, this.info.id)),
+		);
+		return {
+			...historyResult(entries, this.info.id, { limit: range.limit }),
+			hasMore: page.hasMore,
+		};
 	}
 	inputs(): SessionInput[] {
 		const values = [...this.#inputs.values()];
@@ -202,69 +167,59 @@ class OpenSession implements Host {
 	resetInputs(): void {
 		this.#inputs.clear();
 	}
-	async input(info: Extract<Message, { role: "user" }>, parts: Part[]) {
-		if (this.#controls.has(info.id)) return;
-		const content = await messageContent(parts);
-		if (!this.firstPrompt)
-			this.firstPrompt = content
-				.filter((block) => block.type === "text")
-				.map((block) => block.text)
-				.join(" ");
-		this.#inputs.set(info.id, {
-			id: info.id,
+	input(message: SessionMessageUser): void {
+		if (!this.active()) return;
+		this.#inputs.set(message.id, {
+			id: message.id,
 			sessionId: this.info.id,
-			message: { role: "user", timestamp: info.time.created, content },
+			message: {
+				role: "user",
+				timestamp: message.time.created,
+				content: userContent(message),
+			},
 		});
-		this.session.historyChanged();
 	}
 	async wake(): Promise<void> {
 		if (this.busy) return;
-		const messageID = `msg_${Date.now().toString(16)}${randomUUID().replaceAll("-", "")}`;
-		this.#controls.add(messageID);
-		await this.#input.client.session.promptAsync({
-			path: { id: this.info.id },
-			body: {
-				messageID,
-				parts: [],
-				model: { providerID: "chappie", modelID: "chatgpt" },
-				...(this.info.agent ? { agent: this.info.agent } : {}),
-			},
-			throwOnError: true,
-		});
+		this.busy = true;
+		try {
+			await this.#context.session.synthetic({
+				sessionID: this.info.id,
+				text: "",
+				metadata: { chappie: true },
+			});
+		} catch (error) {
+			this.busy = false;
+			throw error;
+		}
 	}
 	async abort(): Promise<void> {
-		await this.#input.client.session.abort({
-			path: { id: this.info.id },
-			throwOnError: true,
-		});
+		await this.#context.session.interrupt({ sessionID: this.info.id });
 	}
-	async finish(): Promise<void> {
+	result(result: ToolResultMessage): void {
+		if (
+			this.output?.message.content.some(
+				(call) => call.type === "toolCall" && call.id === result.toolCallId,
+			)
+		)
+			this.#results.set(result.toolCallId, result);
+	}
+	finish(): void {
 		const output = this.output;
 		if (!output?.closed) return;
-		const ids = new Set(
-			output.message.content.flatMap((block) =>
-				block.type === "toolCall" ? [block.id] : [],
-			),
-		);
-		const results: ToolResultMessage[] = [];
-		if (ids.size) {
-			for (const { parts } of await this.transcript())
-				for (const part of parts) {
-					if (
-						part.type === "tool" &&
-						ids.has(part.callID) &&
-						(part.state.status === "completed" || part.state.status === "error")
-					)
-						results.push(await resultFromPart(part));
-				}
-		}
-		if (this.output === output) {
-			this.session.complete(output.message, results);
-			this.output = undefined;
-		}
+		this.session.complete(output.message, [...this.#results.values()]);
+		this.output = undefined;
+		this.#results.clear();
 	}
-	async stream(options: LanguageModelV3CallOptions) {
-		await this.finish();
+	async settled(error?: Error): Promise<void> {
+		this.busy = false;
+		if (this.output && !this.output.closed)
+			this.output.fail(error ?? new Error("OpenCode execution ended"));
+		this.finish();
+		await this.session.settled(error);
+	}
+	stream(options: LanguageModelV3CallOptions) {
+		this.finish();
 		this.catalog = (options.tools ?? []).flatMap((tool) =>
 			tool.type === "function"
 				? [
@@ -310,249 +265,330 @@ class OpenSession implements Host {
 	}
 }
 
-const plugin: Plugin = async (input) => {
-	const config = await readConfig();
-	const owned = new Set<string>();
-	async function get(id: string): Promise<OpenSession> {
-		let state = sessions.get(id);
-		if (!state) {
-			const response = await input.client.session.get({
-				path: { id },
-				throwOnError: true,
+export default {
+	id: "chappie",
+	async setup(context) {
+		const config = await readConfig();
+		const owned = new Set<string>();
+		const controller = new AbortController();
+		let connection: OpenCodeClient | undefined;
+		async function client(): Promise<OpenCodeClient> {
+			if (connection) return connection;
+			const endpoint = config.opencode
+				? {
+						url: config.opencode.url,
+						...(config.opencode.password
+							? {
+									auth: {
+										type: "basic" as const,
+										username: "opencode",
+										password: config.opencode.password,
+									},
+								}
+							: {}),
+					}
+				: await discover();
+			if (!endpoint)
+				throw new Error(
+					"OpenCode service is unavailable; configure opencode.url for a standalone server",
+				);
+			const api = OpenCode.make({
+				baseUrl: endpoint.url,
+				headers: headers({
+					url: endpoint.url,
+					...(endpoint.auth ? { auth: endpoint.auth } : {}),
+				}),
 			});
-			if (!response.data) throw new Error(`Session ${id} is unavailable`);
+			const info = await api.server.info({ signal: controller.signal });
+			if (info.pid !== process.pid)
+				throw new Error("OpenCode endpoint belongs to another server process");
+			connection = api;
+			return api;
+		}
+		async function get(id: string): Promise<OpenSession> {
 			const existing = sessions.get(id);
 			if (existing) return existing;
-			state = new OpenSession(response.data as SessionInfo, input, config);
+			const info = await context.session.get({ sessionID: id });
+			const previous = sessions.get(id);
+			if (previous) return previous;
+			const state = new OpenSession(info, context, client, config);
 			sessions.set(id, state);
 			owned.add(id);
 			state.session.update();
+			return state;
 		}
-		return state;
-	}
-	queueMicrotask(() => {
-		void input.client.session
-			.list({ throwOnError: true })
-			.then(async ({ data }) => {
-				for (const info of data ?? [])
-					if ((info as SessionInfo).model?.providerID === "chappie")
-						await get(info.id);
-			})
-			.catch((error: unknown) =>
-				input.client.app.log({
-					body: {
-						service: "chappie",
-						level: "error",
-						message: error instanceof Error ? error.message : String(error),
-					},
-				}),
-			);
-	});
-	const tools: Record<string, ToolDefinition> = Object.fromEntries(
-		definitions.map((definition) => [
-			definition.name,
-			{
-				description: definition.description,
-				args: definition.parameters.shape as unknown as ToolDefinition["args"],
-				async execute(
-					args: unknown,
-					context: { sessionID: string; abort: AbortSignal },
-				) {
-					const state = await get(context.sessionID);
-					const tool = state.tools.find(
-						(tool) => tool.name === definition.name,
-					);
-					if (!tool) throw new Error(`Unknown tool: ${definition.name}`);
-					const result = await tool.execute(args, context.abort);
-					const output = result.content
-						.filter((block) => block.type === "text")
-						.map((block) => block.text)
-						.join("\n");
-					if (result.isError) throw new Error(output);
-					return {
-						output,
-						metadata:
-							result.details && typeof result.details === "object"
-								? { ...result.details }
-								: {},
-						attachments: result.content.flatMap((block) =>
-							block.type === "image"
-								? [
-										{
-											type: "file" as const,
-											mime: block.mimeType,
-											url: `data:${block.mimeType};base64,${block.data}`,
-										},
-									]
-								: [],
-						),
-					};
+		const providerID = "chappie" as Provider.ID;
+		const modelID = "chatgpt" as Model.ID;
+		await context.provider.transform((editor) =>
+			editor.add({
+				info: {
+					id: providerID,
+					name: "Chappie",
+					activation: "enabled",
+					package: `aisdk:${import.meta.url}`,
 				},
-			},
-		]),
-	);
-	return {
-		tool: tools,
-		async config(configuration) {
-			configuration.provider ??= {};
-			configuration.provider.chappie = {
-				name: "Chappie",
-				npm: import.meta.url,
-				models: {
-					chatgpt: {
+				models: [
+					{
+						id: modelID,
+						modelID,
+						providerID,
 						name: "ChatGPT",
-						attachment: true,
-						tool_call: true,
-						reasoning: false,
+						capabilities: {
+							tools: true,
+							input: ["text", "image"],
+							output: ["text"],
+						},
+						variants: [],
+						time: { released: 0 },
+						cost: [],
+						status: "active",
+						enabled: true,
 						limit: { context: 1_000_000_000, output: 1_000_000_000 },
-						modalities: { input: ["text", "image"], output: ["text"] },
-						cost: { input: 0, output: 0 },
 					},
-				},
+				],
+			}),
+		);
+		await context.tool.transform((editor) => {
+			for (const definition of definitions)
+				editor.add({
+					name: definition.name,
+					description: definition.description,
+					input: z.toJSONSchema(definition.parameters),
+					options: { codemode: false },
+					async execute(args, toolContext) {
+						const state = await get(toolContext.sessionID);
+						const tool = state.tools.find(
+							(tool) => tool.name === definition.name,
+						);
+						if (!tool) throw new Error(`Unknown tool: ${definition.name}`);
+						const result = await tool.execute(args, toolContext.signal);
+						if (result.isError)
+							throw new Error(
+								result.content
+									.filter((block) => block.type === "text")
+									.map((block) => block.text)
+									.join("\n"),
+							);
+						return {
+							content: result.content.map((block) =>
+								block.type === "image"
+									? {
+											type: "file" as const,
+											uri: `data:${block.mimeType};base64,${block.data}`,
+											mime: block.mimeType,
+										}
+									: block,
+							),
+							...(result.details && typeof result.details === "object"
+								? { metadata: { ...result.details } }
+								: {}),
+						};
+					},
+				});
+		});
+		await context.tool.hook("execute.after", async (event) => {
+			const state = sessions.get(event.sessionID);
+			if (!state?.active() || !state.output) return;
+			state.result({
+				toolCallId: event.id,
+				toolName: event.tool,
+				content:
+					event.status === "error"
+						? [{ type: "text", text: event.error.message }]
+						: await toolContent(
+								typeof event.result.content === "string"
+									? [{ type: "text", text: event.result.content }]
+									: (event.result.content ?? []),
+							),
+				isError: event.status === "error",
+				...(event.status === "completed" && event.result.metadata
+					? { details: event.result.metadata }
+					: {}),
+			});
+		});
+		await context.session.hook("prompt", async (event) => {
+			const state = await get(event.sessionID);
+			if (state.active() && !state.title)
+				state.title = event.prompt.text.split("\n")[0]?.slice(0, 100) ?? "";
+		});
+		await context.session.hook("context", async (event) => {
+			const state = await get(event.sessionID);
+			state.info.model = {
+				id: event.model.id,
+				providerID: event.model.providerID,
+				...(event.model.variant ? { variant: event.model.variant } : {}),
 			};
-		},
-		async "chat.message"(_request, output) {
-			const state = await get(output.message.sessionID);
-			state.model = output.message.model;
+			state.busy = true;
 			state.session.update();
-			await state.input(output.message, output.parts);
-		},
-		async "chat.params"(request) {
-			const state = await get(request.sessionID);
-			state.model = request.message.model;
-			state.session.update();
-			request.message.tools ??= {};
-			for (const name of Object.keys(tools))
-				request.message.tools[name] = state.active()
-					? name === "transfer"
-					: state.session.localTools;
-		},
-		async "chat.headers"(request, output) {
-			await get(request.sessionID);
-			output.headers["x-chappie-session"] = request.sessionID;
-			output.headers["x-chappie-agent"] = request.agent;
-		},
-		async event({ event }) {
-			if (
-				event.type === "session.created" ||
-				event.type === "session.updated"
-			) {
-				const state = await get(event.properties.info.id);
-				state.info = event.properties.info as SessionInfo;
-				if (state.info.model)
-					state.model = {
-						providerID: state.info.model.providerID,
-						modelID: state.info.model.id,
-					};
-				state.session.update();
-			} else if (event.type === "session.deleted") {
-				const id = event.properties.info.id;
-				sessions.get(id)?.session.close();
-				sessions.delete(id);
-				owned.delete(id);
-			} else if (event.type === "session.status") {
-				const state = await get(event.properties.sessionID);
-				state.busy = event.properties.status.type !== "idle";
-				if (!state.busy) {
-					await state.finish();
-					await state.session.settled();
-				}
-			} else if (
-				event.type === "message.part.updated" ||
-				event.type === "message.part.removed" ||
-				event.type === "message.updated" ||
-				event.type === "message.removed"
-			) {
-				const properties = event.properties;
-				const id =
-					"info" in properties
-						? properties.info.sessionID
-						: "part" in properties
-							? properties.part.sessionID
-							: properties.sessionID;
-				sessions.get(id)?.session.historyChanged();
+			for (const tool of definitions)
+				if (
+					state.active() ? tool.name !== "transfer" : !state.session.localTools
+				)
+					delete event.tools[tool.name];
+			if (state.active()) {
+				event.messages = [];
+				event.system = [];
 			}
-		},
-		async dispose() {
+		});
+		await context.session.hook(
+			"model.request",
+			(event) => {
+				event.headers["x-chappie-kind"] = event.kind;
+			},
+			{ providerID },
+		);
+		await context.session.hook(
+			"title",
+			async (event) => {
+				const state = await get(event.sessionID);
+				event.result = state.title || state.info.title || "ChatGPT";
+			},
+			{ providerID },
+		);
+		await context.session.hook(
+			"compaction",
+			(event) => {
+				event.result = { summary: "" };
+			},
+			{ providerID },
+		);
+
+		const report = (error: unknown) => {
+			if (!controller.signal.aborted) console.error(error);
+		};
+		const scanning = (async () => {
+			const api = await client();
+			const active = await api.session.active({ signal: controller.signal });
+			let cursor: string | undefined;
+			do {
+				const page = await api.session.list(
+					{
+						directory: context.location.directory,
+						...(cursor ? { cursor } : {}),
+					},
+					{ signal: controller.signal },
+				);
+				for (const info of page.data) {
+					if (info.model?.providerID !== providerID) continue;
+					const state = await get(info.id);
+					state.busy = Boolean(active[info.id]);
+				}
+				cursor = page.cursor.next ?? undefined;
+			} while (cursor);
+		})().catch(report);
+		const listening = (async () => {
+			for await (const event of context.event.subscribe({
+				signal: controller.signal,
+			})) {
+				if (
+					!("sessionID" in event.data) ||
+					typeof event.data.sessionID !== "string"
+				)
+					continue;
+				const id = event.data.sessionID;
+				if (
+					!sessions.has(id) &&
+					event.location?.directory !== context.location.directory
+				)
+					continue;
+				if (event.type === "session.deleted") {
+					sessions.get(id)?.session.close();
+					sessions.delete(id);
+					owned.delete(id);
+					continue;
+				}
+				const state = await get(id);
+				if (event.type === "session.model.selected") {
+					state.info.model = event.data.model;
+					state.catalog = undefined;
+					state.session.update();
+				} else if (event.type === "session.renamed") {
+					state.info.title = event.data.title;
+					state.session.update();
+				} else if (
+					event.type === "session.moved" ||
+					event.type === "session.revert.staged" ||
+					event.type === "session.revert.cleared" ||
+					event.type === "session.revert.committed"
+				) {
+					state.info = await context.session.get({ sessionID: id });
+					state.session.update();
+				} else if (event.type === "session.inbox.delivered" && state.active()) {
+					const api = await client();
+					const message = await api.session.message.get(
+						{ sessionID: id, messageID: event.data.inboxID },
+						{ signal: controller.signal },
+					);
+					if (message.type === "user") state.input(message);
+				} else if (event.type === "session.execution.started") {
+					state.busy = true;
+				} else if (
+					event.type === "session.execution.succeeded" ||
+					event.type === "session.execution.failed" ||
+					event.type === "session.execution.interrupted"
+				) {
+					await state.settled(
+						event.type === "session.execution.failed"
+							? new Error(event.data.error.message)
+							: undefined,
+					);
+				}
+				state.session.historyChanged();
+			}
+		})().catch(report);
+		return async () => {
+			controller.abort();
 			for (const id of owned) {
 				sessions.get(id)?.session.close();
 				sessions.delete(id);
 			}
-		},
-	};
-};
-
-export default { id: "chappie", server: plugin } satisfies PluginModule;
+			await Promise.all([scanning, listening]);
+		};
+	},
+} satisfies Plugin.Plugin;
 
 export function createChappie() {
-	const languageModel = (modelId: string): LanguageModelV3 => {
-		const model: LanguageModelV3 = {
-			specificationVersion: "v3",
-			provider: "chappie",
-			modelId,
-			supportedUrls: {},
-			async doStream(options) {
-				const state = sessions.get(
-					options.headers?.["x-chappie-session"] ?? "",
-				);
-				if (!state) throw new Error("OpenCode session is unavailable");
-				const purpose = options.headers?.["x-chappie-agent"];
-				if (
-					purpose === "title" ||
-					purpose === "summary" ||
-					purpose === "compaction"
-				) {
-					const text =
-						purpose === "title"
-							? state.firstPrompt.split("\n")[0]?.slice(0, 100) ||
-								state.info.title
-							: JSON.stringify(await state.transcript());
-					return {
-						stream: new ReadableStream<LanguageModelV3StreamPart>({
-							start(controller) {
-								controller.enqueue({ type: "stream-start", warnings: [] });
-								controller.enqueue({ type: "text-start", id: "text" });
-								controller.enqueue({
-									type: "text-delta",
-									id: "text",
-									delta: text,
-								});
-								controller.enqueue({ type: "text-end", id: "text" });
-								controller.enqueue({
-									type: "finish",
-									finishReason: { unified: "stop", raw: "stop" },
-									usage,
-								});
-								controller.close();
-							},
-						}),
-					};
-				}
-				return state.stream(options);
-			},
-			async doGenerate(options) {
-				const { stream } = await model.doStream(options);
-				const content: LanguageModelV3Content[] = [];
-				let finishReason: { unified: "stop" | "tool-calls"; raw: string } = {
-					unified: "stop",
-					raw: "stop",
-				};
-				for await (const part of stream) {
-					if (part.type === "text-delta") {
-						const last = content.at(-1);
-						if (last?.type === "text") last.text += part.delta;
-						else content.push({ type: "text", text: part.delta });
-					} else if (part.type === "tool-call") {
-						content.push(part);
-						finishReason = { unified: "tool-calls", raw: "toolUse" };
-					} else if (part.type === "error") throw part.error;
-				}
-				return { content, finishReason, usage, warnings: [] };
-			},
-		};
-		return model;
-	};
 	return { languageModel };
+}
+
+function languageModel(modelId: string): LanguageModelV3 {
+	const model: LanguageModelV3 = {
+		specificationVersion: "v3",
+		provider: "chappie",
+		modelId,
+		supportedUrls: {},
+		async doStream(options) {
+			if (options.headers?.["x-chappie-kind"] !== "primary")
+				throw new Error(
+					"Chappie model requests are driven through chat and call",
+				);
+			const id = options.headers?.["x-opencode-session"];
+			if (!id) throw new Error("OpenCode did not provide a session ID");
+			const state = sessions.get(id);
+			if (!state) throw new Error("OpenCode session is unavailable");
+			return state.stream(options);
+		},
+		async doGenerate(options) {
+			const { stream } = await model.doStream(options);
+			const content: LanguageModelV3Content[] = [];
+			let finishReason: { unified: "stop" | "tool-calls"; raw: string } = {
+				unified: "stop",
+				raw: "stop",
+			};
+			for await (const part of stream) {
+				if (part.type === "text-delta") {
+					const last = content.at(-1);
+					if (last?.type === "text") last.text += part.delta;
+					else content.push({ type: "text", text: part.delta });
+				} else if (part.type === "tool-call") {
+					content.push(part);
+					finishReason = { unified: "tool-calls", raw: "toolUse" };
+				} else if (part.type === "error") throw part.error;
+			}
+			return { content, finishReason, usage, warnings: [] };
+		},
+	};
+	return model;
 }
 
 function streamEvent<M extends StreamMessage>(
@@ -601,6 +637,7 @@ function streamEvent<M extends StreamMessage>(
 					raw: event.reason,
 				},
 				usage,
+				...metadata,
 			});
 			break;
 		case "error":
@@ -612,60 +649,135 @@ function streamEvent<M extends StreamMessage>(
 	}
 }
 
-async function messageContent(parts: Part[]): Promise<Content[]> {
-	const content: Content[] = [];
-	for (const part of parts) {
-		if (part.type === "text" && !part.ignored)
-			content.push({ type: "text", text: part.text });
-		else if (part.type === "file") content.push(await attachment(part));
-		else if (part.type === "reasoning")
-			content.push({ type: "text", text: part.text });
-	}
-	return content;
-}
-
-async function attachment(
-	file: Pick<FilePart, "url" | "mime" | "filename">,
-): Promise<Content> {
-	if (!file.mime.startsWith("image/"))
-		return { type: "text", text: JSON.stringify({ file }) };
-	let data: Buffer;
-	if (file.url.startsWith("file:"))
-		data = await readFile(fileURLToPath(file.url));
-	else {
-		const response = await fetch(file.url);
-		if (!response.ok)
-			throw new Error(`Image request failed with HTTP ${response.status}`);
-		data = Buffer.from(await response.arrayBuffer());
-	}
-	return { type: "image", data: data.toString("base64"), mimeType: file.mime };
-}
-
-async function resultFromPart(
-	part: Extract<Part, { type: "tool" }>,
-): Promise<ToolResultMessage> {
-	const state = part.state;
-	const content: Content[] = [
-		{
-			type: "text",
-			text:
-				state.status === "completed"
-					? state.output
-					: state.status === "error"
-						? state.error
-						: state.status,
-		},
+function userContent(message: SessionMessageUser): Content[] {
+	return [
+		{ type: "text", text: message.text },
+		...(message.files ?? []).map(
+			(file): Content =>
+				file.mime.startsWith("image/")
+					? { type: "image", data: file.data, mimeType: file.mime }
+					: {
+							type: "text",
+							text: JSON.stringify({
+								file: { mime: file.mime, name: file.name, source: file.source },
+							}),
+						},
+		),
 	];
-	if (state.status === "completed")
-		for (const file of state.attachments ?? [])
-			content.push(await attachment(file));
+}
+
+async function toolContent(
+	blocks: readonly (
+		| { type: "text"; text: string }
+		| { type: "file"; uri: string; mime: string }
+	)[],
+): Promise<Content[]> {
+	return Promise.all(
+		blocks.map(async (block): Promise<Content> => {
+			if (block.type === "text") return block;
+			if (!block.mime.startsWith("image/"))
+				return { type: "text", text: JSON.stringify({ file: block }) };
+			let data: Buffer;
+			if (block.uri.startsWith("file:"))
+				data = await readFile(fileURLToPath(block.uri));
+			else {
+				const response = await fetch(block.uri);
+				if (!response.ok)
+					throw new Error(`Image request failed with HTTP ${response.status}`);
+				data = Buffer.from(await response.arrayBuffer());
+			}
+			return {
+				type: "image",
+				data: data.toString("base64"),
+				mimeType: block.mime,
+			};
+		}),
+	);
+}
+
+async function historyEntry(
+	message: SessionMessageInfo,
+	sessionId: string,
+): Promise<HistoryEntry> {
+	const record: Record<string, unknown> = { ...message, role: message.type };
+	const content: HistoryResult["content"] = [];
+	switch (message.type) {
+		case "user":
+			delete record.text;
+			delete record.files;
+			content.push(...userContent(message));
+			break;
+		case "assistant":
+			delete record.content;
+			if (message.providerState?.chappie)
+				record.chappie = message.providerState.chappie;
+			for (const part of message.content) {
+				if (part.type === "text" || part.type === "reasoning")
+					content.push({ type: "text", text: part.text });
+				else {
+					content.push({
+						type: "text",
+						text: JSON.stringify({
+							toolCallId: part.id,
+							toolName: part.name,
+							arguments: part.state.input,
+							time: part.time,
+						}),
+					});
+					if (
+						part.state.status === "completed" ||
+						part.state.status === "error"
+					) {
+						const result: ToolResultMessage = {
+							toolCallId: part.id,
+							toolName: part.name,
+							content: await toolContent(
+								part.state.content ?? [
+									{
+										type: "text",
+										text:
+											part.state.status === "error"
+												? part.state.error.message
+												: "",
+									},
+								],
+							),
+							isError: part.state.status === "error",
+							...(part.state.metadata ? { details: part.state.metadata } : {}),
+						};
+						content.push(...toolResultsContent([result], sessionId));
+					}
+				}
+			}
+			break;
+		case "compaction":
+			if (message.status === "completed") {
+				delete record.summary;
+				delete record.recent;
+				delete record.providerContext;
+				content.push(
+					{ type: "text", text: message.summary },
+					{ type: "text", text: message.recent },
+				);
+			}
+			break;
+		case "shell":
+			delete record.output;
+			content.push({
+				type: "text",
+				text: JSON.stringify(message.output) ?? "",
+			});
+			break;
+		default:
+			if ("text" in message) {
+				delete record.text;
+				content.push({ type: "text", text: message.text });
+			}
+	}
 	return {
-		toolCallId: part.callID,
-		toolName: part.tool,
-		content,
-		isError: state.status === "error",
-		...("metadata" in state && state.metadata
-			? { details: state.metadata }
-			: {}),
+		id: message.id,
+		type: "message",
+		timestamp: new Date(message.time.created).toISOString(),
+		message: { ...record, content },
 	};
 }

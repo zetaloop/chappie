@@ -14,7 +14,7 @@ Configuration and persisted broker state live in `~/.chappie`. Session connectio
 
 Native transcripts remain in their host's storage. History returns native IDs and recorded timestamps through an independent request. Its cursor is separate from input and pending-result delivery.
 
-Pi and OMP register native streaming providers. OpenCode registers a server plugin and AI SDK provider sharing a session map. The Codex plugin starts a local Responses service and joins native threads through app-server. Its control socket carries WebSocket traffic. The Codex MCP configuration invokes the same package by name and selects its Chappie-mode tool catalog.
+Pi and OMP register native streaming providers. OpenCode registers an AI SDK provider through native plugin hooks and reads complete transcripts through the host's HTTP API. The Codex plugin starts a local Responses service and joins native threads through app-server. Its control socket carries WebSocket traffic. The Codex MCP configuration invokes the same package by name and selects its Chappie-mode tool catalog.
 
 ## Development
 
