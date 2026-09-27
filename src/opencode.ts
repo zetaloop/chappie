@@ -61,6 +61,7 @@ class OpenSession implements Host {
 	readonly #client: Client;
 	readonly #inputs = new Map<string, SessionInput>();
 	readonly #results = new Map<string, ToolResultMessage>();
+	#step: PromiseWithResolvers<void> | undefined;
 	info: SessionInfo;
 	busy = false;
 	output: Output | undefined;
@@ -99,7 +100,7 @@ class OpenSession implements Host {
 		return !this.busy;
 	}
 	async inspect(signal: AbortSignal): Promise<Environment> {
-		if (!this.catalog) await this.session.ready(signal);
+		await this.session.ready(signal);
 		const path = join(
 			process.env.OPENCODE_CONFIG_DIR ??
 				join(
@@ -196,30 +197,54 @@ class OpenSession implements Host {
 	async abort(): Promise<void> {
 		await this.#context.session.interrupt({ sessionID: this.info.id });
 	}
-	result(result: ToolResultMessage): void {
-		if (
-			this.output?.message.content.some(
-				(call) => call.type === "toolCall" && call.id === result.toolCallId,
-			)
-		)
-			this.#results.set(result.toolCallId, result);
+	async result(
+		id: string,
+		content: Parameters<typeof toolContent>[0],
+		isError: boolean,
+		details?: unknown,
+	): Promise<void> {
+		const call = this.output?.message.content.find(
+			(block) => block.type === "toolCall" && block.id === id,
+		);
+		if (call?.type !== "toolCall") return;
+		this.#results.set(id, {
+			toolCallId: id,
+			toolName: call.name,
+			content: await toolContent(content),
+			isError,
+			...(details ? { details } : {}),
+		});
 	}
-	finish(): void {
+	finish(error?: string): void {
 		const output = this.output;
-		if (!output?.closed) return;
-		this.session.complete(output.message, [...this.#results.values()]);
+		if (!output) return;
+		if (!output.closed)
+			output.fail(
+				new Error(error ?? "OpenCode step ended before its provider response"),
+			);
+		this.session.complete(output.message, [...this.#results.values()], error);
 		this.output = undefined;
 		this.#results.clear();
+		this.#step?.resolve();
+		this.#step = undefined;
+	}
+	close(): void {
+		this.session.close();
+		this.output = undefined;
+		this.#results.clear();
+		this.#step?.resolve();
+		this.#step = undefined;
 	}
 	async settled(error?: Error): Promise<void> {
+		if (this.output) return;
 		this.busy = false;
-		if (this.output && !this.output.closed)
-			this.output.fail(error ?? new Error("OpenCode execution ended"));
-		this.finish();
+		this.catalog = undefined;
 		await this.session.settled(error);
 	}
-	stream(options: LanguageModelV3CallOptions) {
-		this.finish();
+	async stream(options: LanguageModelV3CallOptions) {
+		await this.#step?.promise;
+		options.abortSignal?.throwIfAborted();
+		this.#step = Promise.withResolvers<void>();
 		this.catalog = (options.tools ?? []).flatMap((tool) =>
 			tool.type === "function"
 				? [
@@ -379,26 +404,6 @@ export default {
 					},
 				});
 		});
-		await context.tool.hook("execute.after", async (event) => {
-			const state = sessions.get(event.sessionID);
-			if (!state?.active() || !state.output) return;
-			state.result({
-				toolCallId: event.id,
-				toolName: event.tool,
-				content:
-					event.status === "error"
-						? [{ type: "text", text: event.error.message }]
-						: await toolContent(
-								typeof event.result.content === "string"
-									? [{ type: "text", text: event.result.content }]
-									: (event.result.content ?? []),
-							),
-				isError: event.status === "error",
-				...(event.status === "completed" && event.result.metadata
-					? { details: event.result.metadata }
-					: {}),
-			});
-		});
 		await context.session.hook("prompt", async (event) => {
 			const state = await get(event.sessionID);
 			if (state.active() && !state.title)
@@ -485,7 +490,7 @@ export default {
 				)
 					continue;
 				if (event.type === "session.deleted") {
-					sessions.get(id)?.session.close();
+					sessions.get(id)?.close();
 					sessions.delete(id);
 					owned.delete(id);
 					continue;
@@ -513,6 +518,32 @@ export default {
 						{ signal: controller.signal },
 					);
 					if (message.type === "user") state.input(message);
+				} else if (event.type === "session.tool.success") {
+					await state.result(
+						event.data.id,
+						event.data.content,
+						false,
+						event.data.metadata,
+					);
+				} else if (event.type === "session.tool.failed") {
+					await state.result(
+						event.data.id,
+						[
+							...(event.data.content ?? []),
+							{ type: "text", text: event.data.error.message },
+						],
+						true,
+						event.data.metadata,
+					);
+				} else if (
+					event.type === "session.step.ended" ||
+					event.type === "session.step.failed"
+				) {
+					state.finish(
+						event.type === "session.step.failed"
+							? event.data.error.message
+							: undefined,
+					);
 				} else if (event.type === "session.execution.started") {
 					state.busy = true;
 				} else if (
@@ -523,7 +554,11 @@ export default {
 					await state.settled(
 						event.type === "session.execution.failed"
 							? new Error(event.data.error.message)
-							: undefined,
+							: event.type === "session.execution.interrupted"
+								? new Error(
+										`OpenCode execution interrupted: ${event.data.reason}`,
+									)
+								: undefined,
 					);
 				}
 				state.session.historyChanged();
@@ -532,7 +567,7 @@ export default {
 		return async () => {
 			controller.abort();
 			for (const id of owned) {
-				sessions.get(id)?.session.close();
+				sessions.get(id)?.close();
 				sessions.delete(id);
 			}
 			await Promise.all([scanning, listening]);

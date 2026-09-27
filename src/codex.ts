@@ -119,7 +119,7 @@ class CodexSession implements Host {
 	}
 
 	async inspect(signal: AbortSignal): Promise<Environment> {
-		if (!this.catalog) await this.session.ready(signal);
+		await this.session.ready(signal);
 		const result = await this.#server.request<{
 			data: { skills: { name: string; description: string; path: string }[] }[];
 		}>("skills/list", { cwds: [this.thread.cwd] });
@@ -355,10 +355,17 @@ class CodexSession implements Host {
 						};
 					}),
 			);
-			this.session.complete(output.message, results);
+			this.session.complete(
+				output.message,
+				results,
+				turn.status === "completed"
+					? undefined
+					: (turn.error?.message ?? `Codex turn ${turn.status}`),
+			);
 			this.output = undefined;
 		}
 		this.#results.clear();
+		this.catalog = undefined;
 		await this.session.settled(
 			turn.error ? new Error(turn.error.message) : undefined,
 		);

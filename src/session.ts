@@ -50,6 +50,7 @@ interface ActiveRequest {
 	session: SessionDescription;
 	message: AssistantMessage;
 	completed: boolean;
+	error?: string;
 	cancelled: string | undefined;
 	toolResults: ToolResultMessage[];
 }
@@ -191,10 +192,24 @@ export class Session {
 	}
 
 	async settled(error?: unknown): Promise<void> {
+		const starting = this.#starting;
 		this.#starting = false;
-		this.#rejectReady(
-			error ?? new Error("Session turn ended before tools became available"),
-		);
+		const reason =
+			error instanceof Error
+				? error.message
+				: error === undefined
+					? "Session ended before the request completed"
+					: String(error);
+		if (error !== undefined || starting)
+			this.#rejectReady(error ?? new Error(reason));
+		const active = this.#active;
+		if (active && !active.completed) {
+			active.completed = true;
+			active.error = reason;
+		} else if (!active && starting) {
+			const request = this.#queue.shift();
+			if (request) await this.#sendError(request.id, reason);
+		}
 		this.#collectInputs();
 		this.historyChanged();
 		await this.#completeActive();
@@ -291,12 +306,9 @@ export class Session {
 		if (args.files) throw new Error("files and to are mutually exclusive");
 		if (args.paths.length !== args.to.paths.length)
 			throw new Error("Source and destination counts must match");
-		const inspected = await this.#request(
-			{ type: "inspect", sessionId: args.to.sessionId },
-			signal,
-		);
-		if (!("inspection" in inspected))
-			throw new Error("Session returned no environment");
+		const { sessions } = await this.sessions(args.to.sessionId, signal);
+		const destination = sessions[0];
+		if (!destination) throw new Error("Destination session is unavailable");
 		const exported = await transferFiles(
 			{ paths: args.paths },
 			context,
@@ -307,7 +319,7 @@ export class Session {
 			...exported.details,
 			to: {
 				sessionId: args.to.sessionId,
-				device: inspected.inspection.session.device,
+				device: destination.device,
 			},
 		});
 		const result = await this.#request(
@@ -696,15 +708,14 @@ export class Session {
 
 	#dispatch(): void {
 		if (this.#active) return;
-		const request = this.#queue[0];
-		if (!request) return;
 		const output = this.#output;
 		if (!output || output.closed) {
 			this.#wake();
 			return;
 		}
 
-		this.#queue.shift();
+		const request = this.#queue.shift();
+		if (!request) return;
 		output.message.chappie = source(
 			request.clientId,
 			request.requestId,
@@ -753,13 +764,20 @@ export class Session {
 			});
 	}
 
-	complete(message: unknown, toolResults: ToolResultMessage[]): void {
+	complete(
+		message: unknown,
+		toolResults: ToolResultMessage[],
+		error?: string,
+	): void {
 		this.historyChanged();
 		const active = this.#active;
-		const origin = (message as Partial<AssistantMessage> | undefined)?.chappie;
+		const completed = message as Partial<AssistantMessage> | undefined;
+		const origin = completed?.chappie;
+		const failure = error ?? completed?.errorMessage;
 		if (
 			!active ||
-			(message !== active.message &&
+			(failure === undefined &&
+				message !== active.message &&
 				(!origin ||
 					origin.clientId !== active.request.clientId ||
 					origin.requestId !== active.request.requestId))
@@ -775,8 +793,22 @@ export class Session {
 				),
 			]);
 		}
-		active.completed = true;
+		if (failure !== undefined) active.error = failure;
 		active.toolResults = toolResults;
+		if (active.request.type === "call") {
+			const results = new Map(
+				toolResults.map((result) => [result.toolCallId, result]),
+			);
+			active.toolResults = active.request.calls.flatMap(
+				(call) => results.get(call.id) ?? [],
+			);
+			const missing = active.request.calls.flatMap((call, index) =>
+				results.has(call.id) ? [] : [`${index + 1} (${call.name})`],
+			);
+			if (missing.length)
+				active.error ??= `No results for calls ${missing.join(", ")}`;
+		}
+		active.completed = true;
 	}
 
 	async #completeActive(): Promise<void> {
@@ -799,8 +831,8 @@ export class Session {
 			};
 			this.#deliveries.set(delivery.id, delivery);
 			void this.#flushDeliveries().catch(() => {});
-		} else if (active.message.errorMessage) {
-			await this.#sendError(active.request.id, active.message.errorMessage);
+		} else if (active.error !== undefined) {
+			await this.#sendError(active.request.id, active.error);
 		} else {
 			await this.#connection?.send({
 				type: "result",
