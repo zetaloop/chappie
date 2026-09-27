@@ -97,7 +97,6 @@ export async function serveCodexPlugin(chatgpt = false): Promise<void> {
 				const result = (await response.json()) as {
 					content: Content[];
 					details?: unknown;
-					isError?: boolean;
 					error?: { message: string };
 				};
 				if (!response.ok)
@@ -120,7 +119,6 @@ export async function serveCodexPlugin(chatgpt = false): Promise<void> {
 					...(result.details && typeof result.details === "object"
 						? { structuredContent: { details: result.details } }
 						: {}),
-					...(result.isError ? { isError: true } : {}),
 				};
 			},
 		);

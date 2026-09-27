@@ -10,7 +10,6 @@ import { callsInput, toolResult } from "./tools.ts";
 export interface NativeResult {
 	content: Content[];
 	details?: unknown;
-	isError?: boolean;
 }
 
 export interface NativeTool {
@@ -53,17 +52,27 @@ export const definitions = [
 		}),
 		async (session, { sessionId, calls }, signal) => {
 			const result = await session.call(sessionId, calls, signal);
+			const output = toolResult(
+				result.toolResults,
+				sessionId,
+				result.cwd,
+				result.inputs,
+			);
+			const content = nativeContent(output.content);
+			if (output.isError) {
+				throw new Error(
+					[...content, ...localDeliveries(session)]
+						.flatMap((block) => (block.type === "text" ? [block.text] : []))
+						.join("\n"),
+				);
+			}
 			return {
-				content: nativeContent(
-					toolResult(result.toolResults, sessionId, result.cwd, result.inputs)
-						.content,
-				),
+				content,
 				details: {
 					resources: result.toolResults.flatMap((result) =>
 						resourceDescriptors(result.details),
 					),
 				},
-				isError: result.toolResults.some((result) => result.isError),
 			};
 		},
 	),

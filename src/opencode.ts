@@ -362,13 +362,6 @@ export default {
 						);
 						if (!tool) throw new Error(`Unknown tool: ${definition.name}`);
 						const result = await tool.execute(args, toolContext.signal);
-						if (result.isError)
-							throw new Error(
-								result.content
-									.filter((block) => block.type === "text")
-									.map((block) => block.text)
-									.join("\n"),
-							);
 						return {
 							content: result.content.map((block) =>
 								block.type === "image"
