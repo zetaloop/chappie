@@ -9,7 +9,7 @@ export const callsInput = z
 	.array(
 		z.object({
 			name: z.string().min(1),
-			arguments: z.record(z.string(), z.unknown()),
+			arguments: z.record(z.string(), z.json()),
 		}),
 	)
 	.min(1);

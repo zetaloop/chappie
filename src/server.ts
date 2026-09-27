@@ -13,7 +13,13 @@ import {
 	questionInstructions,
 	questionOutput,
 } from "./questions.ts";
-import { callInput, inputContent, parseCalls, toolResult } from "./tools.ts";
+import {
+	callInput,
+	callsInput,
+	inputContent,
+	parseCalls,
+	toolResult,
+} from "./tools.ts";
 
 const instructions = readFileSync(
 	new URL("./instructions.md", import.meta.url),
@@ -377,7 +383,7 @@ export function createServer(broker: Broker): McpServer {
 			const result = await broker.call(
 				requireChatId(context),
 				sessionId,
-				[{ name: "transfer", arguments: input }],
+				callsInput.parse([{ name: "transfer", arguments: input }]),
 				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);

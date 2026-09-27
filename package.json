@@ -4,9 +4,9 @@
 	"description": "Connect ChatGPT to Pi",
 	"devDependencies": {
 		"@ai-sdk/provider": "^3.0.8",
-		"@earendil-works/pi-ai": "^0.85.1",
-		"@earendil-works/pi-coding-agent": "^0.85.1",
-		"@earendil-works/pi-tui": "^0.85.1",
+		"@earendil-works/pi-ai": "^0.87.1",
+		"@earendil-works/pi-coding-agent": "^0.87.1",
+		"@earendil-works/pi-tui": "^0.87.1",
 		"@modelcontextprotocol/server": "^2.0.0",
 		"@oh-my-pi/pi-ai": "^18.3.0",
 		"@oh-my-pi/pi-coding-agent": "^18.3.0",

@@ -2,6 +2,7 @@ import type { Activity, Source } from "./activity.ts";
 import type { FileMutation } from "./files.ts";
 import type { HistoryRange, HistoryResult } from "./history.ts";
 import type { SessionDescription, SessionInput } from "./ipc.ts";
+import type { ToolInput } from "./tools.ts";
 
 export interface TextContent {
 	type: "text";
@@ -16,11 +17,9 @@ export interface ImageContent {
 
 export type Content = TextContent | ImageContent;
 
-export interface ToolCall {
+export interface ToolCall extends ToolInput {
 	type: "toolCall";
 	id: string;
-	name: string;
-	arguments: Record<string, unknown>;
 }
 
 export interface ToolResultMessage {
