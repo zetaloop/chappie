@@ -20,7 +20,6 @@ import { discover, headers } from "@opencode/client/service";
 import type { Model, Plugin, Provider } from "@opencode/plugin";
 import * as z from "zod";
 import { type Config, readConfig } from "./config.ts";
-import { toolResultsContent } from "./delivery.ts";
 import {
 	type HistoryEntry,
 	type HistoryRange,
@@ -44,6 +43,7 @@ import {
 	type StreamEvent,
 	type StreamMessage,
 } from "./provider.ts";
+import { resourceDescriptors } from "./resources.ts";
 import { Session } from "./session.ts";
 
 const usage: LanguageModelV3Usage = {
@@ -128,36 +128,36 @@ class OpenSession implements Host {
 	async history(range: HistoryRange): Promise<HistoryResult> {
 		const client = await this.#client();
 		const messages: SessionMessageInfo[] = [];
+		const visible = (message: SessionMessageInfo) =>
+			message.type !== "synthetic" || !message.metadata?.chappie;
 		let cursor: string | undefined;
+		let current = this.info.revert === undefined;
+		let before = range.before === undefined;
+		let after = range.after === undefined;
+		let remaining = range.limit + 1;
 		do {
 			const page = await client.message.list({
 				sessionID: this.info.id,
-				limit: 200,
-				...(cursor ? { cursor } : { order: "asc" as const }),
+				limit: Math.min(range.limit + 1, 200),
+				...(cursor ? { cursor } : { order: "desc" as const }),
 			});
-			messages.push(...page.data);
+			for (const message of page.data) {
+				if (!current) {
+					if (message.id === this.info.revert?.messageID) current = true;
+					continue;
+				}
+				messages.push(message);
+				if (message.id === range.after) after = true;
+				if (!before) {
+					if (message.id === range.before) before = true;
+				} else if (visible(message)) remaining--;
+			}
 			cursor = page.cursor.next ?? undefined;
+			if (before && after && (range.after || remaining <= 0)) break;
 		} while (cursor);
-		const end = messages.findIndex(
-			(message) =>
-				message.id === this.info.revert?.messageID ||
-				(message.type === "assistant" &&
-					message.time.completed === undefined) ||
-				(message.type === "compaction" && message.status === "running") ||
-				(message.type === "shell" && message.time.completed === undefined),
-		);
-		const page = historyPage(
-			end === -1 ? messages : messages.slice(0, end),
-			range,
-			(message) => message.type !== "synthetic" || !message.metadata?.chappie,
-		);
-		const entries = await Promise.all(
-			page.entries.map((message) => historyEntry(message, this.info.id)),
-		);
-		return {
-			...historyResult(entries, this.info.id, { limit: range.limit }),
-			hasMore: page.hasMore,
-		};
+		const page = historyPage(messages.reverse(), range, visible);
+		const entries = await Promise.all(page.entries.map(historyEntry));
+		return historyResult({ ...page, entries }, this.info.id);
 	}
 	inputs(): SessionInput[] {
 		const values = [...this.#inputs.values()];
@@ -711,9 +711,8 @@ async function toolContent(
 
 async function historyEntry(
 	message: SessionMessageInfo,
-	sessionId: string,
 ): Promise<HistoryEntry> {
-	const record: Record<string, unknown> = { ...message, role: message.type };
+	const record: Record<string, unknown> = { ...message };
 	const content: HistoryResult["content"] = [];
 	switch (message.type) {
 		case "user":
@@ -729,51 +728,36 @@ async function historyEntry(
 				if (part.type === "text" || part.type === "reasoning")
 					content.push({ type: "text", text: part.text });
 				else {
+					const state: Record<string, unknown> = { ...part.state };
+					delete state.content;
 					content.push({
 						type: "text",
-						text: JSON.stringify({
-							toolCallId: part.id,
-							toolName: part.name,
-							arguments: part.state.input,
-							time: part.time,
-						}),
+						text: JSON.stringify({ ...part, state }),
 					});
 					if (
 						part.state.status === "completed" ||
 						part.state.status === "error"
 					) {
-						const result: ToolResultMessage = {
-							toolCallId: part.id,
-							toolName: part.name,
-							content: await toolContent(
-								part.state.content ?? [
-									{
-										type: "text",
-										text:
-											part.state.status === "error"
-												? part.state.error.message
-												: "",
-									},
-								],
-							),
-							isError: part.state.status === "error",
-							...(part.state.metadata ? { details: part.state.metadata } : {}),
-						};
-						content.push(...toolResultsContent([result], sessionId));
+						content.push(
+							...(await toolContent(part.state.content ?? [])),
+							...resourceDescriptors(part.state.metadata).map((resource) => ({
+								type: "resource_link" as const,
+								...resource,
+							})),
+						);
 					}
 				}
 			}
 			break;
 		case "compaction":
-			if (message.status === "completed") {
-				delete record.summary;
-				delete record.recent;
-				delete record.providerContext;
+			delete record.summary;
+			delete record.recent;
+			delete record.providerContext;
+			if ("summary" in message)
 				content.push(
 					{ type: "text", text: message.summary },
 					{ type: "text", text: message.recent },
 				);
-			}
 			break;
 		case "shell":
 			delete record.output;
@@ -789,9 +773,9 @@ async function historyEntry(
 			}
 	}
 	return {
+		...record,
 		id: message.id,
-		type: "message",
 		timestamp: new Date(message.time.created).toISOString(),
-		message: { ...record, content },
+		content,
 	};
 }

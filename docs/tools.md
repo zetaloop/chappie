@@ -75,7 +75,7 @@ The default is the latest 20 readable entries. `before` pages backward and `afte
 
 Use `after` with `wait: true` to follow progress. Available entries return immediately; at the end of the transcript the request waits up to 30 seconds, returning an empty page when no entries arrive. Reads with `before` return immediately.
 
-History includes native messages, tool calls and results, summaries, images, and resource references. Reading it uses an independent cursor from local input and pending-result delivery.
+History includes native messages, tool calls and results, summaries, images, and resource references. Each read reflects the host's current records, including work in progress. Re-read the same range to see updates to existing entries. Reading it uses an independent cursor from local input and pending-result delivery.
 
 ### Participation
 

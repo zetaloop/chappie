@@ -1,7 +1,6 @@
 import * as z from "zod";
-import type { Activity, Source } from "./activity.ts";
 import type { toolResultsContent } from "./delivery.ts";
-import type { AssistantMessage, Content } from "./host.ts";
+import type { Content } from "./host.ts";
 import {
 	contentWithImageReferences,
 	type ResourceDescriptor,
@@ -48,11 +47,9 @@ export interface HistoryResult {
 
 export interface HistoryEntry {
 	id: string;
-	type: string;
 	timestamp?: string;
-	message?: unknown;
-	customType?: string;
-	data?: unknown;
+	content?: unknown;
+	[key: string]: unknown;
 }
 
 export const historyInstructions =
@@ -74,45 +71,13 @@ export function historyPage<T extends { id: string }>(
 }
 
 export function historyResult(
-	branch: readonly HistoryEntry[],
+	{ entries, hasMore }: { entries: readonly HistoryEntry[]; hasMore: boolean },
 	sessionId: string,
-	range: HistoryRange,
 ): HistoryResult {
-	const { entries: selected, hasMore } = historyPage(branch, range, (entry) => {
-		switch (entry.type) {
-			case "message": {
-				const message = entry.message as { customType?: string };
-				return message.customType !== "chappie.request";
-			}
-			case "custom_message":
-				return entry.customType !== "chappie.request";
-			case "custom":
-				return (
-					entry.customType === "chappie.notice" &&
-					(entry.data as Activity | undefined)?.event !== "history"
-				);
-			case "compaction":
-			case "branch_summary":
-				return true;
-			default:
-				return false;
-		}
-	});
-	const sources = new Map<string, Source>();
-	for (const entry of branch) {
-		if (entry.type !== "message") continue;
-		const message = entry.message as AssistantMessage;
-		if (message.role !== "assistant" || !message.chappie) continue;
-		for (const block of message.content) {
-			if (block.type === "toolCall") sources.set(block.id, message.chappie);
-		}
-	}
 	return {
-		count: selected.length,
+		count: entries.length,
 		hasMore,
-		content: selected.flatMap((entry) =>
-			entryContent(entry, sessionId, sources),
-		),
+		content: entries.flatMap((entry) => entryContent(entry, sessionId)),
 	};
 }
 
@@ -126,23 +91,8 @@ function entryIndex(entries: readonly { id: string }[], id: string): number {
 function entryContent(
 	entry: HistoryEntry,
 	sessionId: string,
-	sources: Map<string, Source>,
 ): HistoryResult["content"] {
-	const record: Record<string, unknown> = { ...entry };
-	const message = (entry.type === "message" ? entry.message : entry) as Record<
-		string,
-		unknown
-	>;
-	if (!("content" in message))
-		return [{ type: "text", text: JSON.stringify(record) }];
-	const { content, ...metadata } = message;
-	if (entry.type === "message") {
-		const source =
-			message.role === "toolResult" && typeof message.toolCallId === "string"
-				? sources.get(message.toolCallId)
-				: undefined;
-		record.message = { ...metadata, ...(source ? { chappie: source } : {}) };
-	} else delete record.content;
+	const { content, ...record } = entry;
 	const result: HistoryResult["content"] = [
 		{ type: "text", text: JSON.stringify(record) },
 	];
@@ -173,7 +123,7 @@ function entryContent(
 			result.push({ type: "text", text: JSON.stringify(value) });
 		}
 	}
-	for (const resource of resourceDescriptors(message.details))
+	for (const resource of resourceDescriptors(entry.details))
 		result.push({ type: "resource_link", ...resource });
 	return result;
 }

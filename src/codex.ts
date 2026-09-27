@@ -183,20 +183,22 @@ class CodexSession implements Host {
 			page.entries.map(async (entry) => {
 				const timestamp = entry.startedAtMs ?? entry.completedAtMs;
 				return {
+					...(await itemMessage(entry.item)),
 					id: entry.id,
-					type: "message",
-					message: await itemMessage(entry.item),
 					turnId: entry.turnId,
 					...(timestamp !== null
 						? { timestamp: new Date(timestamp).toISOString() }
 						: {}),
-				} satisfies HistoryEntry & { turnId: string };
+				} satisfies HistoryEntry;
 			}),
 		);
-		return {
-			...historyResult(entries, this.thread.id, { limit: range.limit }),
-			hasMore: page.hasMore || (!range.after && cursor !== null),
-		};
+		return historyResult(
+			{
+				entries,
+				hasMore: page.hasMore || (!range.after && cursor !== null),
+			},
+			this.thread.id,
+		);
 	}
 
 	inputs(): SessionInput[] {

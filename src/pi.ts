@@ -23,9 +23,9 @@ import { Type } from "typebox";
 import * as z from "zod";
 import type { Activity } from "./activity.ts";
 import { readConfig } from "./config.ts";
-import { historyResult } from "./history.ts";
 import type { Host, Output } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
+import { journalHistory } from "./journal.ts";
 import { localDeliveries, localTools } from "./local.ts";
 import { createMessage, ProviderOutput } from "./provider.ts";
 import { Session } from "./session.ts";
@@ -86,7 +86,7 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 		},
 		async history(range) {
 			const manager = current().sessionManager;
-			return historyResult(manager.getBranch(), manager.getSessionId(), range);
+			return journalHistory(manager.getBranch(), manager.getSessionId(), range);
 		},
 		inputs(): SessionInput[] {
 			const manager = current().sessionManager;

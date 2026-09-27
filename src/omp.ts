@@ -13,9 +13,9 @@ import type { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-m
 import { getAgentDir } from "@oh-my-pi/pi-utils";
 import * as z from "zod";
 import { getDirectory, readConfig } from "./config.ts";
-import { historyResult } from "./history.ts";
 import type { Host } from "./host.ts";
 import { ipcEndpoint, type SessionInput } from "./ipc.ts";
+import { journalHistory } from "./journal.ts";
 import { localTools } from "./local.ts";
 import { createMessage, ProviderOutput } from "./provider.ts";
 import { Session } from "./session.ts";
@@ -70,7 +70,7 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 		},
 		async history(range) {
 			const ctx = current();
-			return historyResult(
+			return journalHistory(
 				ctx.sessionManager.getBranch(),
 				ctx.sessionManager.getSessionId(),
 				range,
