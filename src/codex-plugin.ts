@@ -1,17 +1,35 @@
 import { fork } from "node:child_process";
-import { mkdir, open } from "node:fs/promises";
+import {
+	copyFile,
+	mkdir,
+	mkdtempDisposable,
+	open,
+	rename,
+} from "node:fs/promises";
 import { get } from "node:http";
 import { join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import packageJson from "../package.json" with { type: "json" };
+import { AppServer } from "./appserver.ts";
 import { getDirectory, readConfig } from "./config.ts";
 import type { Content } from "./host.ts";
 import { definitions } from "./local.ts";
 import { type ResourceData, resourceDescriptors } from "./resources.ts";
 
-async function startProvider(): Promise<void> {
+export async function setupCodex(): Promise<string> {
 	await mkdir(getDirectory(), { recursive: true });
+	await using temporary = await mkdtempDisposable(
+		join(getDirectory(), ".chappie-"),
+	);
+	const staged = join(temporary.path, "codex.json");
+	await copyFile(new URL("./codex.json", import.meta.url), staged);
+	const path = join(getDirectory(), "codex.json");
+	await rename(staged, path);
+	return path;
+}
+
+async function startProvider(): Promise<void> {
 	await using log = await open(join(getDirectory(), "codex.log"), "a");
 	const child = fork(
 		new URL("./cli.js", import.meta.url),
@@ -40,8 +58,13 @@ async function startProvider(): Promise<void> {
 	}
 }
 
-export async function serveCodexPlugin(chatgpt = false): Promise<void> {
+export async function serveCodexPlugin(): Promise<void> {
+	await setupCodex();
 	const config = await readConfig();
+	const native = await AppServer.query<{ config: { model_provider?: string } }>(
+		"config/read",
+	);
+	const chatgpt = native.config.model_provider === "chappie";
 	await startProvider();
 	const base = `http://127.0.0.1:${config.codex?.port ?? 24275}`;
 	const attached = Promise.withResolvers<void>();

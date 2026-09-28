@@ -2,17 +2,17 @@
 
 ChatGPT uses the tools below. Agent sessions using ordinary models have a [local tool set](#local-models).
 
-| Tool | Purpose |
-|---|---|
-| `sessions` | Find sessions by agent, device, directory, or name. |
-| `init` | Select this ChatGPT conversation's default session and read its environment. |
-| `tools` | Read the selected session's native tool definitions. |
-| `call` | Execute a native tool batch. |
-| `chat` | Send an assistant message or answer a model request. |
-| `history` | Read the agent's transcript with entry IDs and timestamps. |
-| `transfer` | Exchange files and images with ChatGPT or another session. |
-| `ask` | Create a persistent question in ChatGPT. |
-| `ask_assert` | Confirm that its widget loaded. |
+| Tool         | Purpose                                                                      |
+| ------------ | ---------------------------------------------------------------------------- |
+| `sessions`   | Find sessions by agent, device, directory, or name.                          |
+| `init`       | Select this ChatGPT conversation's default session and read its environment. |
+| `tools`      | Read the selected session's native tool definitions.                         |
+| `call`       | Execute a native tool batch.                                                 |
+| `chat`       | Send an assistant message or answer a model request.                         |
+| `history`    | Read the agent's transcript with entry IDs and timestamps.                   |
+| `transfer`   | Exchange files and images with ChatGPT or another session.                   |
+| `ask`        | Create a persistent question in ChatGPT.                                     |
+| `ask_assert` | Confirm that its widget loaded.                                              |
 
 ## Sessions
 
@@ -149,14 +149,14 @@ Both sides use their existing broker connections and resolve paths on their own 
 
 Enable `localTools` in Chappie's configuration to provide these tools to ordinary models:
 
-| Tool | Target |
-|---|---|
-| `sessions` | Online Chappie sessions, with the current local ID reported as `self`. |
-| `remote_tools` | Tool definitions from the required `sessionId`. |
-| `remote_call` | One native tool batch in the required `sessionId`. |
-| `remote_chat` | An assistant message or model-request reply in the required `sessionId`. |
-| `history` | The current local transcript, or a Chappie session named by `sessionId`. |
-| `transfer` | Local files and resources exchanged with Chappie sessions. |
+| Tool           | Target                                                                   |
+| -------------- | ------------------------------------------------------------------------ |
+| `sessions`     | Online Chappie sessions, with the current local ID reported as `self`.   |
+| `remote_tools` | Tool definitions from the required `sessionId`.                          |
+| `remote_call`  | One native tool batch in the required `sessionId`.                       |
+| `remote_chat`  | An assistant message or model-request reply in the required `sessionId`. |
+| `history`      | The current local transcript, or a Chappie session named by `sessionId`. |
+| `transfer`     | Local files and resources exchanged with Chappie sessions.               |
 
 Use an ordinary model in the controlling session and the Chappie model in each target. This supports agent-to-agent collaboration, such as building a project on another operating system.
 
