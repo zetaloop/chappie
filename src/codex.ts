@@ -83,6 +83,7 @@ class CodexSession implements Host {
 	readonly tools;
 	readonly #server: AppServer;
 	readonly #inputs = new Map<string, SessionInput>();
+	readonly #seenInputs = new Set<string>();
 	readonly #results = new Map<string, Item>();
 	#attached = false;
 	thread: Thread;
@@ -236,9 +237,18 @@ class CodexSession implements Host {
 
 	async item(item: Item): Promise<void> {
 		if (!this.active()) return;
-		const seen = this.#results.has(item.id);
-		this.#results.set(item.id, item);
-		if (!seen && item.type === "userMessage" && item.content?.length) {
+		if (
+			this.output?.message.content.some(
+				(call) => call.type === "toolCall" && call.id === item.id,
+			)
+		)
+			this.#results.set(item.id, item);
+		if (
+			item.type === "userMessage" &&
+			item.content?.length &&
+			!this.#seenInputs.has(item.id)
+		) {
+			this.#seenInputs.add(item.id);
 			this.#inputs.set(item.id, {
 				id: item.id,
 				sessionId: this.thread.id,
@@ -302,6 +312,7 @@ class CodexSession implements Host {
 			}
 			this.session.complete(previous.message, results);
 			this.output = undefined;
+			this.#results.clear();
 		}
 		const metadata = request.client_metadata?.["x-codex-turn-metadata"];
 		const kind = metadata
@@ -381,6 +392,7 @@ class CodexSession implements Host {
 			this.output = undefined;
 		}
 		this.#results.clear();
+		this.#seenInputs.clear();
 		this.catalog = undefined;
 		await this.session.settled(
 			turn.error ? new Error(turn.error.message) : undefined,
