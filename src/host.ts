@@ -88,6 +88,5 @@ export interface Host {
 		type: "info" | "warning" | "error",
 		activity: Activity,
 	): void;
-	toolsChanged?(): void;
 	mutate?: FileMutation;
 }

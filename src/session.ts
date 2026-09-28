@@ -27,7 +27,6 @@ import {
 	type SessionDescription,
 	type SessionInput,
 	type SessionResult,
-	type SessionStatus,
 } from "./ipc.ts";
 import {
 	type ResourceDescriptor,
@@ -74,7 +73,6 @@ export class Session {
 	#connection: IpcClient | undefined;
 	#output: Output | undefined;
 	#active: ActiveRequest | undefined;
-	#status: SessionStatus = "idle";
 	#nextRequestId = 1;
 	#starting = false;
 	#sessionId: string | undefined;
@@ -87,11 +85,7 @@ export class Session {
 	}
 
 	get localTools(): boolean {
-		return Boolean(
-			this.#config.localTools &&
-				!this.#host.active() &&
-				this.#connection?.connected,
-		);
+		return Boolean(this.#config.localTools && !this.#host.active());
 	}
 
 	get active(): boolean {
@@ -250,7 +244,6 @@ export class Session {
 			this.#collectInputs();
 			this.historyChanged();
 			await this.#completeActive();
-			this.#status = "ready";
 			await this.#sync();
 			if (output.closed) return;
 			output.begin();
@@ -258,7 +251,6 @@ export class Session {
 			await output.finished;
 		} finally {
 			if (this.#output === output) this.#output = undefined;
-			this.#status = this.#active ? "executing" : "idle";
 			void this.#sync().catch(() => {});
 		}
 	}
@@ -388,7 +380,6 @@ export class Session {
 		this.#starting = false;
 		this.#connection?.close();
 		this.#connection = undefined;
-		this.#host.toolsChanged?.();
 		this.resetInputs();
 		this.#cancelRequests(new Error("Chappie session ended"));
 		this.#rejectReady(new Error("Chappie session ended"));
@@ -397,17 +388,16 @@ export class Session {
 		for (const id of this.#histories.keys()) this.#finishHistory(id);
 	}
 
-	update(): void {
+	update(): boolean {
 		const active = this.#host.active();
 		const id = this.#host.describe().id;
-		if (
-			this.#connection &&
-			(this.#sessionId !== id || this.#provider !== active)
-		)
-			this.close();
+		const changed = this.#sessionId !== id || this.#provider !== active;
+		if (changed) {
+			if (this.#connection) this.close();
+			else this.resetInputs();
+		}
 		this.#provider = active;
-		if (!active && !this.#config.localTools) return;
-		if (this.#sessionId !== id) this.resetInputs();
+		if (!active && !this.#config.localTools) return changed;
 
 		if (!this.#connection) {
 			this.#connection = new IpcClient(getDirectory(), this.#config.connect, {
@@ -415,11 +405,9 @@ export class Session {
 					this.#publish(this.#resources.list());
 					await this.#sync();
 					await this.#flushDeliveries();
-					this.#host.toolsChanged?.();
 				},
 				onMessage: (message) => this.#receive(message),
 				onClose: (error) => {
-					this.#host.toolsChanged?.();
 					this.#cancelRequests(error);
 					this.#rejectReady(error);
 					for (const id of this.#histories.keys()) this.#finishHistory(id);
@@ -432,13 +420,13 @@ export class Session {
 					this.#active = undefined;
 					this.#queue.length = 0;
 					this.#starting = false;
-					this.#status = "idle";
 				},
 			});
 			this.#connection.start();
 		} else {
 			void this.#sync().catch(() => {});
 		}
+		return changed;
 	}
 
 	#description(sessionId = this.#sessionId): SessionDescription {
@@ -446,7 +434,13 @@ export class Session {
 			throw new Error("The requested session is no longer active");
 		return {
 			...this.#host.describe(),
-			status: this.#generations.size ? "generating" : this.#status,
+			status: this.#generations.size
+				? "generating"
+				: this.#active
+					? "executing"
+					: this.#output && !this.#output.closed
+						? "ready"
+						: "idle",
 		};
 	}
 
@@ -804,7 +798,6 @@ export class Session {
 			cancelled: undefined,
 			toolResults: [],
 		};
-		this.#status = "executing";
 		void this.#sync().catch(() => {});
 		if (request.type === "chat") {
 			output.text(request.text);
@@ -915,7 +908,6 @@ export class Session {
 			});
 		}
 		this.#active = undefined;
-		this.#status = "idle";
 		void this.#sync().catch(() => {});
 	}
 

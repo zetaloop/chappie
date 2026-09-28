@@ -114,25 +114,25 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 			omp.appendEntry("chappie.notice", { message, type, ...activity });
 			context?.ui.notify(message, type);
 		},
-		toolsChanged: () => {
-			void updateTools();
-		},
 	};
 	const session = new Session(host, config);
 	const tools = localTools(session);
 	const names = new Set(tools.map((tool) => tool.name));
-	let exposed: string | undefined;
 	async function updateTools(): Promise<void> {
 		const desired = session.active
 			? ["transfer"]
 			: session.localTools
 				? [...names]
 				: [];
-		const key = desired.join(",");
-		if (key === exposed) return;
-		exposed = key;
+		const active = omp.getActiveTools();
+		const enabled = active.filter((name) => names.has(name));
+		if (
+			enabled.length === desired.length &&
+			enabled.every((name) => desired.includes(name))
+		)
+			return;
 		await omp.setActiveTools([
-			...omp.getActiveTools().filter((name) => !names.has(name)),
+			...active.filter((name) => !names.has(name)),
 			...desired,
 		]);
 	}
@@ -146,8 +146,7 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 			// OMP journals model selection after updating its live model.
 			const record: typeof append = function (this: SessionManager, ...args) {
 				const result = append.apply(this, args);
-				session.update();
-				void updateTools();
+				if (session.update()) void updateTools();
 				return result;
 			};
 			store.appendModelChange = record;
@@ -158,8 +157,7 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 					store.appendModelChange = append;
 			};
 		}
-		session.update();
-		await updateTools();
+		if (session.update()) await updateTools();
 	}
 	omp.on("session_start", (_event, ctx) => update(ctx));
 	omp.on("session_switch", (_event, ctx) => update(ctx));
