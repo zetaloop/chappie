@@ -1,20 +1,20 @@
 # Chappie
 
-Chappie connects ChatGPT to native coding-agent sessions. One TypeScript package contains the broker CLI and integrations for Pi, Oh My Pi, OpenCode, and Codex.
+Chappie connects ChatGPT and native coding-agent sessions. One TypeScript package contains the broker CLI and integrations for Pi, Oh My Pi, OpenCode, and Codex.
 
 ## Architecture
 
-`Host` supplies native session data and execution callbacks. `Session` handles request ordering, provider output, input delivery, and file operations. Each adapter translates its host's events and messages into those shared interfaces.
+`Host` supplies native session data and execution callbacks. `Session` handles request ordering, provider output, input delivery, and file operations. Adapters translate native events and records into these shared structural interfaces.
 
-The broker manages ChatGPT conversation bindings, initialization participation, pending results, questions, and resource routing. Each `call` array becomes one native tool batch. Separate requests are ordered per session; different sessions execute independently. `chat` produces an assistant message and completes a native turn.
+The broker owns ChatGPT conversation bindings, participation guidance, pending results, questions, and resource routes. Sessions using the Chappie provider register as targets; ordinary models with `localTools` connect as requesters. ChatGPT and local tools use the same session operations.
 
-Sessions using the Chappie provider register as addressable targets. Ordinary models with `localTools` connect as requesters. Their local tools use the same broker operations, with local history and files supplied by their host context.
+Requests are ordered per session, with execution inside a tool batch managed by the host. Host generation requests carry their original input through a separate output stream, allowing replies to arrive during an active operation.
 
-Configuration and persisted broker state live in `~/.chappie`. Session connections use Unix sockets or Windows named pipes locally and TCP across devices. Files belong to the connection that produced their resource descriptors. Transfers reuse those connections, including when the source is an unregistered requester.
+Native transcripts remain in their host's storage and are read on demand. `Session` owns resource descriptors and their file pointers or image bytes; the broker routes reads to the producing connection, including unregistered requesters. Transfers use those connections so each device resolves its own paths.
 
-Native transcripts remain in their host's storage. History returns native IDs and recorded timestamps through an independent request. Its cursor is separate from input and pending-result delivery.
+Pi and OMP register native streaming providers. OpenCode's plugin and AI SDK provider share a session map. The Codex plugin owns a local Responses service and an app-server WebSocket connection, carried over the native proxy or an explicit WebSocket endpoint.
 
-Pi and OMP register native streaming providers. OpenCode registers an AI SDK provider through native plugin hooks and reads complete transcripts through the host's HTTP API. The Codex plugin starts a local Responses service and joins native threads through app-server. Its control socket carries WebSocket traffic. The Codex MCP configuration invokes the same package by name and selects its Chappie-mode tool catalog.
+Configuration and persisted broker state live in `~/.chappie`. Session connections use Unix sockets or Windows named pipes locally and TCP across devices.
 
 ## Development
 

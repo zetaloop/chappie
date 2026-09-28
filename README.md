@@ -1,25 +1,27 @@
 # Chappie
 
-Use ChatGPT through Pi, Oh My Pi, OpenCode, or Codex. Run their native tools, work with local files, exchange images and artifacts, and move between sessions across devices.
+Use ChatGPT to work through Pi, Oh My Pi, OpenCode, or Codex: edit projects, run commands, and exchange files and images. Agent sessions can also work with each other, on the same computer or across devices.
 
 ## Setup
 
-Install Chappie in the agent:
+Install Chappie in each participating agent:
 
-| Agent | Install |
-|---|---|
-| [Pi](https://github.com/earendil-works/pi) | `pi install npm:@zetaloop/chappie` |
-| [Oh My Pi](https://github.com/can1357/oh-my-pi) | `omp plugin install @zetaloop/chappie` |
-| [OpenCode](https://github.com/anomalyco/opencode) | `opencode plugin add @zetaloop/chappie` |
-| [Codex](https://github.com/openai/codex) | See [Codex](#codex) below. |
+| Agent                                             | Install                                          |
+| ------------------------------------------------- | ------------------------------------------------ |
+| [Pi](https://github.com/earendil-works/pi)        | `pi install npm:@zetaloop/chappie`               |
+| [Oh My Pi](https://github.com/can1357/oh-my-pi)   | `omp plugin install @zetaloop/chappie`           |
+| [OpenCode](https://github.com/anomalyco/opencode) | `opencode plugin add @zetaloop/chappie`          |
+| [Codex](https://github.com/openai/codex)          | [Plugin and provider setup](docs/setup.md#codex) |
 
-Install the broker on the device running the tunnel:
+The broker connects these sessions to ChatGPT and to each other. Install it on one device:
 
 ```sh
 pnpm add -g @zetaloop/chappie
 ```
 
-Use `chappie` as the MCP command in [otunnel](https://github.com/zetaloop/otunnel):
+## With ChatGPT
+
+Run the broker through [otunnel](https://github.com/zetaloop/otunnel) with this MCP configuration:
 
 ```yaml
 mcp:
@@ -28,74 +30,24 @@ mcp:
       command: chappie
 ```
 
-The same executable is available through `pnpx -y @zetaloop/chappie`.
+Add the tunnel as a developer-mode app in ChatGPT. Open a project in the agent with its Chappie model selected, then tell ChatGPT which project or session to use and what to do:
 
-Add the tunnel as a developer-mode app in ChatGPT. Select `chappie/chatgpt` in Pi, OMP, or OpenCode, or configure Codex as described below.
+> Use \@Chappie to review the recent changes in the website project.
 
-Call `init` from ChatGPT. `sessions` finds connected sessions by agent, device, directory, and name. An existing task can be resumed with its session ID from another chat or branch.
+Tool activity and assistant messages appear in the agent's interface. Messages entered there reach ChatGPT with later tool results. Attach files in ChatGPT for the agent to use, or ask for generated files to be sent back.
 
-### Codex
+To continue from another chat or branch, ask ChatGPT to reconnect to the same agent session.
 
-Install the plugin from this repository's marketplace:
+## Between agents
 
-```sh
-codex plugin marketplace add zetaloop/chappie
-codex plugin add chappie@chappie
-```
+An agent using its usual model can work through another agent session. For example, an assistant on macOS can run a build in a Windows session and retrieve the output files.
 
-Save the [model catalog](src/codex.json) locally and reference its absolute path in Codex's user configuration, `~/.codex/config.toml` or `$CODEX_HOME/config.toml`:
-
-```toml
-model_provider = "chappie"
-model = "chatgpt"
-model_catalog_json = "/absolute/path/to/codex.json"
-
-[model_providers.chappie]
-name = "Chappie"
-base_url = "http://127.0.0.1:24275/v1"
-
-[mcp_servers.chappie]
-command = "pnpx"
-args = ["-y", "@zetaloop/chappie", "codex", "--chatgpt"]
-env_vars = ["CODEX_HOME"]
-```
-
-Restart the Codex app after changing its provider configuration. The plugin starts its local Responses service and connects to Codex's app-server.
-
-## Usage
-
-`tools` returns the selected session's native tool definitions; `call` executes them. `chat` sends an assistant message, and local user input accompanies later results. `history` reads the agent's transcript, `transfer` moves files, and `ask` presents a question in ChatGPT.
-
-See the [tool guide](docs/tools.md) for parameters and examples.
-
-## Configuration
-
-Settings live in `~/.chappie/config.json`. Local connections use the defaults when this file is absent.
-
-A broker accepts sessions from other devices with:
-
-```json
-{ "listen": true }
-```
-
-On another device, point the agent's plugin to that broker:
-
-```json
-{ "connect": "<broker>.local" }
-```
-
-The default TCP port is `24274`. Set `listen` to a port number or append `:port` to `connect` to change it. All connected devices use the same session list and file transfer service.
-
-Set `ask` to `false` to disable ChatGPT question widgets.
-
-Ordinary models can access Chappie sessions with:
+Start `chappie` in a terminal, or use the broker already running through otunnel. On the controlling agent's device, enable local tools in `~/.chappie/config.json`:
 
 ```json
 { "localTools": true }
 ```
 
-This enables `sessions`, `remote_tools`, `remote_call`, `history`, and `transfer` for local collaboration. `history` can read the current session; remote operations name a session using the Chappie provider.
+Use the usual model in the controlling session and the Chappie model in the target session. Ask the controlling assistant to find that session and work on its project.
 
-OpenCode discovers its local background service. For a standalone server, set `opencode.url` to its HTTP address and `opencode.password` when authentication is enabled.
-
-Codex uses port `24275` for its local Responses service and the default app-server control socket. Use `codex.port` to change the Responses port and `codex.appServer` for an explicit `unix://<path>` or WebSocket URL. Set `model_providers.chappie.base_url` in Codex to match the Responses port.
+See [setup and configuration](docs/setup.md) for device connections and agent-specific settings, and the [tool guide](docs/tools.md) for the available operations and their parameters.

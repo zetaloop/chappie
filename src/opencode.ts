@@ -126,6 +126,7 @@ class OpenSession implements Host {
 		};
 	}
 	async history(range: HistoryRange): Promise<HistoryResult> {
+		// The HTTP API includes the transcript preceding compaction.
 		const client = await this.#client();
 		const messages: SessionMessageInfo[] = [];
 		const visible = (message: SessionMessageInfo) =>

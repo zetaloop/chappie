@@ -14,7 +14,7 @@ const { values, positionals } = parseArgs({
 
 if (values.help) {
 	console.log(
-		"Usage: chappie [codex]\n\nConnect agent sessions to ChatGPT over MCP stdio.\nThe codex command runs the installed Codex plugin.",
+		"Usage: chappie [codex]\n\nRun the broker and ChatGPT MCP server.\nThe codex command runs the installed Codex plugin.",
 	);
 } else if (values.version) {
 	console.log(packageJson.version);

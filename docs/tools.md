@@ -1,12 +1,14 @@
 # Tools
 
+ChatGPT uses the tools below. Agent sessions using ordinary models have a [local tool set](#local-models).
+
 | Tool | Purpose |
 |---|---|
 | `sessions` | Find sessions by agent, device, directory, or name. |
 | `init` | Select this ChatGPT conversation's default session and read its environment. |
 | `tools` | Read the selected session's native tool definitions. |
 | `call` | Execute a native tool batch. |
-| `chat` | Send an assistant message and finish the native turn. |
+| `chat` | Send an assistant message or answer a model request. |
 | `history` | Read the agent's transcript with entry IDs and timestamps. |
 | `transfer` | Exchange files and images with ChatGPT or another session. |
 | `ask` | Create a persistent question in ChatGPT. |
@@ -45,7 +47,7 @@ A `calls` array executes as one native batch. Separate requests are ordered with
 
 `call` also accepts `base64`: the same `calls` array serialized as UTF-8 JSON and encoded as Base64. Supply either representation, with `sessionId` outside the encoded array.
 
-`chat` produces a normal assistant message and completes the native turn:
+`chat` sends progress and completion messages to the selected session:
 
 ```json
 { "text": "Updated the parser and its callers." }
@@ -53,13 +55,17 @@ A `calls` array executes as one native batch. Separate requests are ordered with
 
 Local user input accompanies later results, including images. Completed output from an interrupted request can be delivered to its originating conversation with a later response.
 
-Hosts can request model output such as a compaction summary. The result includes a `request` ID, instructions, and the original input. Reply to that request with `chat`:
+A session can request generated text, such as a summary or title. The result includes a `request` ID, its `sessionId`, instructions, and the original input. Reply with `chat`:
 
 ```json
-{ "replyTo": "<request-id>", "text": "The requested summary." }
+{
+  "sessionId": "<session-id>",
+  "replyTo": "<request-id>",
+  "text": "The requested summary."
+}
 ```
 
-While a model request is pending, `call` returns `cancelled` with an error status and executes no tools. `history` remains available. Each request has its own ID. A reply can include the next request when the host needs several summaries.
+During a pending model request, `call` reports the batch as unexecuted with `cancelled` and an error status. Read context with `history`, reply to the request, then submit the tools still needed. Each request has its own ID; a reply can include another request when the session needs several summaries.
 
 ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Use history pagination or limit native tool output when needed; local tools have no such response limit.
 
@@ -75,7 +81,7 @@ The default is the latest 20 readable entries. `before` pages backward and `afte
 
 Use `after` with `wait: true` to follow progress. Available entries return immediately; at the end of the transcript the request waits up to 30 seconds, returning an empty page when no entries arrive. Reads with `before` return immediately.
 
-History includes native messages, tool calls and results, summaries, images, and resource references. Each read reflects the host's current records, including work in progress. Re-read the same range to see updates to existing entries. Reading it uses an independent cursor from local input and pending-result delivery.
+History includes native messages, tool calls and results, summaries, images, and resource references. Each read reflects the host's current records, including work in progress. Re-read the same range to see updates to existing entries.
 
 ### Participation
 
@@ -148,10 +154,21 @@ Enable `localTools` in Chappie's configuration to provide these tools to ordinar
 | `sessions` | Online Chappie sessions, with the current local ID reported as `self`. |
 | `remote_tools` | Tool definitions from the required `sessionId`. |
 | `remote_call` | One native tool batch in the required `sessionId`. |
+| `remote_chat` | An assistant message or model-request reply in the required `sessionId`. |
 | `history` | The current local transcript, or a Chappie session named by `sessionId`. |
 | `transfer` | Local files and resources exchanged with Chappie sessions. |
 
-Ordinary models use their existing provider for local work and connect as requesters. Chappie-model sessions are addressable targets. Local `history` and file operations use the host's current session context.
+Use an ordinary model in the controlling session and the Chappie model in each target. This supports agent-to-agent collaboration, such as building a project on another operating system.
+
+Local `history` reads the controlling session; pass `sessionId` for a target's transcript. `transfer` uses local paths and exchanges files with targets through `from` and `to`.
+
+Use `remote_tools` to discover a target's definitions, then `remote_call` to execute them. When `globalAgents.path` is returned, read that file for the target's instructions. `remote_chat` sends an assistant message to the target:
+
+```json
+{ "sessionId": "<target-session>", "text": "The build completed successfully." }
+```
+
+Model requests include instructions naming the local tools. Supply `replyTo` to answer with `remote_chat`, then submit the tools still needed with `remote_call`. These operations use native session IDs, independently of ChatGPT conversation bindings.
 
 ## Questions in ChatGPT
 
