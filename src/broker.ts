@@ -500,12 +500,8 @@ export class Broker {
 			(id) => ({ ...request, id }),
 			signal,
 		);
-		if (
-			(request.type === "call" || request.type === "chat") &&
-			"inputs" in result
-		) {
+		if ("inputs" in result)
 			await this.#ackInputs(request.sessionId, result.inputs, signal);
-		}
 		return result;
 	}
 

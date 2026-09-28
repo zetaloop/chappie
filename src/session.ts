@@ -116,6 +116,8 @@ export class Session {
 			throw new Error("Session returned no tool catalog");
 		return {
 			...result.inspection,
+			inputs: result.inputs,
+			...(result.globalAgents ? { globalAgents: result.globalAgents } : {}),
 			tools: result.inspection.tools.filter(
 				(tool) => !names || names.includes(tool.name),
 			),
@@ -172,6 +174,28 @@ export class Session {
 		);
 		if (!("toolResults" in result))
 			throw new Error("Session returned no tool results");
+		return { sessionId, ...result };
+	}
+
+	async chat(
+		sessionId: string,
+		text: string,
+		replyTo?: string,
+		signal?: AbortSignal,
+	) {
+		const self = this.#host.describe();
+		const result = await this.#request(
+			{
+				type: "chat",
+				sessionId,
+				text,
+				...(replyTo ? { replyTo } : {}),
+				...source(self.id, randomUUID(), self.name ?? self.agent),
+			},
+			signal,
+		);
+		if (!("message" in result) && !("cancelled" in result))
+			throw new Error("Session returned no assistant message");
 		return { sessionId, ...result };
 	}
 

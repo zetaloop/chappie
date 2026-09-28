@@ -1,7 +1,6 @@
 import * as z from "zod";
-import type { Initialization } from "./broker.ts";
+import type { CallResult, ChatResult } from "./broker.ts";
 import { toolResultsContent } from "./delivery.ts";
-import type { ToolResultMessage } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
 import { contentWithImageReferences } from "./resources.ts";
 
@@ -31,6 +30,14 @@ export const callInput = z
 		"Supply either calls or base64",
 	);
 
+export const chatInput = z.object({
+	text: z
+		.string()
+		.min(1)
+		.describe("Assistant message or requested model output"),
+	replyTo: z.string().optional().describe("Model request ID to answer"),
+});
+
 export function parseCalls(input: z.infer<typeof callInput>): ToolInput[] {
 	if (input.calls) return input.calls;
 	const bytes = Buffer.from(atob(input.base64 ?? ""), "latin1");
@@ -40,13 +47,11 @@ export function parseCalls(input: z.infer<typeof callInput>): ToolInput[] {
 }
 
 export function toolResult(
-	toolResults: ToolResultMessage[],
-	sessionId: string,
-	cwd: string,
-	inputs: SessionInput[] = [],
-	initialization?: Initialization,
-	cancelled?: string,
+	result: ChatResult | CallResult,
+	replyTool: "chat" | "remote_chat" = "chat",
 ) {
+	const { sessionId, cwd, inputs, initialization, cancelled } = result;
+	const toolResults = "toolResults" in result ? result.toolResults : [];
 	return {
 		content: [
 			{
@@ -59,13 +64,17 @@ export function toolResult(
 				}),
 			},
 			...toolResultsContent(toolResults, sessionId),
-			...inputContent(inputs),
+			...inputContent(inputs, replyTool),
 		],
 		isError: Boolean(cancelled) || toolResults.some((result) => result.isError),
 	};
 }
 
-export function inputContent(inputs: SessionInput[]) {
+export function inputContent(
+	inputs: SessionInput[],
+	replyTool: "chat" | "remote_chat" = "chat",
+) {
+	const callTool = replyTool === "chat" ? "call" : "remote_call";
 	return inputs.flatMap((input) => {
 		const { id, sessionId } = input;
 		if ("request" in input) {
@@ -80,7 +89,7 @@ export function inputContent(inputs: SessionInput[]) {
 						request: id,
 						sessionId,
 						kind: input.request.kind,
-						instructions: `This session is requesting ${task}. Follow the input below and reply with chat using this sessionId and the request ID as replyTo. Use history if needed; call cannot execute tools in this session until this request finishes.`,
+						instructions: `This session is requesting ${task}. Follow the input below and reply with ${replyTool} using this sessionId and the request ID as replyTo. Use history if needed; ${callTool} cannot execute tools in this session until this request finishes.`,
 					}),
 				},
 				{ type: "text" as const, text: JSON.stringify(input.request.input) },

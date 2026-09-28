@@ -16,6 +16,7 @@ import {
 import {
 	callInput,
 	callsInput,
+	chatInput,
 	inputContent,
 	parseCalls,
 	toolResult,
@@ -112,12 +113,7 @@ export function createServer(broker: Broker): McpServer {
 			description:
 				"Send a Markdown assistant message, or reply to a model request using its request ID as replyTo.",
 			outputSchema,
-			inputSchema: z.object({
-				text: z
-					.string()
-					.min(1)
-					.describe("Assistant message or requested model output"),
-				replyTo: z.string().optional().describe("Model request ID to answer"),
+			inputSchema: chatInput.extend({
 				sessionId: z
 					.string()
 					.optional()
@@ -128,7 +124,7 @@ export function createServer(broker: Broker): McpServer {
 			annotations: toolAnnotations,
 		},
 		handle(async (args, context) => {
-			const { inputs, ...result } = await broker.chat(
+			const result = await broker.chat(
 				context.chatId,
 				args.sessionId,
 				args.text,
@@ -136,10 +132,7 @@ export function createServer(broker: Broker): McpServer {
 				context.mcpReq.signal,
 				args.replyTo,
 			);
-			return finishResult(broker, context, {
-				...textResult(result, inputs),
-				isError: Boolean(result.cancelled),
-			});
+			return finishResult(broker, context, toolResult(result));
 		}),
 	);
 
@@ -352,18 +345,7 @@ export function createServer(broker: Broker): McpServer {
 				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);
-			return finishResult(
-				broker,
-				context,
-				toolResult(
-					result.toolResults,
-					result.sessionId,
-					result.cwd,
-					result.inputs,
-					result.initialization,
-					result.cancelled,
-				),
-			);
+			return finishResult(broker, context, toolResult(result));
 		}),
 	);
 
@@ -392,18 +374,7 @@ export function createServer(broker: Broker): McpServer {
 				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);
-			return finishResult(
-				broker,
-				context,
-				toolResult(
-					result.toolResults,
-					result.sessionId,
-					result.cwd,
-					result.inputs,
-					result.initialization,
-					result.cancelled,
-				),
-			);
+			return finishResult(broker, context, toolResult(result));
 		}),
 	);
 

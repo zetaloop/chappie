@@ -1,11 +1,13 @@
 import * as z from "zod";
+import type { CallResult, ChatResult } from "./broker.ts";
 import { deliveryContent } from "./delivery.ts";
 import { transferDescription, transferInput } from "./files.ts";
 import { historyInput } from "./history.ts";
 import type { Content } from "./host.ts";
+import type { SessionInput } from "./ipc.ts";
 import { resourceDescriptors } from "./resources.ts";
 import type { Session } from "./session.ts";
-import { callsInput, toolResult } from "./tools.ts";
+import { callsInput, chatInput, inputContent, toolResult } from "./tools.ts";
 
 export interface NativeResult {
 	content: Content[];
@@ -35,13 +37,19 @@ export const definitions = [
 	),
 	tool(
 		"remote_tools",
-		"Read native tool definitions from a Chappie session.",
+		"Read native tool definitions from a Chappie session. Follow the instructions at globalAgents.path when provided.",
 		z.object({
 			sessionId: z.string().min(1),
 			names: z.array(z.string()).min(1).optional(),
 		}),
-		async (session, { sessionId, names }, signal) =>
-			textResult(await session.tools(sessionId, names, signal)),
+		async (session, { sessionId, names }, signal) => {
+			const { inputs, ...result } = await session.tools(
+				sessionId,
+				names,
+				signal,
+			);
+			return textResult(result, inputs);
+		},
 	),
 	tool(
 		"remote_call",
@@ -50,33 +58,18 @@ export const definitions = [
 			sessionId: z.string().min(1),
 			calls: callsInput,
 		}),
-		async (session, { sessionId, calls }, signal) => {
-			const result = await session.call(sessionId, calls, signal);
-			const output = toolResult(
-				result.toolResults,
-				sessionId,
-				result.cwd,
-				result.inputs,
-				undefined,
-				"cancelled" in result ? result.cancelled : undefined,
-			);
-			const content = nativeContent(output.content);
-			if (output.isError) {
-				throw new Error(
-					[...content, ...localDeliveries(session)]
-						.flatMap((block) => (block.type === "text" ? [block.text] : []))
-						.join("\n"),
-				);
-			}
-			return {
-				content,
-				details: {
-					resources: result.toolResults.flatMap((result) =>
-						resourceDescriptors(result.details),
-					),
-				},
-			};
-		},
+		async (session, { sessionId, calls }, signal) =>
+			remoteResult(session, await session.call(sessionId, calls, signal)),
+	),
+	tool(
+		"remote_chat",
+		"Send an assistant message to a Chappie session, or reply to its model request using replyTo.",
+		chatInput.extend({ sessionId: z.string().min(1) }),
+		async (session, { sessionId, text, replyTo }, signal) =>
+			remoteResult(
+				session,
+				await session.chat(sessionId, text, replyTo, signal),
+			),
 	),
 	tool(
 		"history",
@@ -151,8 +144,39 @@ function tool<S extends z.ZodObject>(
 	};
 }
 
-function textResult(value: unknown): NativeResult {
-	return { content: [{ type: "text", text: JSON.stringify(value) }] };
+function textResult(value: unknown, inputs: SessionInput[] = []): NativeResult {
+	return {
+		content: [
+			{ type: "text", text: JSON.stringify(value) },
+			...inputContent(inputs, "remote_chat"),
+		],
+	};
+}
+
+function remoteResult(
+	session: Session,
+	result: ChatResult | CallResult,
+): NativeResult {
+	const output = toolResult(result, "remote_chat");
+	const content = nativeContent(output.content);
+	if (output.isError)
+		throw new Error(
+			[...content, ...localDeliveries(session)]
+				.flatMap((block) => (block.type === "text" ? [block.text] : []))
+				.join("\n"),
+		);
+	return {
+		content,
+		...("toolResults" in result
+			? {
+					details: {
+						resources: result.toolResults.flatMap((result) =>
+							resourceDescriptors(result.details),
+						),
+					},
+				}
+			: {}),
+	};
 }
 
 function nativeContent(
