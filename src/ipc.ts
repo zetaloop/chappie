@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { lstat, unlink } from "node:fs/promises";
 import {
 	createConnection,
@@ -133,7 +134,6 @@ export class JsonLinePeer<Incoming, Outgoing> {
 	readonly #onMessage: (message: Incoming) => Promise<void> | void;
 	readonly #onClose: () => void;
 	#buffer = "";
-	#writes = Promise.resolve();
 	#closed = false;
 
 	constructor(
@@ -159,21 +159,16 @@ export class JsonLinePeer<Incoming, Outgoing> {
 
 	send(message: Outgoing): Promise<void> {
 		const line = `${JSON.stringify(message)}\n`;
-		const sent = this.#writes.then(
-			() =>
-				new Promise<void>((resolveWrite, rejectWrite) => {
-					if (this.#closed) {
-						rejectWrite(new Error("Chappie IPC connection is closed"));
-						return;
-					}
-					this.#socket.write(line, (error) => {
-						if (error) rejectWrite(error);
-						else resolveWrite();
-					});
-				}),
-		);
-		this.#writes = sent.catch(() => {});
-		return sent;
+		return new Promise<void>((resolveWrite, rejectWrite) => {
+			if (this.#closed) {
+				rejectWrite(new Error("Chappie IPC connection is closed"));
+				return;
+			}
+			this.#socket.write(line, (error) => {
+				if (error) rejectWrite(error);
+				else resolveWrite();
+			});
+		});
 	}
 
 	close(): void {
@@ -230,12 +225,15 @@ export class IpcServer {
 		if (process.platform !== "win32") await prepareUnixSocket(this.#endpoint);
 		try {
 			const local = this.#createServer();
-			await listenServer(local, this.#endpoint);
+			await once(local.listen(this.#endpoint), "listening");
 			this.#servers.add(local);
 			if (!network) return;
 
 			const remote = this.#createServer();
-			await listenServer(remote, network === true ? defaultPort : network);
+			await once(
+				remote.listen(network === true ? defaultPort : network),
+				"listening",
+			);
 			this.#servers.add(remote);
 		} catch (error) {
 			await this.close();
@@ -341,10 +339,11 @@ export class IpcClient {
 			socket = this.#remote
 				? createConnection(networkEndpoint(this.#remote))
 				: createConnection(this.#endpoint);
-			await connectSocket(socket, signal);
+			await once(socket, "connect", { signal });
 		} catch (error) {
 			socket?.destroy();
 			this.#scheduleReconnect();
+			signal.throwIfAborted();
 			throw error;
 		}
 
@@ -381,25 +380,6 @@ export class IpcClient {
 	}
 }
 
-function listenServer(
-	server: Server,
-	endpoint: string | number,
-): Promise<void> {
-	return new Promise<void>((resolveListen, rejectListen) => {
-		const onError = (error: Error): void => {
-			server.off("listening", onListening);
-			rejectListen(error);
-		};
-		const onListening = (): void => {
-			server.off("error", onError);
-			resolveListen();
-		};
-		server.once("error", onError);
-		server.once("listening", onListening);
-		server.listen(endpoint);
-	});
-}
-
 function closeServer(server: Server): Promise<void> {
 	return new Promise<void>((resolveClose, rejectClose) =>
 		server.close((error) => (error ? rejectClose(error) : resolveClose())),
@@ -420,44 +400,6 @@ function networkEndpoint(value: string): NetworkEndpoint {
 		: url.hostname;
 	if (!host) throw new Error(`Invalid Chappie broker address: ${value}`);
 	return { host, port: url.port ? Number(url.port) : defaultPort };
-}
-
-function connectSocket(socket: Socket, signal: AbortSignal): Promise<void> {
-	return new Promise<void>((resolveConnect, rejectConnect) => {
-		const cleanup = (): void => {
-			signal.removeEventListener("abort", onAbort);
-			socket.off("connect", onConnect);
-			socket.off("error", onError);
-		};
-		const onConnect = (): void => {
-			cleanup();
-			resolveConnect();
-		};
-		const onError = (error: Error): void => {
-			cleanup();
-			rejectConnect(error);
-		};
-		const onAbort = (): void => {
-			cleanup();
-			socket.destroy();
-			rejectConnect(abortError(signal));
-		};
-		if (signal.aborted) {
-			onAbort();
-			return;
-		}
-		signal.addEventListener("abort", onAbort, { once: true });
-		socket.once("connect", onConnect);
-		socket.once("error", onError);
-	});
-}
-
-function abortError(signal: AbortSignal): Error {
-	return signal.reason instanceof Error
-		? signal.reason
-		: new Error(
-				typeof signal.reason === "string" ? signal.reason : "Request cancelled",
-			);
 }
 
 async function prepareUnixSocket(endpoint: string): Promise<void> {

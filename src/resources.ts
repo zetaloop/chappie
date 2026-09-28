@@ -164,7 +164,18 @@ export function resourceDescriptors(details: unknown): ResourceDescriptor[] {
 }
 
 export function resourceSessionId(uri: string): string {
-	return parseResourceUri(uri).sessionId;
+	const parsed = new URL(uri);
+	if (parsed.protocol !== "chappie:" || parsed.hostname !== "session") {
+		throw new Error(`Unsupported Chappie resource: ${uri}`);
+	}
+	const [sessionId, kind, id, name, ...rest] = parsed.pathname
+		.slice(1)
+		.split("/")
+		.map((part) => decodeURIComponent(part));
+	if (!sessionId || !kind || !id || !name || rest.length) {
+		throw new Error(`Invalid Chappie resource: ${uri}`);
+	}
+	return sessionId;
 }
 
 function resourceDescriptor(
@@ -181,28 +192,4 @@ function resourceDescriptor(
 		mimeType,
 		size,
 	};
-}
-
-function parseResourceUri(uri: string): {
-	sessionId: string;
-	kind: string;
-	id: string;
-	name: string;
-} {
-	const parsed = new URL(uri);
-	if (parsed.protocol !== "chappie:" || parsed.hostname !== "session") {
-		throw new Error(`Unsupported Chappie resource: ${uri}`);
-	}
-	const parts = parsed.pathname
-		.slice(1)
-		.split("/")
-		.map((part) => decodeURIComponent(part));
-	if (parts.length !== 4 || !parts.every(Boolean)) {
-		throw new Error(`Invalid Chappie resource: ${uri}`);
-	}
-	const [sessionId, kind, id, name] = parts;
-	if (!sessionId || !kind || !id || !name) {
-		throw new Error(`Invalid Chappie resource: ${uri}`);
-	}
-	return { sessionId, kind, id, name };
 }

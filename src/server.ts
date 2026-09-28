@@ -45,6 +45,7 @@ const toolAnnotations = {
 } as const;
 
 interface RequestContext {
+	chatId: string;
 	mcpReq: {
 		_meta?: Record<string, unknown>;
 		signal: AbortSignal;
@@ -68,10 +69,13 @@ export function createServer(broker: Broker): McpServer {
 	function handle<Args, Result>(
 		callback: (args: Args, context: RequestContext) => Promise<Result>,
 	) {
-		return (args: Args, context: RequestContext): Promise<Result> => {
-			requireChatId(context);
+		return (
+			args: Args,
+			context: Omit<RequestContext, "chatId">,
+		): Promise<Result> => {
+			const chatId = requireChatId(context);
 			context.mcpReq.signal.throwIfAborted();
-			return callback(args, context);
+			return callback(args, { chatId, mcpReq: context.mcpReq });
 		};
 	}
 
@@ -91,9 +95,8 @@ export function createServer(broker: Broker): McpServer {
 			annotations: toolAnnotations,
 		},
 		handle(async (args, context) => {
-			const chatId = requireChatId(context);
 			const { inputs, ...initialized } = await broker.initialize(
-				chatId,
+				context.chatId,
 				args.sessionId,
 				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
@@ -125,9 +128,8 @@ export function createServer(broker: Broker): McpServer {
 			annotations: toolAnnotations,
 		},
 		handle(async (args, context) => {
-			const chatId = requireChatId(context);
 			const { inputs, ...result } = await broker.chat(
-				chatId,
+				context.chatId,
 				args.sessionId,
 				args.text,
 				context.mcpReq._meta?.["otunnel/requestId"],
@@ -162,7 +164,7 @@ export function createServer(broker: Broker): McpServer {
 			},
 			handle(async ({ sessionId, ...input }, context) => {
 				const { initialization, ...question } = await broker.ask(
-					requireChatId(context),
+					context.chatId,
 					sessionId,
 					input,
 					context.mcpReq._meta?.["otunnel/requestId"],
@@ -198,7 +200,7 @@ export function createServer(broker: Broker): McpServer {
 			},
 			handle(async ({ questionId }, context) => {
 				const question = await broker.assertQuestion(
-					requireChatId(context),
+					context.chatId,
 					questionId,
 					context.mcpReq.signal,
 				);
@@ -302,7 +304,7 @@ export function createServer(broker: Broker): McpServer {
 		},
 		handle(async (args, context) => {
 			const { inputs, ...inspected } = await broker.tools(
-				requireChatId(context),
+				context.chatId,
 				args.sessionId,
 				args.names,
 				context.mcpReq._meta?.["otunnel/requestId"],
@@ -344,7 +346,7 @@ export function createServer(broker: Broker): McpServer {
 		},
 		handle(async (args, context) => {
 			const result = await broker.call(
-				requireChatId(context),
+				context.chatId,
 				args.sessionId,
 				parseCalls(args),
 				context.mcpReq._meta?.["otunnel/requestId"],
@@ -384,7 +386,7 @@ export function createServer(broker: Broker): McpServer {
 		},
 		handle(async ({ sessionId, ...input }, context) => {
 			const result = await broker.call(
-				requireChatId(context),
+				context.chatId,
 				sessionId,
 				callsInput.parse([{ name: "transfer", arguments: input }]),
 				context.mcpReq._meta?.["otunnel/requestId"],
@@ -422,7 +424,7 @@ export function createServer(broker: Broker): McpServer {
 		},
 		handle(async ({ sessionId, ...range }, context) => {
 			const { history, ...session } = await broker.history(
-				requireChatId(context),
+				context.chatId,
 				sessionId,
 				range,
 				context.mcpReq._meta?.["otunnel/requestId"],
@@ -436,7 +438,7 @@ export function createServer(broker: Broker): McpServer {
 						...content,
 					],
 				},
-				requireChatId(context),
+				context.chatId,
 			);
 		}),
 	);
@@ -457,13 +459,15 @@ export function createServer(broker: Broker): McpServer {
 			annotations: toolAnnotations,
 		},
 		handle(async (args, context) => {
-			const chatId = requestChatId(context);
-			const inputs = chatId
-				? await broker.inputs(chatId, args.sessionId, context.mcpReq.signal)
-				: [];
+			const { chatId } = context;
+			const inputs = await broker.inputs(
+				chatId,
+				args.sessionId,
+				context.mcpReq.signal,
+			);
 			const result = textResult(
 				{
-					binding: chatId ? (broker.binding(chatId) ?? null) : null,
+					binding: broker.binding(chatId) ?? null,
 					sessions: broker.listSessions(args.sessionId),
 				},
 				inputs,
@@ -517,9 +521,9 @@ async function finishResult<
 	T extends { content: ReturnType<typeof toolResult>["content"] },
 >(broker: Broker, context: RequestContext, result: T) {
 	context.mcpReq.signal.throwIfAborted();
-	const chatId = requestChatId(context);
-	const deliveries = chatId ? broker.deliveries(chatId) : [];
-	const answers = chatId ? broker.answers(chatId) : [];
+	const { chatId } = context;
+	const deliveries = broker.deliveries(chatId);
+	const answers = broker.answers(chatId);
 	const content = [
 		...result.content,
 		...deliveryContent(deliveries),
@@ -531,9 +535,9 @@ async function finishResult<
 
 function formatResult<
 	T extends { content: ReturnType<typeof toolResult>["content"] },
->(result: T, chatId?: string) {
+>(result: T, chatId: string) {
 	const content = result.content.map((block) => {
-		if (block.type !== "resource_link" || !chatId) return block;
+		if (block.type !== "resource_link") return block;
 		const uri = new URL(block.uri);
 		uri.searchParams.set("chatId", chatId);
 		return { ...block, uri: uri.href };
@@ -549,14 +553,9 @@ function formatResult<
 	};
 }
 
-function requestChatId(context: RequestContext): string | undefined {
-	const value = context.mcpReq._meta?.["openai/session"];
-	return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function requireChatId(context: RequestContext): string {
-	const chatId = requestChatId(context);
-	if (!chatId)
+function requireChatId(context: Pick<RequestContext, "mcpReq">): string {
+	const chatId = context.mcpReq._meta?.["openai/session"];
+	if (typeof chatId !== "string" || !chatId)
 		throw new Error("ChatGPT did not provide openai/session metadata");
 	return chatId;
 }

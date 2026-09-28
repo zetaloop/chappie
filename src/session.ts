@@ -329,7 +329,6 @@ export class Session {
 			this.#publish(result.details.resources);
 			return result;
 		}
-		if (args.files) throw new Error("files and to are mutually exclusive");
 		if (args.paths.length !== args.to.paths.length)
 			throw new Error("Source and destination counts must match");
 		const { sessions } = await this.sessions(args.to.sessionId, signal);
