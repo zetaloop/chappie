@@ -16,7 +16,7 @@ Install Chappie in each participating agent:
 The broker connects these sessions to ChatGPT and to each other. Install it on one device:
 
 ```sh
-pnpm add -g @zetaloop/chappie
+pnpm add -g @zetaloop/chappie@1
 ```
 
 ## With ChatGPT
