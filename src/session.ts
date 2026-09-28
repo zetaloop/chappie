@@ -498,6 +498,16 @@ export class Session {
 					};
 				});
 				break;
+			case "inputs":
+				await this.#reply(message.id, () => {
+					this.#description(message.sessionId);
+					return {
+						type: "result",
+						id: message.id,
+						inputs: this.#inputs(),
+					};
+				});
+				break;
 			case "history":
 				await this.#readHistory(message);
 				break;

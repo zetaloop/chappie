@@ -329,9 +329,14 @@ export class Broker {
 	): Promise<SessionInput[]> {
 		const target = sessionId ?? this.#state.binding(chatId);
 		if (!target || !this.#sessions.has(target)) return [];
-		const { inputs } = await this.#inspect(target, signal);
-		await this.#ackInputs(target, inputs, signal);
-		return inputs;
+		const result = await this.#request(
+			target,
+			(id) => ({ type: "inputs", id, sessionId: target }),
+			signal,
+		);
+		if (!("inputs" in result)) throw new Error("Session returned no inputs");
+		await this.#ackInputs(target, result.inputs, signal);
+		return result.inputs;
 	}
 
 	async ask(
