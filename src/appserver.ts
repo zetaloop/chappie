@@ -1,3 +1,4 @@
+import { createInterface } from "node:readline";
 import { Duplex, Readable, Writable } from "node:stream";
 import { spawn } from "cross-spawn";
 import WebSocket from "ws";
@@ -27,6 +28,34 @@ export class AppServer {
 
 	constructor(receive: (message: RpcMessage) => void) {
 		this.#receive = receive;
+	}
+
+	static async query<T>(
+		method: string,
+		params: Record<string, unknown> = {},
+	): Promise<T> {
+		const child = spawn("codex", ["app-server"], {
+			stdio: ["pipe", "pipe", "inherit"],
+		});
+		const rpc = new AppServer(() => {});
+		const reader = createInterface({ input: child.stdout });
+		reader.on("line", (line) => rpc.#message(line));
+		reader.on("error", (error) => rpc.#ended(error));
+		child.on("error", (error) => rpc.#ended(error));
+		child.stdin.on("error", (error) => rpc.#ended(error));
+		child.once("exit", () =>
+			rpc.#ended(new Error("Codex query process exited")),
+		);
+		rpc.#send = (message) => {
+			child.stdin.write(`${JSON.stringify(message)}\n`);
+		};
+		try {
+			await rpc.#initialize();
+			return await rpc.request<T>(method, params);
+		} finally {
+			reader.close();
+			child.kill();
+		}
 	}
 
 	get closed(): Promise<void> {
@@ -77,8 +106,17 @@ export class AppServer {
 			socket.terminate();
 			stream?.destroy();
 		};
-		await ready.promise;
-		this.#send = (message) => socket.send(JSON.stringify(message));
+		try {
+			await ready.promise;
+			this.#send = (message) => socket.send(JSON.stringify(message));
+			await this.#initialize();
+		} catch (error) {
+			this.close();
+			throw error;
+		}
+	}
+
+	async #initialize(): Promise<void> {
 		await this.request("initialize", {
 			clientInfo: { name: "chappie", version: packageJson.version },
 			capabilities: { experimentalApi: true },

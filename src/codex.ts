@@ -9,6 +9,7 @@ import { join } from "node:path";
 import mime from "mime";
 import { AppServer, type RpcMessage } from "./appserver.ts";
 import { type Config, readConfig } from "./config.ts";
+import { Desktop, type DesktopMessage } from "./desktop.ts";
 import {
 	type HistoryEntry,
 	type HistoryRange,
@@ -78,22 +79,96 @@ interface Page<T> {
 	nextCursor: string | null;
 }
 
+async function* loaded(connection: AppServer): AsyncGenerator<string> {
+	let cursor: string | null = null;
+	do {
+		const page: Page<string> = await connection.request(
+			"thread/loaded/list",
+			cursor ? { cursor } : {},
+		);
+		yield* page.data;
+		cursor = page.nextCursor;
+	} while (cursor);
+}
+
+interface DesktopTurn {
+	turnId: string | null;
+	status: string;
+	items: Item[];
+	error?: Turn["error"];
+	turnStartedAtMs?: number;
+	durationMs?: number | null;
+}
+
+interface Snapshot {
+	id: string;
+	cwd: string;
+	title: string | null;
+	latestModel: string;
+	modelProvider: string;
+	latestThreadSettings?: { model: string; modelProvider: string; cwd: string };
+	threadRuntimeStatus?: Thread["status"];
+	turns: DesktopTurn[];
+	turnHistory?: {
+		kind: "canonical";
+		history: {
+			entitiesByKey: Record<string, DesktopTurn>;
+			islands: { entries: { value: string }[] }[];
+		};
+	};
+}
+
+interface Patch {
+	op: string;
+	path: (string | number)[];
+	value?: unknown;
+}
+
+type Connection = AppServer | { desktop: Desktop; owner: string };
+
+function desktopThread(snapshot: Snapshot): Thread {
+	return {
+		id: snapshot.id,
+		cwd: snapshot.latestThreadSettings?.cwd ?? snapshot.cwd,
+		name: snapshot.title,
+		model: snapshot.latestThreadSettings?.model ?? snapshot.latestModel,
+		modelProvider:
+			snapshot.latestThreadSettings?.modelProvider ?? snapshot.modelProvider,
+		status: snapshot.threadRuntimeStatus ?? { type: "idle" },
+	};
+}
+
+function desktopTurns(
+	snapshot: Snapshot,
+): { key: string | number; turn: DesktopTurn }[] {
+	const history = snapshot.turnHistory?.history;
+	return history
+		? history.islands.flatMap((island) =>
+				island.entries.map(({ value }) => ({
+					key: value,
+					turn: history.entitiesByKey[value] as DesktopTurn,
+				})),
+			)
+		: snapshot.turns.map((turn, key) => ({ key, turn }));
+}
+
 class CodexSession implements Host {
 	readonly session: Session;
 	readonly tools;
-	readonly #server: AppServer;
+	readonly connection: Connection;
 	readonly #inputs = new Map<string, SessionInput>();
 	readonly #seenInputs = new Set<string>();
 	readonly #results = new Map<string, Item>();
 	#attached = false;
+	#desktopTurn: string | number | undefined;
 	thread: Thread;
 	turn: string | undefined;
 	output: Output | undefined;
 	catalog: ResponseDefinition[] | undefined;
 
-	constructor(thread: Thread, server: AppServer, config: Config) {
+	constructor(thread: Thread, connection: Connection, config: Config) {
 		this.thread = thread;
-		this.#server = server;
+		this.connection = connection;
 		this.session = new Session(this, config);
 		this.tools = localTools(this.session);
 	}
@@ -112,16 +187,26 @@ class CodexSession implements Host {
 	}
 
 	active(): boolean {
-		return this.thread.modelProvider === "chappie";
+		return (
+			this.thread.modelProvider === "chappie" &&
+			this.thread.status.type !== "notLoaded"
+		);
 	}
 
 	isIdle(): boolean {
-		return this.thread.status.type === "idle";
+		return (
+			this.thread.status.type === "idle" ||
+			this.thread.status.type === "systemError"
+		);
 	}
 
 	async inspect(signal: AbortSignal): Promise<Environment> {
 		await this.session.ready(signal);
-		const result = await this.#server.request<{
+		const request =
+			this.connection instanceof AppServer
+				? this.connection.request.bind(this.connection)
+				: AppServer.query;
+		const result = await request<{
 			data: { skills: { name: string; description: string; path: string }[] }[];
 		}>("skills/list", { cwds: [this.thread.cwd] });
 		const path = join(codexHome, "AGENTS.md");
@@ -140,6 +225,44 @@ class CodexSession implements Host {
 	}
 
 	async history(range: HistoryRange) {
+		if (!(this.connection instanceof AppServer)) {
+			const { desktop, owner } = this.connection;
+			await desktop.request(
+				"thread-follower-load-complete-history",
+				{ conversationId: this.thread.id },
+				1,
+				owner,
+				300_000,
+			);
+			const snapshot = await desktop.snapshot<Snapshot>(this.thread.id, owner);
+			const page = historyPage(
+				desktopTurns(snapshot).flatMap(({ turn }) =>
+					turn.items.map((item) => ({
+						id: item.id,
+						item,
+						turnId: turn.turnId,
+						timestamp: turn.turnStartedAtMs,
+					})),
+				),
+				range,
+			);
+			return historyResult(
+				{
+					entries: await Promise.all(
+						page.entries.map(async ({ item, turnId, timestamp }) => ({
+							...(await itemMessage(item)),
+							id: item.id,
+							turnId,
+							...(timestamp === undefined
+								? {}
+								: { timestamp: new Date(timestamp).toISOString() }),
+						})),
+					),
+					hasMore: page.hasMore,
+				},
+				this.thread.id,
+			);
+		}
 		const items: {
 			id: string;
 			item: Item;
@@ -154,7 +277,7 @@ class CodexSession implements Host {
 				turnId: string;
 				startedAtMs: number | null;
 				completedAtMs: number | null;
-			}> = await this.#server.request("thread/items/list", {
+			}> = await this.connection.request("thread/items/list", {
 				threadId: this.thread.id,
 				sortDirection: "desc",
 				limit: range.limit + 1,
@@ -216,11 +339,21 @@ class CodexSession implements Host {
 		if (!this.isIdle()) return;
 		this.thread.status = { type: "active" };
 		try {
-			const result = await this.#server.request<{ turn: Turn }>("turn/start", {
-				threadId: this.thread.id,
-				input: [],
-			});
-			this.turn = result.turn.id;
+			const input = { threadId: this.thread.id, input: [] };
+			if (this.connection instanceof AppServer) {
+				const result = await this.connection.request<{ turn: Turn }>(
+					"turn/start",
+					input,
+				);
+				this.turn = result.turn.id;
+			} else {
+				await this.connection.desktop.request(
+					"thread-follower-start-turn",
+					{ conversationId: this.thread.id, turnStart: { request: input } },
+					2,
+					this.connection.owner,
+				);
+			}
 		} catch (error) {
 			this.thread.status = { type: "idle" };
 			throw error;
@@ -228,14 +361,31 @@ class CodexSession implements Host {
 	}
 
 	async abort(): Promise<void> {
-		if (this.turn)
-			await this.#server.request("turn/interrupt", {
+		if (!this.turn) return;
+		if (this.connection instanceof AppServer)
+			await this.connection.request("turn/interrupt", {
 				threadId: this.thread.id,
 				turnId: this.turn,
 			});
+		else
+			await this.connection.desktop.request(
+				"thread-follower-interrupt-turn",
+				{
+					conversationId: this.thread.id,
+					mode: "user-stop",
+					expectedTurnId: this.turn,
+				},
+				4,
+				this.connection.owner,
+			);
 	}
 
 	async item(item: Item): Promise<void> {
+		await this.#capture(item);
+		this.session.historyChanged();
+	}
+
+	async #capture(item: Item): Promise<void> {
 		if (!this.active()) return;
 		if (
 			this.output?.message.content.some(
@@ -259,6 +409,78 @@ class CodexSession implements Host {
 				},
 			});
 		}
+	}
+
+	async snapshot(snapshot: Snapshot): Promise<void> {
+		Object.assign(this.thread, desktopThread(snapshot));
+		const turns = desktopTurns(snapshot);
+		const current =
+			turns.find(({ turn }) => turn.turnId === this.turn) ??
+			turns.findLast(({ turn }) => turn.status === "inProgress");
+		if (current) {
+			this.#desktopTurn = current.key;
+			if (current.turn.turnId) this.turn = current.turn.turnId;
+			for (const item of current.turn.items) await this.#capture(item);
+			if (current.turn.turnId && current.turn.status !== "inProgress")
+				await this.settled({
+					id: current.turn.turnId,
+					status: current.turn.status,
+					items: current.turn.items,
+					error: current.turn.error ?? null,
+				});
+		}
+		this.session.update();
+	}
+
+	async patches(patches: Patch[]): Promise<void> {
+		if (this.connection instanceof AppServer) return;
+		let refresh = false;
+		for (const patch of patches) {
+			if (
+				[
+					"title",
+					"cwd",
+					"latestModel",
+					"modelProvider",
+					"latestThreadSettings",
+					"threadRuntimeStatus",
+				].includes(String(patch.path[0]))
+			)
+				refresh = true;
+			const path =
+				patch.path[0] === "turnHistory" &&
+				patch.path[1] === "history" &&
+				patch.path[2] === "entitiesByKey"
+					? patch.path.slice(3)
+					: patch.path[0] === "turns"
+						? patch.path.slice(1)
+						: [];
+			if (path[0] !== this.#desktopTurn) continue;
+			if (
+				path.length === 1 ||
+				path[1] === "status" ||
+				path[1] === "error" ||
+				path[1] === "turnId"
+			)
+				refresh = true;
+			if (path[1] === "items" && patch.op !== "remove") {
+				if (path.length === 2 && Array.isArray(patch.value))
+					for (const item of patch.value) await this.#capture(item as Item);
+				else if (
+					path.length === 3 &&
+					patch.value &&
+					typeof patch.value === "object"
+				)
+					await this.#capture(patch.value as Item);
+			}
+		}
+		if (refresh)
+			await this.snapshot(
+				await this.connection.desktop.snapshot<Snapshot>(
+					this.thread.id,
+					this.connection.owner,
+				),
+			);
 		this.session.historyChanged();
 	}
 
@@ -267,20 +489,35 @@ class CodexSession implements Host {
 		response: ServerResponse,
 		signal: AbortSignal,
 	): Promise<void> {
+		const metadata = request.client_metadata?.["x-codex-turn-metadata"];
+		const context = metadata
+			? (JSON.parse(metadata) as { request_kind?: string; turn_id?: string })
+			: undefined;
+		if (context?.request_kind === "turn" && context.turn_id)
+			this.turn = context.turn_id;
 		if (!this.#attached) {
-			// A new thread is materialized before its first provider request.
-			const result = await this.#server.request<{
-				thread: Thread;
-				initialTurnsPage: Page<Turn>;
-			}>("thread/resume", {
-				threadId: this.thread.id,
-				excludeTurns: true,
-				initialTurnsPage: { limit: 1, itemsView: "full" },
-			});
-			this.thread = result.thread;
-			for (const turn of result.initialTurnsPage.data) {
-				if (turn.status === "inProgress") this.turn = turn.id;
-				for (const item of turn.items) await this.item(item);
+			if (this.connection instanceof AppServer) {
+				// A new thread is materialized before its first provider request.
+				const result = await this.connection.request<{
+					thread: Thread;
+					initialTurnsPage: Page<Turn>;
+				}>("thread/resume", {
+					threadId: this.thread.id,
+					excludeTurns: true,
+					initialTurnsPage: { limit: 1, itemsView: "full" },
+				});
+				this.thread = result.thread;
+				for (const turn of result.initialTurnsPage.data) {
+					if (turn.status === "inProgress") this.turn = turn.id;
+					for (const item of turn.items) await this.item(item);
+				}
+			} else {
+				await this.snapshot(
+					await this.connection.desktop.snapshot<Snapshot>(
+						this.thread.id,
+						this.connection.owner,
+					),
+				);
 			}
 			this.#attached = true;
 		}
@@ -314,10 +551,7 @@ class CodexSession implements Host {
 			this.output = undefined;
 			this.#results.clear();
 		}
-		const metadata = request.client_metadata?.["x-codex-turn-metadata"];
-		const kind = metadata
-			? (JSON.parse(metadata) as { request_kind?: string }).request_kind
-			: undefined;
+		const kind = context?.request_kind;
 		if (kind === "compaction") {
 			const output = new ResponsesOutput(request, [], response, signal);
 			try {
@@ -393,6 +627,7 @@ class CodexSession implements Host {
 		}
 		this.#results.clear();
 		this.#seenInputs.clear();
+		this.#desktopTurn = undefined;
 		this.catalog = undefined;
 		await this.session.settled(
 			turn.error ? new Error(turn.error.message) : undefined,
@@ -494,46 +729,228 @@ export async function serveCodex(): Promise<void> {
 	const stopped = Promise.withResolvers<void>();
 	const stop = (): void => stopped.resolve();
 	let events = Promise.resolve();
-	const rpc = new AppServer((message) => {
-		events = events
-			.then(() => receive(message))
-			.catch((error: unknown) => console.error(error));
-	});
-	function register(thread: Thread): CodexSession {
+	let rpc: AppServer | undefined;
+	let desktop: Desktop | undefined;
+	let connecting: Promise<void> | undefined;
+	function register(thread: Thread, connection: Connection): CodexSession {
 		let state = sessions.get(thread.id);
+		if (
+			state &&
+			state.connection !== connection &&
+			(state.connection instanceof AppServer ||
+				connection instanceof AppServer ||
+				state.connection.desktop !== connection.desktop ||
+				state.connection.owner !== connection.owner)
+		) {
+			state.session.close();
+			state = undefined;
+		}
 		if (state) state.thread = thread;
 		else {
-			state = new CodexSession(thread, rpc, config);
+			state = new CodexSession(thread, connection, config);
 			sessions.set(thread.id, state);
 		}
 		state.session.update();
 		return state;
 	}
-	const get = (threadId: string): Promise<CodexSession> => {
+	function disconnected(connection: AppServer | Desktop): void {
+		if (connection === rpc) rpc = undefined;
+		if (connection === desktop) desktop = undefined;
+		for (const [id, state] of sessions)
+			if (
+				state.connection === connection ||
+				(!(state.connection instanceof AppServer) &&
+					state.connection.desktop === connection)
+			) {
+				state.session.close();
+				sessions.delete(id);
+			}
+	}
+	function attach(): Promise<void> {
+		connecting ??= (async () => {
+			if (!desktop) {
+				const connection = new Desktop((message) => {
+					events = events
+						.then(async () => {
+							await connecting;
+							await receiveDesktop(connection, message);
+						})
+						.catch((error: unknown) => console.error(error));
+				});
+				try {
+					await connection.connect(codexHome);
+					desktop = connection;
+					void connection.closed.then(() => disconnected(connection));
+				} catch (error) {
+					connection.close();
+					if (
+						!["ENOENT", "ECONNREFUSED"].includes(
+							(error as NodeJS.ErrnoException).code ?? "",
+						)
+					)
+						throw error;
+				}
+			}
+			if (!rpc) {
+				let available = Boolean(config.codex?.appServer);
+				if (!available) {
+					try {
+						await access(
+							join(codexHome, "app-server-control", "app-server-control.sock"),
+						);
+						available = true;
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+					}
+				}
+				if (available) {
+					const connection = new AppServer((message) => {
+						events = events
+							.then(async () => {
+								await connecting;
+								await receive(message, connection);
+							})
+							.catch((error: unknown) => console.error(error));
+					});
+					await connection.connect(appServer);
+					rpc = connection;
+					void connection.closed.then(() => disconnected(connection));
+					for await (const threadId of loaded(connection)) {
+						try {
+							const { thread } = await connection.request<{ thread: Thread }>(
+								"thread/read",
+								{ threadId },
+							);
+							register(thread, connection);
+						} catch (error) {
+							console.error(error);
+						}
+					}
+				}
+			}
+		})().finally(() => {
+			connecting = undefined;
+		});
+		return connecting;
+	}
+	const get = (threadId: string, control = false): Promise<CodexSession> => {
 		const existing = sessions.get(threadId);
-		if (existing) return Promise.resolve(existing);
+		if (existing && (!control || existing.thread.status.type !== "notLoaded"))
+			return Promise.resolve(existing);
 		let pending = loading.get(threadId);
 		if (!pending) {
-			pending = rpc
-				.request<{ thread: Thread }>("thread/read", { threadId })
-				.then(({ thread }) => register(thread))
-				.finally(() => loading.delete(threadId));
+			pending = (async () => {
+				if (rpc) {
+					for await (const id of loaded(rpc)) {
+						if (id !== threadId) continue;
+						const { thread } = await rpc.request<{ thread: Thread }>(
+							"thread/read",
+							{ threadId },
+						);
+						return register(thread, rpc);
+					}
+				}
+				if (desktop) {
+					const owner = await desktop.owner(threadId);
+					if (owner) {
+						const snapshot = await desktop.snapshot<Snapshot>(threadId, owner);
+						const state = register(desktopThread(snapshot), { desktop, owner });
+						await state.snapshot(snapshot);
+						return state;
+					}
+				}
+				if (!control && rpc) {
+					const { thread } = await rpc.request<{ thread: Thread }>(
+						"thread/read",
+						{ threadId },
+					);
+					return register(thread, rpc);
+				}
+				throw new Error(`No connected Codex client owns thread ${threadId}`);
+			})().finally(() => loading.delete(threadId));
 			loading.set(threadId, pending);
 		}
 		return pending;
 	};
-	async function receive(message: RpcMessage): Promise<void> {
+	async function receiveDesktop(
+		connection: Desktop,
+		message: DesktopMessage,
+	): Promise<void> {
+		const params = message.params;
+		if (!params) return;
+		if (
+			message.method === "client-status-changed" &&
+			params.status === "disconnected"
+		) {
+			for (const [id, state] of sessions)
+				if (
+					!(state.connection instanceof AppServer) &&
+					state.connection.owner === params.clientId
+				) {
+					state.session.close();
+					sessions.delete(id);
+				}
+			return;
+		}
+		if (params.hostId !== "local" || typeof params.conversationId !== "string")
+			return;
+		const threadId = params.conversationId;
+		if (
+			(message.method === "thread-stream-following-changed" &&
+				params.following === true) ||
+			message.method === "thread-stream-following-status-requested"
+		) {
+			if (sessions.has(threadId) || !message.sourceClientId) return;
+			const owner =
+				message.method === "thread-stream-following-status-requested"
+					? message.sourceClientId
+					: await connection.owner(threadId, message.sourceClientId);
+			if (owner) {
+				const snapshot = await connection.snapshot<Snapshot>(threadId, owner);
+				await register(desktopThread(snapshot), {
+					desktop: connection,
+					owner,
+				}).snapshot(snapshot);
+			}
+			return;
+		}
+		const state = sessions.get(threadId);
+		if (
+			!state ||
+			state.connection instanceof AppServer ||
+			state.connection.desktop !== connection ||
+			state.connection.owner !== message.sourceClientId
+		)
+			return;
+		if (message.method === "thread-stream-state-changed") {
+			const change = params.change as {
+				type: string;
+				conversationState: Snapshot;
+				patches: Patch[];
+			};
+			if (change.type === "snapshot")
+				await state.snapshot(change.conversationState);
+			else if (change.type === "patches") await state.patches(change.patches);
+		} else if (message.method === "thread-archived") {
+			state.session.close();
+			sessions.delete(threadId);
+		}
+	}
+	async function receive(
+		message: RpcMessage,
+		connection: AppServer,
+	): Promise<void> {
 		const params = message.params;
 		if (!params) return;
 		if (message.id !== undefined) return;
 		if (message.method === "thread/started") {
 			const thread = params.thread as Thread;
-			register(thread);
+			register(thread, connection);
 			return;
 		}
 		if (typeof params.threadId !== "string") return;
 		const state = sessions.get(params.threadId);
-		if (!state) return;
+		if (!state || state.connection !== connection) return;
 		switch (message.method) {
 			case "thread/settings/updated": {
 				const settings = params.threadSettings as {
@@ -552,6 +969,7 @@ export async function serveCodex(): Promise<void> {
 				break;
 			case "thread/status/changed":
 				state.thread.status = params.status as Thread["status"];
+				state.session.update();
 				break;
 			case "thread/closed":
 			case "thread/archived":
@@ -600,6 +1018,7 @@ export async function serveCodex(): Promise<void> {
 		});
 		if (request.method === "GET" && route === "/client") {
 			await connected;
+			await attach();
 			clients.add(response);
 			response.once("close", () => {
 				clients.delete(response);
@@ -631,14 +1050,24 @@ export async function serveCodex(): Promise<void> {
 			const threadId = request.headers["thread-id"];
 			if (typeof threadId !== "string")
 				throw new Error("Codex did not provide a thread-id header");
-			const state = await get(threadId);
+			await attach();
+			const state = await get(threadId, true);
 			await events;
 			if (!state.active()) {
-				const { thread } = await rpc.request<{ thread: Thread }>(
-					"thread/read",
-					{ threadId },
-				);
-				register(thread);
+				if (state.connection instanceof AppServer) {
+					const { thread } = await state.connection.request<{ thread: Thread }>(
+						"thread/read",
+						{ threadId },
+					);
+					register(thread, state.connection);
+				} else {
+					await state.snapshot(
+						await state.connection.desktop.snapshot<Snapshot>(
+							threadId,
+							state.connection.owner,
+						),
+					);
+				}
 			}
 			await state.respond(
 				body as unknown as ResponsesRequest,
@@ -699,32 +1128,18 @@ export async function serveCodex(): Promise<void> {
 			process.send?.({ ready: true });
 			return;
 		}
-		connected = rpc.connect(appServer);
+		connected = attach();
 		await connected;
 		process.send?.({ ready: true });
-		let cursor: string | null = null;
-		do {
-			const page: Page<string> = await rpc.request(
-				"thread/loaded/list",
-				cursor ? { cursor } : {},
-			);
-			for (const id of page.data) {
-				try {
-					await get(id);
-				} catch (error) {
-					console.error(error);
-				}
-			}
-			cursor = page.nextCursor;
-		} while (cursor);
 		process.once("SIGINT", stop);
 		process.once("SIGTERM", stop);
-		await Promise.race([stopped.promise, rpc.closed]);
+		await stopped.promise;
 		process.off("SIGINT", stop);
 		process.off("SIGTERM", stop);
 	} finally {
 		for (const state of sessions.values()) state.session.close();
-		rpc.close();
+		rpc?.close();
+		desktop?.close();
 		server.closeAllConnections();
 		await new Promise<void>((resolve) => server.close(() => resolve()));
 	}

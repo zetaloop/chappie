@@ -12,7 +12,7 @@ Requests are ordered per session, with execution inside a tool batch managed by 
 
 Native transcripts remain in their host's storage and are read on demand. `Session` owns resource descriptors and their file pointers or image bytes; the broker routes reads to the producing connection, including unregistered requesters. Transfers use those connections so each device resolves its own paths.
 
-Pi and OMP register native streaming providers. OpenCode's plugin and AI SDK provider share a session map. The Codex plugin owns a local Responses service and an app-server WebSocket connection, carried over the native proxy or an explicit WebSocket endpoint.
+Pi and OMP register native streaming providers. OpenCode's plugin and AI SDK provider share a session map. The Codex plugin owns a local Responses service. It controls desktop sessions through the App's collaboration IPC and CLI sessions through their app-server connection. Configuration and skill queries can use a short-lived native app-server process.
 
 Configuration and persisted broker state live in `~/.chappie`. Session connections use Unix sockets or Windows named pipes locally and TCP across devices.
 
