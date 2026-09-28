@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { type Activity, source, sourceLabel } from "./activity.ts";
-import { readConfig } from "./config.ts";
+import { type Config, readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import { type HistoryRange, historyInstructions } from "./history.ts";
 import type { ToolCall, ToolResultMessage } from "./host.ts";
@@ -28,7 +28,7 @@ import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
 
 const observerInstructions =
-	"This ChatGPT conversation recently initialized or resumed work in this session. A parallel execution is already continuing the task. Participate as an observer for this task: read history with observer: true, follow new entries with after and wait: true, and think independently. Leave execution and session communication to the ongoing work. Once its completion is recorded, explain the actual results in ChatGPT and finish your response. Continue observing this task rather than reinitializing to take over.";
+	"This conversation recently interacted with this session. Participate as an observer for this task: follow progress through history with observer: true, then explain the recorded outcome in ChatGPT.";
 
 interface RegisteredSession {
 	description: SessionDescription;
@@ -96,7 +96,7 @@ export class Broker {
 		JsonLinePeer<SessionMessage, BrokerMessage>,
 		Map<number, AbortController>
 	>();
-	#ask = true;
+	#config: Config = {};
 	#nextRequestId = 1;
 
 	constructor(directory: string) {
@@ -110,11 +110,10 @@ export class Broker {
 	}
 
 	async start(): Promise<void> {
-		const config = await readConfig(this.#directory);
-		this.#ask = config.ask ?? true;
+		this.#config = await readConfig(this.#directory);
 		await mkdir(this.#directory, { recursive: true });
 		await this.#state.load();
-		await this.#ipc.start(config.listen ?? false);
+		await this.#ipc.start(this.#config.listen ?? false);
 	}
 
 	async close(): Promise<void> {
@@ -151,7 +150,7 @@ export class Broker {
 	}
 
 	get askEnabled(): boolean {
-		return this.#ask;
+		return this.#config.ask ?? true;
 	}
 
 	binding(chatId: string): string | undefined {
@@ -674,7 +673,10 @@ export class Broker {
 		for (const [key, expires] of this.#cooldowns) {
 			if (expires <= now) this.#cooldowns.delete(key);
 		}
-		this.#cooldowns.set(JSON.stringify([chatId, sessionId]), now + 10_000);
+		this.#cooldowns.set(
+			JSON.stringify([chatId, sessionId]),
+			now + (this.#config.cooldown ?? 20) * 1000,
+		);
 	}
 
 	async #notify(
