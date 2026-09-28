@@ -1,7 +1,7 @@
 import * as z from "zod";
 
 export const questionInstructions =
-	"ask requests a question widget in ChatGPT; its result confirms creation of the request. Immediately call ask_assert with question.id to confirm loading. If the widget fails to load within 10 seconds, the assertion fails and records the question as skipped. Use an installed interactive tool through call when an answer is needed. User answers arrive separately as webAnswer in normal tool results. Apply answers and revisions promptly; a user skip means proceed with available information.";
+	"Use ask for questions in ChatGPT. Answers and revisions arrive as webAnswer with their target sessionId. Apply them to that task; a user skip means proceed with available information.";
 
 export const questionInput = z.object({
 	header: z.string().trim().min(1).optional().describe("Short topic label"),

@@ -31,7 +31,7 @@ const outputSchema = z.object({
 	text: z
 		.string()
 		.describe(
-			"Complete text output, including local user input, submitted webpage answers, and deferred results. Images and file resources accompany it as native content blocks.",
+			"Tool output and session updates. Images and file resources accompany the text as content blocks.",
 		),
 });
 
@@ -85,13 +85,15 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Connect to a session",
 			description:
-				"Select this chat's default session and return its environment, tool catalog, and participation instructions. Use the task's sessionId to resume, or find it by cwd/name with sessions. For a task without a specified target, omit sessionId to reuse the default or select the first online, unbound session. Read recent history when resuming work.",
+				"Select the default session for this conversation and return its environment, tool catalog, and participation instructions.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Default session ID; may be shared with other chats"),
+					.describe(
+						"Session to select; omit to reuse the default or choose an online unbound session",
+					),
 			}),
 			annotations: toolAnnotations,
 		},
@@ -142,7 +144,7 @@ export function createServer(broker: Broker): McpServer {
 			{
 				title: "Ask in ChatGPT",
 				description:
-					"Request a question widget in ChatGPT and return its ID immediately. Display depends on the host; call ask_assert next with question.id to confirm loading. Answers, revisions, and skips arrive as webAnswer in later tool results.",
+					"Ask a question in ChatGPT. Call ask_assert next with question.id to confirm display; answers arrive as webAnswer.",
 				inputSchema: questionInput.extend({
 					sessionId: z
 						.string()
@@ -182,9 +184,9 @@ export function createServer(broker: Broker): McpServer {
 		server.registerTool(
 			"ask_assert",
 			{
-				title: "Assert question display",
+				title: "Confirm question display",
 				description:
-					"Confirm that an ask widget loaded in ChatGPT. Call immediately after ask with question.id. Fails after 10 seconds without loading and records the question as skipped. Use a native interactive tool if an answer is needed. User answers arrive separately as webAnswer.",
+					"Confirm that an ask widget loaded. Call immediately after ask with question.id. Fails after 10 seconds and marks an unanswered question skipped; answers arrive separately as webAnswer.",
 				inputSchema: z.object({
 					questionId: z.string().describe("question.id returned by ask"),
 				}),
@@ -323,9 +325,9 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"call",
 		{
-			title: "Call Native tools",
+			title: "Run native tools",
 			description:
-				"Execute native tools using the definitions returned by tools. Each calls array is one native tool batch.",
+				"Run one native tool batch using the definitions returned by tools.",
 			outputSchema,
 			inputSchema: callInput.safeExtend({
 				sessionId: z
@@ -383,7 +385,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Session history",
 			description:
-				"Read session history with entry IDs and timestamps. Use before/after to page the current branch, and wait to follow new progress when caught up. Set observer when reading as an observer. An explicit sessionId applies only to this read.",
+				"Read the current native transcript, including ongoing work. Re-read a range to see updates to existing entries.",
 			inputSchema: historyInput.extend({
 				sessionId: z
 					.string()
@@ -417,9 +419,9 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"sessions",
 		{
-			title: "Local sessions",
+			title: "Sessions",
 			description:
-				"List online sessions with their IDs, agents, devices, cwd, names, execution status, and saved binding counts. Also returns this chat's default.",
+				"List online Chappie sessions and this conversation's default target.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
