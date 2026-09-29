@@ -140,7 +140,7 @@ export async function serveCodexPlugin(): Promise<void> {
 						}),
 					],
 					...(result.details && typeof result.details === "object"
-						? { structuredContent: { details: result.details } }
+						? { _meta: { details: result.details } }
 						: {}),
 				};
 			},

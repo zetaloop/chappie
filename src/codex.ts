@@ -62,7 +62,7 @@ interface Item {
 	error?: unknown;
 	result?: {
 		content: Record<string, unknown>[];
-		structuredContent?: { details?: unknown } | null;
+		_meta?: { details?: unknown } | null;
 	} | null;
 	[key: string]: unknown;
 }
@@ -542,8 +542,8 @@ class CodexSession implements Host {
 					toolName: call.name,
 					content: responseContent(item.output),
 					isError: itemFailed(native),
-					...(native?.result?.structuredContent?.details
-						? { details: native.result.structuredContent.details }
+					...(native?.result?._meta?.details
+						? { details: native.result._meta.details }
 						: {}),
 				});
 			}
@@ -610,8 +610,8 @@ class CodexSession implements Host {
 									],
 							isError:
 								!item || item.status === "inProgress" || itemFailed(item),
-							...(item?.result?.structuredContent?.details
-								? { details: item.result.structuredContent.details }
+							...(item?.result?._meta?.details
+								? { details: item.result._meta.details }
 								: {}),
 						};
 					}),
@@ -690,8 +690,7 @@ async function itemMessage(
 			if (item.result) {
 				const { content: blocks, ...metadata } = item.result;
 				message.result = metadata;
-				if (metadata.structuredContent?.details)
-					message.details = metadata.structuredContent.details;
+				if (metadata._meta?.details) message.details = metadata._meta.details;
 				content = responseContent(blocks);
 			} else {
 				delete message.error;
