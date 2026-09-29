@@ -87,6 +87,23 @@ interface Page<T> {
 	nextCursor: string | null;
 }
 
+class RequestError extends Error {}
+
+function parseObject(text: string): Record<string, unknown> {
+	let value: unknown;
+	try {
+		value = JSON.parse(text);
+	} catch (error) {
+		throw new RequestError(
+			error instanceof Error ? error.message : String(error),
+			{ cause: error },
+		);
+	}
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		throw new RequestError("A JSON object is required");
+	return value as Record<string, unknown>;
+}
+
 async function* loaded(connection: AppServer): AsyncGenerator<string> {
 	let cursor: string | null = null;
 	do {
@@ -869,15 +886,22 @@ export async function serveCodex(): Promise<void> {
 						if (connection)
 							for await (const id of loaded(connection))
 								if (id === threadId) return connection;
-						throw new Error("Thread is not loaded in the Codex app-server");
+						throw new RequestError(
+							"Thread is not loaded in the Codex app-server",
+						);
 					}),
 					attachDesktop().then(async (desktop) => {
 						const owner = await desktop?.owner(threadId);
 						if (desktop && owner) return { desktop, owner };
-						throw new Error("Thread has no Codex desktop owner");
+						throw new RequestError("Thread has no Codex desktop owner");
 					}),
 				]).catch((error: AggregateError) => {
-					throw new Error(
+					const Failure = error.errors.every(
+						(reason: unknown) => reason instanceof RequestError,
+					)
+						? RequestError
+						: Error;
+					throw new Failure(
 						`No connected Codex client owns thread ${threadId}: ${error.errors.map(String).join("; ")}`,
 						{ cause: error },
 					);
@@ -1061,13 +1085,17 @@ export async function serveCodex(): Promise<void> {
 	}
 	const server = createServer((request, response) => {
 		void handle(request, response).catch((error: unknown) => {
+			// Codex displays HTTP 400 bodies and treats them as terminal errors.
+			const status = error instanceof RequestError ? 400 : 500;
+			if (status === 500) console.error(error);
 			if (response.headersSent)
 				response.destroy(error instanceof Error ? error : undefined);
 			else {
-				response.writeHead(500, { "Content-Type": "application/json" });
+				response.writeHead(status, { "Content-Type": "application/json" });
 				response.end(
 					JSON.stringify({
 						error: {
+							type: status === 400 ? "invalid_request_error" : "server_error",
 							message: error instanceof Error ? error.message : String(error),
 						},
 					}),
@@ -1101,41 +1129,27 @@ export async function serveCodex(): Promise<void> {
 			response.end(JSON.stringify({ name: "chappie", codexHome, appServer }));
 			return;
 		}
-		if (request.method !== "POST") {
-			response.writeHead(404);
-			response.end();
-			return;
-		}
+		if (request.method !== "POST")
+			throw new RequestError(
+				`Unsupported Chappie request: ${request.method} ${route}`,
+			);
 		const chunks: Buffer[] = [];
 		for await (const chunk of request) chunks.push(Buffer.from(chunk));
-		const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
-			string,
-			unknown
-		>;
+		const body = parseObject(Buffer.concat(chunks).toString("utf8"));
 		if (route === "/v1/responses") {
 			const payload = body as unknown as ResponsesRequest;
 			const metadata = payload.client_metadata?.["x-codex-turn-metadata"];
 			const context = metadata
-				? (JSON.parse(metadata) as RequestMetadata)
+				? (parseObject(metadata) as RequestMetadata)
 				: undefined;
 			// Memory consolidation processes history across sessions.
-			if (context?.thread_source === "memory_consolidation") {
-				response.writeHead(400, { "Content-Type": "application/json" });
-				response.end(
-					JSON.stringify({
-						error: {
-							type: "invalid_request_error",
-							code: "unsupported_request",
-							message:
-								"Background memory generation is not supported by Chappie",
-						},
-					}),
+			if (context?.thread_source === "memory_consolidation")
+				throw new RequestError(
+					"Background memory generation is not supported by Chappie",
 				);
-				return;
-			}
 			const threadId = request.headers["thread-id"];
 			if (typeof threadId !== "string")
-				throw new Error("Codex did not provide a thread-id header");
+				throw new RequestError("Codex did not provide a thread-id header");
 			const state = await get(threadId, true);
 			await (state.connection instanceof AppServer
 				? events.rpc
@@ -1156,12 +1170,14 @@ export async function serveCodex(): Promise<void> {
 					);
 				}
 			}
+			if (!state.active())
+				throw new RequestError("Chappie is not active for this session");
 			await state.respond(payload, context, response, controller.signal);
 			return;
 		}
 		if (route === "/resource") {
 			if (typeof body.threadId !== "string" || typeof body.uri !== "string")
-				throw new Error("Resource requests require threadId and uri");
+				throw new RequestError("Resource requests require threadId and uri");
 			const state = await get(body.threadId);
 			const resource = await state.session.resource(
 				body.uri,
@@ -1173,18 +1189,17 @@ export async function serveCodex(): Promise<void> {
 		}
 		if (route.startsWith("/tools/")) {
 			if (typeof body.threadId !== "string")
-				throw new Error("Codex did not provide threadId metadata");
+				throw new RequestError("Codex did not provide threadId metadata");
 			const state = await get(body.threadId);
 			const name = decodeURIComponent(route.slice("/tools/".length));
 			const tool = state.tools.find((tool) => tool.name === name);
-			if (!tool) throw new Error(`Unknown Chappie tool: ${name}`);
+			if (!tool) throw new RequestError(`Unknown Chappie tool: ${name}`);
 			const result = await tool.execute(body.arguments, controller.signal);
 			response.setHeader("Content-Type", "application/json");
 			response.end(JSON.stringify(result));
 			return;
 		}
-		response.writeHead(404);
-		response.end();
+		throw new RequestError(`Unknown Chappie endpoint: ${route}`);
 	}
 	try {
 		try {
