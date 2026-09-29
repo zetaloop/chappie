@@ -31,9 +31,11 @@ name = "Chappie"
 base_url = "http://127.0.0.1:24275/v1"
 ```
 
-Restart the Codex app after changing its provider configuration. The plugin starts the local provider service and refreshes the model catalog. Open an existing conversation or start a new one to make it available to Chappie.
+Restart the Codex app after changing its provider configuration. The plugin starts the local provider service and refreshes the model catalog.
 
-To return to an ordinary model, restore its model, provider, and catalog settings, then restart the app.
+Start a new conversation or open an existing Chappie conversation to make it available to connected assistants. Existing conversations use their saved provider.
+
+To start new conversations with an ordinary model, restore its model, provider, and catalog settings, then restart the app.
 
 ## Configuration
 
