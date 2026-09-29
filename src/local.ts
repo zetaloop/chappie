@@ -100,20 +100,22 @@ export const definitions = [
 ];
 
 export function localTools(session: Session): NativeTool[] {
-	return definitions.map((tool) => ({
-		...tool,
-		async execute(
-			args: unknown,
-			signal?: AbortSignal,
-			update?: (result: NativeResult) => void,
-		) {
-			const result = await tool.execute(session, args, signal, update);
-			return {
-				...result,
-				content: [...result.content, ...localDeliveries(session)],
-			};
-		},
-	}));
+	return definitions
+		.filter((tool) => session.localTools || tool.name === "transfer")
+		.map((tool) => ({
+			...tool,
+			async execute(
+				args: unknown,
+				signal?: AbortSignal,
+				update?: (result: NativeResult) => void,
+			) {
+				const result = await tool.execute(session, args, signal, update);
+				return {
+					...result,
+					content: [...result.content, ...localDeliveries(session)],
+				};
+			},
+		}));
 }
 
 export function localDeliveries(session: Session): Content[] {

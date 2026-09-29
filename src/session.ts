@@ -85,11 +85,7 @@ export class Session {
 	}
 
 	get localTools(): boolean {
-		return Boolean(this.#config.localTools && !this.#host.active());
-	}
-
-	get active(): boolean {
-		return this.#host.active();
+		return Boolean(this.#config.localTools);
 	}
 
 	deliveries(): DeliveryRecord[] {
@@ -411,16 +407,14 @@ export class Session {
 		for (const id of this.#histories.keys()) this.#finishHistory(id);
 	}
 
-	update(): boolean {
+	update(): void {
 		const active = this.#host.active();
 		const id = this.#host.describe().id;
-		const changed = this.#sessionId !== id || this.#provider !== active;
-		if (changed) {
+		if (this.#sessionId !== id || this.#provider !== active) {
 			if (this.#connection) this.close();
 			else this.resetInputs();
 		}
 		this.#provider = active;
-		if (!active && !this.#config.localTools) return changed;
 
 		if (!this.#connection) {
 			this.#connection = new IpcClient(getDirectory(), this.#config.connect, {
@@ -449,7 +443,6 @@ export class Session {
 		} else {
 			void this.#sync().catch(() => {});
 		}
-		return changed;
 	}
 
 	#description(sessionId = this.#sessionId): SessionDescription {

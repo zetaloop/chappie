@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import packageJson from "../package.json" with { type: "json" };
-import { AppServer } from "./appserver.ts";
 import { getDirectory, readConfig } from "./config.ts";
 import type { Content } from "./host.ts";
 import { definitions } from "./local.ts";
@@ -61,10 +60,6 @@ async function startProvider(): Promise<void> {
 export async function serveCodexPlugin(): Promise<void> {
 	await setupCodex();
 	const config = await readConfig();
-	const native = await AppServer.query<{ config: { model_provider?: string } }>(
-		"config/read",
-	);
-	const chatgpt = native.config.model_provider === "chappie";
 	await startProvider();
 	const base = `http://127.0.0.1:${config.codex?.port ?? 24275}`;
 	const attached = Promise.withResolvers<void>();
@@ -90,8 +85,10 @@ export async function serveCodexPlugin(): Promise<void> {
 		name: "chappie",
 		version: packageJson.version,
 	});
-	for (const definition of definitions) {
-		const tool = server.registerTool(
+	for (const definition of definitions.filter(
+		(tool) => config.localTools || tool.name === "transfer",
+	)) {
+		server.registerTool(
 			definition.name,
 			{
 				description: definition.description,
@@ -145,8 +142,6 @@ export async function serveCodexPlugin(): Promise<void> {
 				};
 			},
 		);
-		if (chatgpt ? definition.name !== "transfer" : !config.localTools)
-			tool.disable();
 	}
 	server.registerResource(
 		"Session resource",

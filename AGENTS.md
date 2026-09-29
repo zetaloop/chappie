@@ -6,13 +6,13 @@ Chappie connects ChatGPT and native coding-agent sessions. One TypeScript packag
 
 `Host` supplies native session data and execution callbacks. `Session` handles request ordering, provider output, input delivery, and file operations. Adapters translate native events and records into these shared structural interfaces.
 
-The broker owns ChatGPT conversation bindings, participation guidance, pending results, questions, and resource routes. Sessions using the Chappie provider register as targets; ordinary models with `localTools` connect as requesters. ChatGPT and local tools use the same session operations.
+The broker owns ChatGPT conversation bindings, participation guidance, pending results, questions, and resource routes. Agent sessions connect as requesters; those using the Chappie provider also register as targets. ChatGPT and local tools use the same session operations.
 
 Requests are ordered per session, with execution inside a tool batch managed by the host. Host generation requests carry their original input through a separate output stream, allowing replies to arrive during an active operation.
 
 Native transcripts remain in their host's storage and are read on demand. `Session` owns resource descriptors and their file pointers or image bytes; the broker routes reads to the producing connection, including unregistered requesters. Transfers use those connections so each device resolves its own paths.
 
-Pi and OMP register native streaming providers. OpenCode's plugin and AI SDK provider share a session map. The Codex plugin owns a local Responses service. It controls desktop sessions through the App's collaboration IPC and CLI sessions through their app-server connection. Configuration and skill queries can use a short-lived native app-server process.
+Pi and OMP register native streaming providers. OpenCode's plugin and AI SDK provider share a session map. The Codex plugin owns a local Responses service. It controls desktop sessions through the App's collaboration IPC and CLI sessions through their app-server connection. Skill queries use an existing CLI connection or a short-lived native app-server process.
 
 Configuration and persisted broker state live in `~/.chappie`. Session connections use Unix sockets or Windows named pipes locally and TCP across devices.
 

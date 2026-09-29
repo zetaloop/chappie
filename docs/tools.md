@@ -1,6 +1,6 @@
 # Tools
 
-ChatGPT uses the tools below. Agent sessions using ordinary models have a [local tool set](#local-models).
+ChatGPT uses the tools below. Agent sessions also provide [local tools](#local-tools).
 
 | Tool         | Purpose                                                                      |
 | ------------ | ---------------------------------------------------------------------------- |
@@ -145,9 +145,9 @@ Retrieve files using `from`:
 
 Both sides use their existing broker connections and resolve paths on their own devices. Different agents use the same transfer operations. Completed files remain available when another file in the batch fails or is cancelled.
 
-## Local models
+## Local tools
 
-Enable `localTools` in Chappie's configuration to provide these tools to ordinary models:
+Every agent session provides `transfer`. Enable `localTools` in Chappie's configuration for the complete tool set:
 
 | Tool           | Target                                                                   |
 | -------------- | ------------------------------------------------------------------------ |
@@ -158,7 +158,7 @@ Enable `localTools` in Chappie's configuration to provide these tools to ordinar
 | `history`      | The current local transcript, or a Chappie session named by `sessionId`. |
 | `transfer`     | Local files and resources exchanged with Chappie sessions.               |
 
-Use an ordinary model in the controlling session and the Chappie model in each target. This supports agent-to-agent collaboration, such as building a project on another operating system.
+Select the Chappie model in each target session. This supports agent-to-agent collaboration, such as building a project on another operating system.
 
 Local `history` reads the controlling session; pass `sessionId` for a target's transcript. `transfer` uses local paths and exchanges files with targets through `from` and `to`.
 

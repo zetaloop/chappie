@@ -384,7 +384,9 @@ export default {
 			}),
 		);
 		await context.tool.transform((editor) => {
-			for (const definition of definitions)
+			for (const definition of definitions.filter(
+				(tool) => config.localTools || tool.name === "transfer",
+			))
 				editor.add({
 					name: definition.name,
 					description: definition.description,
@@ -423,11 +425,6 @@ export default {
 			};
 			state.busy = true;
 			state.session.update();
-			for (const tool of definitions)
-				if (
-					state.active() ? tool.name !== "transfer" : !state.session.localTools
-				)
-					delete event.tools[tool.name];
 			if (state.active()) {
 				event.messages = [];
 				event.system = [];

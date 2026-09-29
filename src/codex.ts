@@ -561,17 +561,13 @@ class CodexSession implements Host {
 			}
 			return;
 		}
-		this.catalog = responseTools(request.tools ?? []).flatMap((tool) => {
+		this.catalog = responseTools(request.tools ?? []).map((tool) => {
 			const local = ["chappie", "mcp__chappie"].includes(
 				tool.wire.namespace ?? "",
 			)
 				? definitions.find((definition) => definition.name === tool.wire.name)
 				: undefined;
-			return local
-				? local.name === "transfer"
-					? [{ ...tool, name: local.name }]
-					: []
-				: [tool];
+			return local ? { ...tool, name: local.name } : tool;
 		});
 		const output = new ResponsesOutput(request, this.catalog, response, signal);
 		this.output = output;

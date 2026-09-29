@@ -133,29 +133,10 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 
 	const session = new Session(host, config);
 	const tools = localTools(session);
-	const names = new Set(tools.map((tool) => tool.name));
-	function updateTools(): void {
-		const desired = session.active
-			? ["transfer"]
-			: session.localTools
-				? [...names]
-				: [];
-		const active = pi.getActiveTools();
-		const enabled = active.filter((name) => names.has(name));
-		if (
-			enabled.length === desired.length &&
-			enabled.every((name) => desired.includes(name))
-		)
-			return;
-		pi.setActiveTools([
-			...active.filter((name) => !names.has(name)),
-			...desired,
-		]);
-	}
 	const update = (ctx: ExtensionContext, selected = ctx.model): void => {
 		context = ctx;
 		model = selected;
-		if (session.update()) updateTools();
+		session.update();
 	};
 
 	pi.registerEntryRenderer<Notice>(

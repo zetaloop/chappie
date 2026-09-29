@@ -39,13 +39,15 @@ To return to an ordinary model, restore its model, provider, and catalog setting
 
 Settings live in `~/.chappie/config.json`. The broker and agent plugins read this file at startup; an absent file uses the defaults.
 
+Agent plugins provide `transfer` in every session. Enable `localTools` for the complete [local tool set](tools.md#local-tools).
+
 | Setting      | Default      | Used by       | Purpose                                                                    |
 | ------------ | ------------ | ------------- | -------------------------------------------------------------------------- |
 | `ask`        | `true`       | Broker        | Enable question widgets in ChatGPT.                                        |
 | `cooldown`   | `20`         | Broker        | Participation window, in seconds.                                          |
 | `listen`     | `false`      | Broker        | Accept TCP connections; `true` uses port `24274`, or supply a port number. |
 | `connect`    | Local socket | Agent plugins | Broker hostname, optionally followed by `:port`.                           |
-| `localTools` | `false`      | Agent plugins | Provide collaboration tools to ordinary models.                            |
+| `localTools` | `false`      | Agent plugins | Enable collaboration tools.                            |
 
 `cooldown` applies to each ChatGPT conversation and target session. Repeated initialization within the window returns [observation instructions](tools.md#participation). The window refreshes when a question widget first loads or a resource is accessed; `0` disables it.
 
