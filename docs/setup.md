@@ -7,7 +7,7 @@ The broker is available as `chappie` after global installation. Agent plugins co
 On the Codex device, install Chappie, create its model catalog, and add the plugin:
 
 ```sh
-pnpm add -g @zetaloop/chappie@1
+pnpm add -g @zetaloop/chappie --config.minimum-release-age=0
 chappie codex setup
 codex plugin marketplace add zetaloop/chappie
 codex plugin add chappie@chappie
@@ -49,7 +49,7 @@ Agent plugins provide `transfer` in every session. Enable `localTools` for the c
 | `cooldown`   | `20`         | Broker        | Participation window, in seconds.                                          |
 | `listen`     | `false`      | Broker        | Accept TCP connections; `true` uses port `24274`, or supply a port number. |
 | `connect`    | Local socket | Agent plugins | Broker hostname, optionally followed by `:port`.                           |
-| `localTools` | `false`      | Agent plugins | Enable collaboration tools.                            |
+| `localTools` | `false`      | Agent plugins | Enable collaboration tools.                                                |
 
 `cooldown` applies to each ChatGPT conversation and target session. Repeated initialization within the window returns [observation instructions](tools.md#participation). The window refreshes when a question widget first loads or a resource is accessed; `0` disables it.
 
