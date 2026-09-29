@@ -1,3 +1,4 @@
+import { addAbortListener } from "node:events";
 import { createInterface } from "node:readline";
 import { Duplex, Readable, Writable } from "node:stream";
 import { spawn } from "cross-spawn";
@@ -33,9 +34,12 @@ export class AppServer {
 	static async query<T>(
 		method: string,
 		params: Record<string, unknown> = {},
+		signal?: AbortSignal,
 	): Promise<T> {
+		signal?.throwIfAborted();
 		const child = spawn("codex", ["app-server"], {
 			stdio: ["pipe", "pipe", "inherit"],
+			signal,
 		});
 		const rpc = new AppServer(() => {});
 		const reader = createInterface({ input: child.stdout });
@@ -54,7 +58,7 @@ export class AppServer {
 			return await rpc.request<T>(method, params);
 		} finally {
 			reader.close();
-			child.kill();
+			if (!child.killed) child.kill();
 		}
 	}
 
@@ -124,19 +128,25 @@ export class AppServer {
 		this.#send?.({ method: "initialized" });
 	}
 
-	request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-		if (!this.#send)
-			return Promise.reject(new Error("Codex app-server is not connected"));
+	async request<T>(
+		method: string,
+		params: Record<string, unknown> = {},
+		signal?: AbortSignal,
+	): Promise<T> {
+		signal?.throwIfAborted();
+		if (!this.#send) throw new Error("Codex app-server is not connected");
 		const id = this.#nextId++;
 		const completion = Promise.withResolvers<unknown>();
 		this.#pending.set(id, completion);
+		using _listener = signal
+			? addAbortListener(signal, () => completion.reject(signal.reason))
+			: undefined;
 		try {
 			this.#send({ id, method, params });
-		} catch (error) {
+			return (await completion.promise) as T;
+		} finally {
 			this.#pending.delete(id);
-			completion.reject(error);
 		}
-		return completion.promise as Promise<T>;
 	}
 
 	close(): void {
@@ -160,7 +170,6 @@ export class AppServer {
 		if (typeof message.id !== "number") return;
 		const pending = this.#pending.get(message.id);
 		if (!pending) return;
-		this.#pending.delete(message.id);
 		if (message.error) pending.reject(new Error(message.error.message));
 		else pending.resolve(message.result);
 	}

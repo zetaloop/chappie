@@ -216,7 +216,7 @@ class CodexSession implements Host {
 				: AppServer.query;
 		const result = await request<{
 			data: { skills: { name: string; description: string; path: string }[] }[];
-		}>("skills/list", { cwds: [this.thread.cwd] });
+		}>("skills/list", { cwds: [this.thread.cwd] }, signal);
 		const path = join(codexHome, "AGENTS.md");
 		let globalAgents: { path: string } | undefined;
 		try {
