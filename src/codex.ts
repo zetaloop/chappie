@@ -740,10 +740,11 @@ export async function serveCodex(): Promise<void> {
 	const clients = new Set<ServerResponse>();
 	const stopped = Promise.withResolvers<void>();
 	const stop = (): void => stopped.resolve();
-	let events = Promise.resolve();
+	const events = { rpc: Promise.resolve(), desktop: Promise.resolve() };
 	let rpc: AppServer | undefined;
 	let desktop: Desktop | undefined;
-	let connecting: Promise<void> | undefined;
+	let rpcConnecting: Promise<AppServer | undefined> | undefined;
+	let desktopConnecting: Promise<Desktop | undefined> | undefined;
 	function register(thread: Thread, connection: Connection): CodexSession {
 		let state = sessions.get(thread.id);
 		if (
@@ -778,72 +779,83 @@ export async function serveCodex(): Promise<void> {
 				sessions.delete(id);
 			}
 	}
-	function attach(): Promise<void> {
-		connecting ??= (async () => {
-			if (!desktop) {
-				const connection = new Desktop((message) => {
-					events = events
-						.then(async () => {
-							await connecting;
+	function attachDesktop(): Promise<Desktop | undefined> {
+		desktopConnecting ??= (async () => {
+			if (desktop) return desktop;
+			const connection = new Desktop((message) => {
+				events.desktop = events.desktop
+					.then(async () => {
+						await desktopConnecting;
+						if (desktop === connection)
 							await receiveDesktop(connection, message);
-						})
-						.catch((error: unknown) => console.error(error));
-				});
-				try {
-					await connection.connect(codexHome);
-					desktop = connection;
-					void connection.closed.then(() => disconnected(connection));
-				} catch (error) {
-					connection.close();
-					if (
-						!["ENOENT", "ECONNREFUSED"].includes(
-							(error as NodeJS.ErrnoException).code ?? "",
-						)
+					})
+					.catch((error: unknown) => console.error(error));
+			});
+			desktop = connection;
+			void connection.closed.then(() => disconnected(connection));
+			try {
+				await connection.connect(codexHome);
+				return connection;
+			} catch (error) {
+				connection.close();
+				if (
+					!["ENOENT", "ECONNREFUSED"].includes(
+						(error as NodeJS.ErrnoException).code ?? "",
 					)
-						throw error;
-				}
-			}
-			if (!rpc) {
-				let available = Boolean(config.codex?.appServer);
-				if (!available) {
-					try {
-						await access(
-							join(codexHome, "app-server-control", "app-server-control.sock"),
-						);
-						available = true;
-					} catch (error) {
-						if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-					}
-				}
-				if (available) {
-					const connection = new AppServer((message) => {
-						events = events
-							.then(async () => {
-								await connecting;
-								await receive(message, connection);
-							})
-							.catch((error: unknown) => console.error(error));
-					});
-					await connection.connect(appServer);
-					rpc = connection;
-					void connection.closed.then(() => disconnected(connection));
-					for await (const threadId of loaded(connection)) {
-						try {
-							const { thread } = await connection.request<{ thread: Thread }>(
-								"thread/read",
-								{ threadId },
-							);
-							register(thread, connection);
-						} catch (error) {
-							console.error(error);
-						}
-					}
-				}
+				)
+					throw error;
+				return undefined;
 			}
 		})().finally(() => {
-			connecting = undefined;
+			desktopConnecting = undefined;
 		});
-		return connecting;
+		return desktopConnecting;
+	}
+	function attachServer(): Promise<AppServer | undefined> {
+		rpcConnecting ??= (async () => {
+			if (rpc) return rpc;
+			if (!config.codex?.appServer) {
+				try {
+					await access(
+						join(codexHome, "app-server-control", "app-server-control.sock"),
+					);
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code === "ENOENT")
+						return undefined;
+					throw error;
+				}
+			}
+			const connection = new AppServer((message) => {
+				events.rpc = events.rpc
+					.then(async () => {
+						await rpcConnecting;
+						if (rpc === connection) await receive(message, connection);
+					})
+					.catch((error: unknown) => console.error(error));
+			});
+			rpc = connection;
+			void connection.closed.then(() => disconnected(connection));
+			await connection.connect(appServer);
+			for await (const threadId of loaded(connection)) {
+				try {
+					const { thread } = await connection.request<{ thread: Thread }>(
+						"thread/read",
+						{ threadId },
+					);
+					register(thread, connection);
+				} catch (error) {
+					console.error(error);
+				}
+			}
+			return connection;
+		})().finally(() => {
+			rpcConnecting = undefined;
+		});
+		return rpcConnecting;
+	}
+	function attach(): void {
+		void attachDesktop().catch((error: unknown) => console.error(error));
+		void attachServer().catch((error: unknown) => console.error(error));
 	}
 	const get = (threadId: string, control = false): Promise<CodexSession> => {
 		const existing = sessions.get(threadId);
@@ -852,37 +864,52 @@ export async function serveCodex(): Promise<void> {
 		let pending = loading.get(threadId);
 		if (!pending) {
 			pending = (async () => {
-				if (rpc) {
-					for await (const id of loaded(rpc)) {
-						if (id !== threadId) continue;
-						const { thread } = await rpc.request<{ thread: Thread }>(
-							"thread/read",
-							{ threadId },
-						);
-						return register(thread, rpc);
-					}
-				}
-				if (desktop) {
-					const owner = await desktop.owner(threadId);
-					if (owner) {
-						const snapshot = await desktop.snapshot<Snapshot>(threadId, owner);
-						const state = register(desktopThread(snapshot), { desktop, owner });
-						await state.snapshot(snapshot);
-						return state;
-					}
-				}
-				if (!control && rpc) {
-					const { thread } = await rpc.request<{ thread: Thread }>(
+				const connection = await Promise.any([
+					attachServer().then(async (connection) => {
+						if (connection)
+							for await (const id of loaded(connection))
+								if (id === threadId) return connection;
+						throw new Error("Thread is not loaded in the Codex app-server");
+					}),
+					attachDesktop().then(async (desktop) => {
+						const owner = await desktop?.owner(threadId);
+						if (desktop && owner) return { desktop, owner };
+						throw new Error("Thread has no Codex desktop owner");
+					}),
+				]).catch((error: AggregateError) => {
+					throw new Error(
+						`No connected Codex client owns thread ${threadId}: ${error.errors.map(String).join("; ")}`,
+						{ cause: error },
+					);
+				});
+				if (connection instanceof AppServer) {
+					const { thread } = await connection.request<{ thread: Thread }>(
 						"thread/read",
 						{ threadId },
 					);
-					return register(thread, rpc);
+					return register(thread, connection);
 				}
-				throw new Error(`No connected Codex client owns thread ${threadId}`);
+				const snapshot = await connection.desktop.snapshot<Snapshot>(
+					threadId,
+					connection.owner,
+				);
+				const state = register(desktopThread(snapshot), connection);
+				await state.snapshot(snapshot);
+				return state;
 			})().finally(() => loading.delete(threadId));
 			loading.set(threadId, pending);
 		}
-		return pending;
+		return control
+			? pending
+			: pending.catch(async (error: unknown) => {
+					const connection = await attachServer();
+					if (!connection) throw error;
+					const { thread } = await connection.request<{ thread: Thread }>(
+						"thread/read",
+						{ threadId },
+					);
+					return register(thread, connection);
+				});
 	};
 	async function receiveDesktop(
 		connection: Desktop,
@@ -1029,8 +1056,7 @@ export async function serveCodex(): Promise<void> {
 				controller.abort(new Error("Codex request cancelled"));
 		});
 		if (request.method === "GET" && route === "/client") {
-			await connected;
-			await attach();
+			attach();
 			clients.add(response);
 			response.once("close", () => {
 				clients.delete(response);
@@ -1041,7 +1067,6 @@ export async function serveCodex(): Promise<void> {
 			return;
 		}
 		if (request.method === "GET" && route === "/") {
-			await connected;
 			response.setHeader("Content-Type", "application/json");
 			response.end(JSON.stringify({ name: "chappie", codexHome, appServer }));
 			return;
@@ -1051,7 +1076,6 @@ export async function serveCodex(): Promise<void> {
 			response.end();
 			return;
 		}
-		await connected;
 		const chunks: Buffer[] = [];
 		for await (const chunk of request) chunks.push(Buffer.from(chunk));
 		const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
@@ -1082,9 +1106,10 @@ export async function serveCodex(): Promise<void> {
 			const threadId = request.headers["thread-id"];
 			if (typeof threadId !== "string")
 				throw new Error("Codex did not provide a thread-id header");
-			await attach();
 			const state = await get(threadId, true);
-			await events;
+			await (state.connection instanceof AppServer
+				? events.rpc
+				: events.desktop);
 			if (!state.active()) {
 				if (state.connection instanceof AppServer) {
 					const { thread } = await state.connection.request<{ thread: Thread }>(
@@ -1131,7 +1156,6 @@ export async function serveCodex(): Promise<void> {
 		response.writeHead(404);
 		response.end();
 	}
-	let connected: Promise<void>;
 	try {
 		try {
 			await new Promise<void>((resolve, reject) => {
@@ -1156,8 +1180,7 @@ export async function serveCodex(): Promise<void> {
 			process.send?.({ ready: true });
 			return;
 		}
-		connected = attach();
-		await connected;
+		attach();
 		process.send?.({ ready: true });
 		process.once("SIGINT", stop);
 		process.once("SIGTERM", stop);
