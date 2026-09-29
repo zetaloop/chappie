@@ -90,15 +90,10 @@ export class Desktop {
 		params: Record<string, unknown>,
 		version: number,
 		owner?: string,
-		timeoutMs = 10_000,
+		timeoutMs?: number,
 	): Promise<{ result: T; handledByClientId: string }> {
 		const requestId = randomUUID();
 		const pending = Promise.withResolvers<DesktopMessage>();
-		const timer = setTimeout(
-			() =>
-				pending.reject(new Error(`Codex desktop request timed out: ${method}`)),
-			timeoutMs,
-		);
 		this.#pending.set(requestId, pending);
 		try {
 			this.#send({
@@ -117,7 +112,6 @@ export class Desktop {
 				handledByClientId: message.handledByClientId as string,
 			};
 		} finally {
-			clearTimeout(timer);
 			this.#pending.delete(requestId);
 		}
 	}
