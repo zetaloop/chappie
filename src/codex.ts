@@ -57,6 +57,8 @@ interface Item {
 	id: string;
 	type: string;
 	content?: Record<string, unknown>[];
+	input?: Record<string, unknown>[];
+	serverUserMessageId?: string | null;
 	contentItems?: Record<string, unknown>[] | null;
 	path?: string;
 	success?: boolean | null;
@@ -399,14 +401,20 @@ class CodexSession implements Host {
 			)
 		)
 			this.#results.set(item.id, item);
+		const id =
+			item.type === "userMessage"
+				? item.id
+				: item.type === "steeringUserMessage"
+					? item.serverUserMessageId
+					: undefined;
 		if (
-			item.type === "userMessage" &&
-			item.content?.length &&
-			!this.#seenInputs.has(item.id)
+			id &&
+			(item.content ?? item.input)?.length &&
+			!this.#seenInputs.has(id)
 		) {
-			this.#seenInputs.add(item.id);
-			this.#inputs.set(item.id, {
-				id: item.id,
+			this.#seenInputs.add(id);
+			this.#inputs.set(id, {
+				id,
 				sessionId: this.thread.id,
 				message: {
 					role: "user",
@@ -657,22 +665,28 @@ async function itemMessage(
 	const message: Record<string, unknown> = { ...item };
 	let content: Content[];
 	switch (item.type) {
+		case "steeringUserMessage":
 		case "userMessage":
 			delete message.content;
+			delete message.input;
+			delete message.restoreMessage;
+			delete message.compareKey;
 			message.role = "user";
 			content = (
 				await Promise.all(
-					(item.content ?? []).map(async (block): Promise<Content[]> => {
-						if (block.type === "text" && typeof block.text === "string")
-							return [{ type: "text", text: block.text }];
-						if (block.type === "localImage" && typeof block.path === "string")
-							return [await image(block.path)];
-						if (block.type === "image" && typeof block.url === "string")
-							return responseContent([
-								{ type: "input_image", image_url: block.url },
-							]);
-						return [{ type: "text", text: JSON.stringify(block) }];
-					}),
+					(item.content ?? item.input ?? []).map(
+						async (block): Promise<Content[]> => {
+							if (block.type === "text" && typeof block.text === "string")
+								return [{ type: "text", text: block.text }];
+							if (block.type === "localImage" && typeof block.path === "string")
+								return [await image(block.path)];
+							if (block.type === "image" && typeof block.url === "string")
+								return responseContent([
+									{ type: "input_image", image_url: block.url },
+								]);
+							return [{ type: "text", text: JSON.stringify(block) }];
+						},
+					),
 				)
 			).flat();
 			break;
