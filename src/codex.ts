@@ -234,15 +234,18 @@ class CodexSession implements Host {
 
 	async history(range: HistoryRange) {
 		if (!(this.connection instanceof AppServer)) {
-			const { desktop, owner } = this.connection;
-			await desktop.request(
+			const { desktop } = this.connection;
+			const { handledByClientId } = await desktop.request(
 				"thread-follower-load-complete-history",
 				{ conversationId: this.thread.id },
 				1,
-				owner,
+				undefined,
 				300_000,
 			);
-			const snapshot = await desktop.snapshot<Snapshot>(this.thread.id, owner);
+			const snapshot = await desktop.snapshot<Snapshot>(
+				this.thread.id,
+				handledByClientId,
+			);
 			const page = historyPage(
 				desktopTurns(snapshot).flatMap(({ turn }) =>
 					turn.items.map((item) => ({
@@ -359,7 +362,6 @@ class CodexSession implements Host {
 					"thread-follower-start-turn",
 					{ conversationId: this.thread.id, turnStart: { request: input } },
 					2,
-					this.connection.owner,
 				);
 			}
 		} catch (error) {
@@ -384,7 +386,6 @@ class CodexSession implements Host {
 					expectedTurnId: this.turn,
 				},
 				4,
-				this.connection.owner,
 			);
 	}
 
@@ -747,16 +748,15 @@ export async function serveCodex(): Promise<void> {
 	let desktopConnecting: Promise<Desktop | undefined> | undefined;
 	function register(thread: Thread, connection: Connection): CodexSession {
 		let state = sessions.get(thread.id);
-		if (
-			state &&
-			state.connection !== connection &&
-			(state.connection instanceof AppServer ||
+		if (state && state.connection !== connection) {
+			if (
+				state.connection instanceof AppServer ||
 				connection instanceof AppServer ||
-				state.connection.desktop !== connection.desktop ||
-				state.connection.owner !== connection.owner)
-		) {
-			state.session.close();
-			state = undefined;
+				state.connection.desktop !== connection.desktop
+			) {
+				state.session.close();
+				state = undefined;
+			} else state.connection.owner = connection.owner;
 		}
 		if (state) state.thread = thread;
 		else {
@@ -917,21 +917,34 @@ export async function serveCodex(): Promise<void> {
 	): Promise<void> {
 		const params = message.params;
 		if (!params) return;
-		if (
-			message.method === "client-status-changed" &&
-			params.status === "disconnected"
-		) {
-			for (const [id, state] of sessions)
-				if (
-					!(state.connection instanceof AppServer) &&
-					state.connection.owner === params.clientId
-				) {
-					state.session.close();
-					sessions.delete(id);
-				}
+		if (message.method === "client-status-changed") {
+			if (
+				params.status === "connected" &&
+				params.isSelf !== true &&
+				typeof params.clientId === "string"
+			)
+				for (const [id, state] of sessions)
+					if (
+						!(state.connection instanceof AppServer) &&
+						state.connection.desktop === connection
+					)
+						connection.follow(id, params.clientId);
+			if (params.status === "disconnected")
+				for (const [id, state] of sessions)
+					if (
+						!(state.connection instanceof AppServer) &&
+						state.connection.owner === params.clientId
+					) {
+						state.session.close();
+						sessions.delete(id);
+					}
 			return;
 		}
-		if (params.hostId !== "local" || typeof params.conversationId !== "string")
+		if (
+			params.hostId !== "local" ||
+			typeof params.conversationId !== "string" ||
+			!message.sourceClientId
+		)
 			return;
 		const threadId = params.conversationId;
 		if (
@@ -939,7 +952,11 @@ export async function serveCodex(): Promise<void> {
 				params.following === true) ||
 			message.method === "thread-stream-following-status-requested"
 		) {
-			if (sessions.has(threadId) || !message.sourceClientId) return;
+			if (
+				sessions.has(threadId) &&
+				message.method === "thread-stream-following-changed"
+			)
+				return;
 			const owner =
 				message.method === "thread-stream-following-status-requested"
 					? message.sourceClientId
@@ -957,8 +974,7 @@ export async function serveCodex(): Promise<void> {
 		if (
 			!state ||
 			state.connection instanceof AppServer ||
-			state.connection.desktop !== connection ||
-			state.connection.owner !== message.sourceClientId
+			state.connection.desktop !== connection
 		)
 			return;
 		if (message.method === "thread-stream-state-changed") {
@@ -967,10 +983,24 @@ export async function serveCodex(): Promise<void> {
 				conversationState: Snapshot;
 				patches: Patch[];
 			};
-			if (change.type === "snapshot")
+			if (state.connection.owner !== message.sourceClientId) {
+				const owner = await connection.owner(threadId, message.sourceClientId);
+				if (!owner) return;
+				const snapshot =
+					change.type === "snapshot"
+						? change.conversationState
+						: await connection.snapshot<Snapshot>(threadId, owner);
+				await register(desktopThread(snapshot), {
+					desktop: connection,
+					owner,
+				}).snapshot(snapshot);
+			} else if (change.type === "snapshot")
 				await state.snapshot(change.conversationState);
 			else if (change.type === "patches") await state.patches(change.patches);
-		} else if (message.method === "thread-archived") {
+		} else if (
+			message.method === "thread-archived" &&
+			state.connection.owner === message.sourceClientId
+		) {
 			state.session.close();
 			sessions.delete(threadId);
 		}

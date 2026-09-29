@@ -141,6 +141,17 @@ export class Desktop {
 		}
 	}
 
+	follow(threadId: string, clientId?: string): void {
+		this.#send({
+			type: "broadcast",
+			method: "thread-stream-following-changed",
+			sourceClientId: this.#clientId,
+			...(clientId ? { targetClientIds: [clientId] } : {}),
+			version: 1,
+			params: { hostId: "local", conversationId: threadId, following: true },
+		});
+	}
+
 	async snapshot<T>(threadId: string, owner: string): Promise<T> {
 		const pending = { owner, ...Promise.withResolvers<unknown>() };
 		const requests = this.#snapshots.get(threadId) ?? new Set();
@@ -151,14 +162,7 @@ export class Desktop {
 			10_000,
 		);
 		try {
-			this.#send({
-				type: "broadcast",
-				method: "thread-stream-following-changed",
-				sourceClientId: this.#clientId,
-				targetClientIds: [owner],
-				version: 1,
-				params: { hostId: "local", conversationId: threadId, following: true },
-			});
+			this.follow(threadId);
 			return (await pending.promise) as T;
 		} finally {
 			clearTimeout(timer);
