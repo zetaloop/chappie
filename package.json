@@ -1,6 +1,6 @@
 {
 	"name": "@zetaloop/chappie",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Connect ChatGPT and coding agents across devices",
 	"devDependencies": {
 		"@ai-sdk/provider": "^3.0.8",
