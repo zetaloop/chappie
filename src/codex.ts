@@ -38,6 +38,12 @@ const codexHome = await realpath(
 	process.env.CODEX_HOME ?? join(homedir(), ".codex"),
 );
 
+interface RequestMetadata {
+	request_kind?: string;
+	thread_source?: string;
+	turn_id?: string;
+}
+
 interface Thread {
 	id: string;
 	cwd: string;
@@ -486,13 +492,10 @@ class CodexSession implements Host {
 
 	async respond(
 		request: ResponsesRequest,
+		context: RequestMetadata | undefined,
 		response: ServerResponse,
 		signal: AbortSignal,
 	): Promise<void> {
-		const metadata = request.client_metadata?.["x-codex-turn-metadata"];
-		const context = metadata
-			? (JSON.parse(metadata) as { request_kind?: string; turn_id?: string })
-			: undefined;
 		if (context?.request_kind === "turn" && context.turn_id)
 			this.turn = context.turn_id;
 		if (!this.#attached) {
@@ -1042,6 +1045,26 @@ export async function serveCodex(): Promise<void> {
 			unknown
 		>;
 		if (route === "/v1/responses") {
+			const payload = body as unknown as ResponsesRequest;
+			const metadata = payload.client_metadata?.["x-codex-turn-metadata"];
+			const context = metadata
+				? (JSON.parse(metadata) as RequestMetadata)
+				: undefined;
+			// Memory consolidation processes history across sessions.
+			if (context?.thread_source === "memory_consolidation") {
+				response.writeHead(400, { "Content-Type": "application/json" });
+				response.end(
+					JSON.stringify({
+						error: {
+							type: "invalid_request_error",
+							code: "unsupported_request",
+							message:
+								"Background memory generation is not supported by Chappie",
+						},
+					}),
+				);
+				return;
+			}
 			const threadId = request.headers["thread-id"];
 			if (typeof threadId !== "string")
 				throw new Error("Codex did not provide a thread-id header");
@@ -1064,11 +1087,7 @@ export async function serveCodex(): Promise<void> {
 					);
 				}
 			}
-			await state.respond(
-				body as unknown as ResponsesRequest,
-				response,
-				controller.signal,
-			);
+			await state.respond(payload, context, response, controller.signal);
 			return;
 		}
 		if (route === "/resource") {
