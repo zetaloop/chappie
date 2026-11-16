@@ -5,7 +5,6 @@ import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
 import { deliveryContent } from "./delivery.ts";
 import { transferDescription, transferInput } from "./files.ts";
-import { historyInput } from "./history.ts";
 import {
 	callInput,
 	callsInput,
@@ -223,38 +222,6 @@ export function createServer(broker: Broker): McpServer {
 				context.mcpReq.signal,
 			);
 			return finishResult(broker, context, toolResult(result));
-		}),
-	);
-
-	server.registerTool(
-		"history",
-		{
-			title: "Session history",
-			description:
-				"Read the current native transcript, including ongoing work. Re-read a range to see updates to existing entries.",
-			inputSchema: historyInput.extend({
-				sessionId: z
-					.string()
-					.optional()
-					.describe("session to read; defaults to this chat's session"),
-			}),
-			outputSchema,
-			annotations: toolAnnotations,
-		},
-		handle(async ({ sessionId, ...range }, context) => {
-			const { history, ...session } = await broker.history(
-				context.chatId,
-				sessionId,
-				range,
-				context.mcpReq.signal,
-			);
-			const { content, ...page } = history;
-			return formatResult({
-				content: [
-					...textResult({ ...session, history: page }).content,
-					...content,
-				],
-			});
 		}),
 	);
 

@@ -10,12 +10,6 @@ import mime from "mime";
 import { AppServer, type RpcMessage } from "./appserver.ts";
 import { type Config, readConfig } from "./config.ts";
 import { Desktop, type DesktopMessage } from "./desktop.ts";
-import {
-	type HistoryEntry,
-	type HistoryRange,
-	historyPage,
-	historyResult,
-} from "./history.ts";
 import type {
 	Content,
 	Environment,
@@ -121,8 +115,6 @@ interface DesktopTurn {
 	status: string;
 	items: Item[];
 	error?: Turn["error"];
-	turnStartedAtMs?: number;
-	durationMs?: number | null;
 }
 
 interface Snapshot {
@@ -249,110 +241,6 @@ class CodexSession implements Host {
 		};
 	}
 
-	async history(range: HistoryRange) {
-		if (!(this.connection instanceof AppServer)) {
-			const { desktop } = this.connection;
-			const { handledByClientId } = await desktop.request(
-				"thread-follower-load-complete-history",
-				{ conversationId: this.thread.id },
-				1,
-				undefined,
-				300_000,
-			);
-			const snapshot = await desktop.snapshot<Snapshot>(
-				this.thread.id,
-				handledByClientId,
-			);
-			const page = historyPage(
-				desktopTurns(snapshot).flatMap(({ turn }) =>
-					turn.items.map((item) => ({
-						id: item.id,
-						item,
-						turnId: turn.turnId,
-						timestamp: turn.turnStartedAtMs,
-					})),
-				),
-				range,
-			);
-			return historyResult(
-				{
-					entries: await Promise.all(
-						page.entries.map(async ({ item, turnId, timestamp }) => ({
-							...(await itemMessage(item)),
-							id: item.id,
-							turnId,
-							...(timestamp === undefined
-								? {}
-								: { timestamp: new Date(timestamp).toISOString() }),
-						})),
-					),
-					hasMore: page.hasMore,
-				},
-				this.thread.id,
-			);
-		}
-		const items: {
-			id: string;
-			item: Item;
-			turnId: string;
-			startedAtMs: number | null;
-			completedAtMs: number | null;
-		}[] = [];
-		let cursor: string | null = null;
-		do {
-			const page: Page<{
-				item: Item;
-				turnId: string;
-				startedAtMs: number | null;
-				completedAtMs: number | null;
-			}> = await this.connection.request("thread/items/list", {
-				threadId: this.thread.id,
-				sortDirection: "desc",
-				limit: range.limit + 1,
-				...(cursor ? { cursor } : {}),
-			});
-			for (const entry of page.data) {
-				const item = entry.item;
-				if (item.type === "userMessage" && !item.content?.length) continue;
-				items.push({ ...entry, id: item.id });
-			}
-			cursor = page.nextCursor;
-			if (range.after) {
-				if (items.some((entry) => entry.id === range.after)) break;
-			} else {
-				const anchor = range.before
-					? items.findIndex((entry) => entry.id === range.before)
-					: -1;
-				if (
-					(!range.before || anchor !== -1) &&
-					items.length - anchor - 1 > range.limit
-				)
-					break;
-			}
-		} while (cursor);
-		const page = historyPage(items.reverse(), range);
-		const entries = await Promise.all(
-			page.entries.map(async (entry) => {
-				const timestamp = entry.startedAtMs ?? entry.completedAtMs;
-				return {
-					...(await itemMessage(entry.item)),
-					id: entry.id,
-					turnId: entry.turnId,
-					...(timestamp !== null
-						? { timestamp: new Date(timestamp).toISOString() }
-						: {}),
-				} satisfies HistoryEntry;
-			}),
-		);
-		return historyResult(
-			{
-				entries,
-				hasMore: page.hasMore || (!range.after && cursor !== null),
-			},
-			this.thread.id,
-		);
-	}
-
 	inputs(): SessionInput[] {
 		const inputs = [...this.#inputs.values()];
 		this.#inputs.clear();
@@ -407,11 +295,6 @@ class CodexSession implements Host {
 	}
 
 	async item(item: Item): Promise<void> {
-		await this.#capture(item);
-		this.session.historyChanged();
-	}
-
-	async #capture(item: Item): Promise<void> {
 		if (!this.active()) return;
 		if (
 			this.output?.message.content.some(
@@ -437,7 +320,7 @@ class CodexSession implements Host {
 				message: {
 					role: "user",
 					timestamp: Date.now(),
-					content: (await itemMessage(item)).content,
+					content: await itemContent(item),
 				},
 			});
 		}
@@ -452,7 +335,7 @@ class CodexSession implements Host {
 		if (current) {
 			this.#desktopTurn = current.key;
 			if (current.turn.turnId) this.turn = current.turn.turnId;
-			for (const item of current.turn.items) await this.#capture(item);
+			for (const item of current.turn.items) await this.item(item);
 			if (current.turn.turnId && current.turn.status !== "inProgress")
 				await this.settled({
 					id: current.turn.turnId,
@@ -497,13 +380,13 @@ class CodexSession implements Host {
 				refresh = true;
 			if (path[1] === "items" && patch.op !== "remove") {
 				if (path.length === 2 && Array.isArray(patch.value))
-					for (const item of patch.value) await this.#capture(item as Item);
+					for (const item of patch.value) await this.item(item as Item);
 				else if (
 					path.length === 3 &&
 					patch.value &&
 					typeof patch.value === "object"
 				)
-					await this.#capture(patch.value as Item);
+					await this.item(patch.value as Item);
 			}
 		}
 		if (refresh)
@@ -513,7 +396,6 @@ class CodexSession implements Host {
 					this.connection.owner,
 				),
 			);
-		this.session.historyChanged();
 	}
 
 	async respond(
@@ -628,7 +510,7 @@ class CodexSession implements Host {
 							toolCallId: call.id,
 							toolName: call.name,
 							content: item
-								? (await itemMessage(item)).content
+								? await itemContent(item)
 								: [
 										{
 											type: "text",
@@ -679,19 +561,11 @@ async function image(path: string): Promise<Content> {
 	};
 }
 
-async function itemMessage(
-	item: Item,
-): Promise<Record<string, unknown> & { content: Content[] }> {
-	const message: Record<string, unknown> = { ...item };
+async function itemContent(item: Item): Promise<Content[]> {
 	let content: Content[];
 	switch (item.type) {
 		case "steeringUserMessage":
 		case "userMessage":
-			delete message.content;
-			delete message.input;
-			delete message.restoreMessage;
-			delete message.compareKey;
-			message.role = "user";
 			content = (
 				await Promise.all(
 					(item.content ?? item.input ?? []).map(
@@ -711,27 +585,19 @@ async function itemMessage(
 			).flat();
 			break;
 		case "agentMessage":
-			delete message.text;
-			message.role = "assistant";
 			content = [{ type: "text", text: item.text ?? "" }];
 			break;
 		case "functionCallOutput":
-			delete message.output;
 			content = responseContent(item.output);
 			break;
 		case "mcpToolCall":
 			if (item.result) {
-				const { content: blocks, ...metadata } = item.result;
-				message.result = metadata;
-				if (metadata._meta?.details) message.details = metadata._meta.details;
-				content = responseContent(blocks);
+				content = responseContent(item.result.content);
 			} else {
-				delete message.error;
 				content = [{ type: "text", text: JSON.stringify(item.error) ?? "" }];
 			}
 			break;
 		case "commandExecution":
-			delete message.aggregatedOutput;
 			content = [{ type: "text", text: item.aggregatedOutput ?? "" }];
 			break;
 		case "imageView":
@@ -740,16 +606,12 @@ async function itemMessage(
 			content = [await image(item.path)];
 			break;
 		case "dynamicToolCall":
-			delete message.contentItems;
 			content = responseContent(item.contentItems ?? []);
 			break;
 		default:
-			return {
-				type: item.type,
-				content: [{ type: "text", text: JSON.stringify(item) }],
-			};
+			return [{ type: "text", text: JSON.stringify(item) }];
 	}
-	return { ...message, content };
+	return content;
 }
 
 export async function serveCodex(): Promise<void> {

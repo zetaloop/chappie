@@ -1,6 +1,5 @@
 import type { Activity, Source } from "./activity.ts";
 import type { FileMutation } from "./files.ts";
-import type { HistoryRange, HistoryResult } from "./history.ts";
 import type { SessionDescription, SessionInput } from "./ipc.ts";
 import type { ToolInput } from "./tools.ts";
 
@@ -78,7 +77,6 @@ export interface Host {
 	active(): boolean;
 	isIdle(): boolean;
 	inspect(signal: AbortSignal): Promise<Environment>;
-	history(range: HistoryRange): Promise<HistoryResult>;
 	inputs(): SessionInput[];
 	resetInputs(): void;
 	wake(): void | Promise<void>;

@@ -13,20 +13,12 @@ import {
 	OpenCode,
 	type OpenCodeClient,
 	type SessionInfo,
-	type SessionMessageInfo,
 	type SessionMessageUser,
 } from "@opencode/client";
 import { discover, headers } from "@opencode/client/service";
 import type { Model, Plugin, Provider } from "@opencode/plugin";
 import * as z from "zod";
 import { type Config, readConfig } from "./config.ts";
-import {
-	type HistoryEntry,
-	type HistoryRange,
-	type HistoryResult,
-	historyPage,
-	historyResult,
-} from "./history.ts";
 import type {
 	Content,
 	Environment,
@@ -43,7 +35,6 @@ import {
 	type StreamEvent,
 	type StreamMessage,
 } from "./provider.ts";
-import { resourceDescriptors } from "./resources.ts";
 import { Session } from "./session.ts";
 
 const usage: LanguageModelV3Usage = {
@@ -51,14 +42,12 @@ const usage: LanguageModelV3Usage = {
 	outputTokens: { total: 0, text: 0, reasoning: 0 },
 };
 
-type Client = () => Promise<OpenCodeClient>;
 const sessions = new Map<string, OpenSession>();
 
 class OpenSession implements Host {
 	readonly session: Session;
 	readonly tools;
 	readonly #context: Plugin.Context;
-	readonly #client: Client;
 	readonly #inputs = new Map<string, SessionInput>();
 	readonly #results = new Map<string, ToolResultMessage>();
 	#step: PromiseWithResolvers<void> | undefined;
@@ -67,15 +56,9 @@ class OpenSession implements Host {
 	output: Output | undefined;
 	catalog: ToolInfo[] | undefined;
 
-	constructor(
-		info: SessionInfo,
-		context: Plugin.Context,
-		client: Client,
-		config: Config,
-	) {
+	constructor(info: SessionInfo, context: Plugin.Context, config: Config) {
 		this.info = info;
 		this.#context = context;
-		this.#client = client;
 		this.session = new Session(this, config);
 		this.tools = localTools(this.session);
 	}
@@ -124,41 +107,6 @@ class OpenSession implements Host {
 			})),
 			...(globalAgents ? { globalAgents } : {}),
 		};
-	}
-	async history(range: HistoryRange): Promise<HistoryResult> {
-		// The HTTP API includes the transcript preceding compaction.
-		const client = await this.#client();
-		const messages: SessionMessageInfo[] = [];
-		const visible = (message: SessionMessageInfo) =>
-			message.type !== "synthetic" || !message.metadata?.chappie;
-		let cursor: string | undefined;
-		let current = this.info.revert === undefined;
-		let before = range.before === undefined;
-		let after = range.after === undefined;
-		let remaining = range.limit + 1;
-		do {
-			const page = await client.message.list({
-				sessionID: this.info.id,
-				limit: Math.min(range.limit + 1, 200),
-				...(cursor ? { cursor } : { order: "desc" as const }),
-			});
-			for (const message of page.data) {
-				if (!current) {
-					if (message.id === this.info.revert?.messageID) current = true;
-					continue;
-				}
-				messages.push(message);
-				if (message.id === range.after) after = true;
-				if (!before) {
-					if (message.id === range.before) before = true;
-				} else if (visible(message)) remaining--;
-			}
-			cursor = page.cursor.next ?? undefined;
-			if (before && after && (range.after || remaining <= 0)) break;
-		} while (cursor);
-		const page = historyPage(messages.reverse(), range, visible);
-		const entries = await Promise.all(page.entries.map(historyEntry));
-		return historyResult({ ...page, entries }, this.info.id);
 	}
 	inputs(): SessionInput[] {
 		const values = [...this.#inputs.values()];
@@ -346,7 +294,7 @@ export default {
 			const info = await context.session.get({ sessionID: id });
 			const previous = sessions.get(id);
 			if (previous) return previous;
-			const state = new OpenSession(info, context, client, config);
+			const state = new OpenSession(info, context, config);
 			sessions.set(id, state);
 			owned.add(id);
 			state.session.update();
@@ -549,7 +497,6 @@ export default {
 								: undefined,
 					);
 				}
-				state.session.historyChanged();
 			}
 		})().catch(report);
 		return async () => {
@@ -705,70 +652,4 @@ async function toolContent(
 			};
 		}),
 	);
-}
-
-async function historyEntry(
-	message: SessionMessageInfo,
-): Promise<HistoryEntry> {
-	const record: Record<string, unknown> = { ...message };
-	const content: HistoryResult["content"] = [];
-	switch (message.type) {
-		case "user":
-			delete record.text;
-			delete record.files;
-			content.push(...userContent(message));
-			break;
-		case "assistant":
-			delete record.content;
-			if (message.model.providerID === "chappie" && message.native)
-				record.chappie = message.native;
-			for (const part of message.content) {
-				if (part.type === "text" || part.type === "reasoning")
-					content.push({ type: "text", text: part.text });
-				else {
-					const state: Record<string, unknown> = { ...part.state };
-					delete state.content;
-					content.push({
-						type: "text",
-						text: JSON.stringify({ ...part, state }),
-					});
-					if (
-						part.state.status === "completed" ||
-						part.state.status === "error"
-					) {
-						content.push(
-							...(await toolContent(part.state.content ?? [])),
-							...resourceDescriptors(part.state.metadata).map((resource) => ({
-								type: "resource_link" as const,
-								...resource,
-							})),
-						);
-					}
-				}
-			}
-			break;
-		case "compaction":
-			delete record.summary;
-			if ("summary" in message)
-				content.push({ type: "text", text: message.summary });
-			break;
-		case "shell":
-			delete record.output;
-			content.push({
-				type: "text",
-				text: JSON.stringify(message.output) ?? "",
-			});
-			break;
-		default:
-			if ("text" in message) {
-				delete record.text;
-				content.push({ type: "text", text: message.text });
-			}
-	}
-	return {
-		...record,
-		id: message.id,
-		timestamp: new Date(message.time.created).toISOString(),
-		content,
-	};
 }

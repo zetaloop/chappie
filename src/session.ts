@@ -12,7 +12,6 @@ import {
 	transferFiles,
 	transferResult,
 } from "./files.ts";
-import type { HistoryRange } from "./history.ts";
 import type {
 	AssistantMessage,
 	Host,
@@ -37,11 +36,6 @@ import type { ToolInput } from "./tools.ts";
 
 type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
 
-interface HistoryRequest {
-	request: Extract<BrokerMessage, { type: "history" }>;
-	timeout: NodeJS.Timeout;
-}
-
 interface ActiveRequest {
 	request: RemoteRequest;
 	session: SessionDescription;
@@ -65,7 +59,6 @@ export class Session {
 	readonly #queue: RemoteRequest[] = [];
 	readonly #pendingInputs = new Map<string, SessionInput>();
 	readonly #deliveries = new Map<string, DeliveryRecord>();
-	readonly #histories = new Map<number, HistoryRequest>();
 	readonly #requests = new Map<number, PromiseWithResolvers<SessionResult>>();
 	readonly #operations = new Map<number, AbortController>();
 	readonly #resources = new Resources();
@@ -131,25 +124,6 @@ export class Session {
 		if (!("resource" in result))
 			throw new Error("Session returned no resource");
 		return result.resource;
-	}
-
-	async history(range: HistoryRange, sessionId?: string, signal?: AbortSignal) {
-		const self = this.#host.describe();
-		if (!sessionId || sessionId === self.id) {
-			const history = await this.#host.history(range);
-			this.#publish(this.#resources.rememberImages(self.id, history.content));
-			return history;
-		}
-		const result = await this.#request(
-			{
-				type: "history",
-				sessionId,
-				range,
-			},
-			signal,
-		);
-		if (!("history" in result)) throw new Error("Session returned no history");
-		return result.history;
 	}
 
 	async call(sessionId: string, calls: ToolInput[], signal?: AbortSignal) {
@@ -231,7 +205,6 @@ export class Session {
 			if (request) await this.#sendError(request.id, reason);
 		}
 		this.#collectInputs();
-		this.historyChanged();
 		await this.#completeActive();
 		this.#dispatch();
 	}
@@ -242,7 +215,6 @@ export class Session {
 		activity: Activity = {},
 	): void {
 		this.#host.notify?.(message, type, activity);
-		if (activity.event !== "history") this.historyChanged();
 	}
 
 	async start(output: Output): Promise<void> {
@@ -261,7 +233,6 @@ export class Session {
 			await connection.connect();
 			if (output.closed) return;
 			this.#collectInputs();
-			this.historyChanged();
 			await this.#completeActive();
 			await this.#sync();
 			if (output.closed) return;
@@ -286,7 +257,6 @@ export class Session {
 		try {
 			await connection.connect();
 			if (output.closed) return;
-			this.historyChanged();
 			await this.#completeActive();
 			output.begin();
 			await this.#sync();
@@ -403,7 +373,6 @@ export class Session {
 		this.#rejectReady(new Error("Chappie session ended"));
 		this.#rejectSyncs(new Error("Chappie session ended"));
 		this.#rejectStores(new Error("Chappie session ended"));
-		for (const id of this.#histories.keys()) this.#finishHistory(id);
 	}
 
 	update(): void {
@@ -426,7 +395,6 @@ export class Session {
 				onClose: (error) => {
 					this.#cancelRequests(error);
 					this.#rejectReady(error);
-					for (const id of this.#histories.keys()) this.#finishHistory(id);
 					this.#rejectSyncs(error);
 					this.#rejectStores(error);
 					if (this.#output && !this.#output.closed) this.#output.fail(error);
@@ -523,9 +491,6 @@ export class Session {
 					};
 				});
 				break;
-			case "history":
-				await this.#readHistory(message);
-				break;
 			case "ackInputs":
 				if (message.sessionId === this.#sessionId) {
 					for (const id of message.ids) this.#pendingInputs.delete(id);
@@ -578,10 +543,6 @@ export class Session {
 				const operation = this.#operations.get(message.id);
 				if (operation) {
 					operation.abort(new Error(message.reason));
-					break;
-				}
-				if (this.#histories.has(message.id)) {
-					this.#finishHistory(message.id);
 					break;
 				}
 				const queued = this.#queue.findIndex(
@@ -741,55 +702,6 @@ export class Session {
 		this.#operations.clear();
 	}
 
-	async #readHistory(
-		request: HistoryRequest["request"],
-		wait = request.range.wait,
-	): Promise<void> {
-		try {
-			const context = this.#host.describe();
-			if (context.id !== request.sessionId)
-				throw new Error("The requested session is no longer active");
-			const history = await this.history(request.range);
-			if (wait && !request.range.before && history.count === 0) {
-				if (!this.#histories.has(request.id)) {
-					this.#histories.set(request.id, {
-						request,
-						timeout: setTimeout(() => {
-							void this.#readHistory(request, false).catch(() => {});
-						}, 30_000),
-					});
-				}
-				return;
-			}
-			this.#finishHistory(request.id);
-			await this.#connection?.send({
-				type: "result",
-				id: request.id,
-				cwd: context.cwd,
-				history,
-			});
-		} catch (error) {
-			this.#finishHistory(request.id);
-			await this.#sendError(
-				request.id,
-				error instanceof Error ? error.message : String(error),
-			);
-		}
-	}
-
-	historyChanged(): void {
-		for (const { request } of this.#histories.values()) {
-			void this.#readHistory(request).catch(() => {});
-		}
-	}
-
-	#finishHistory(id: number): void {
-		const pending = this.#histories.get(id);
-		if (!pending) return;
-		clearTimeout(pending.timeout);
-		this.#histories.delete(id);
-	}
-
 	#dispatch(): void {
 		if (this.#active || this.#generations.size) return;
 		const output = this.#output;
@@ -853,7 +765,6 @@ export class Session {
 		toolResults: ToolResultMessage[],
 		error?: string,
 	): void {
-		this.historyChanged();
 		const active = this.#active;
 		const completed = message as Partial<AssistantMessage> | undefined;
 		const origin = completed?.chappie;

@@ -9,12 +9,11 @@ ChatGPT uses the tools below. Agent sessions also provide [local tools](#local-t
 | `tools`    | Read the selected session's native tool definitions.                         |
 | `call`     | Execute a native tool batch.                                                 |
 | `chat`     | Send an assistant message or answer a model request.                         |
-| `history`  | Read the agent's transcript with entry IDs and timestamps.                   |
 | `transfer` | Exchange files and images with ChatGPT or another session.                   |
 
 ## Sessions
 
-`init` accepts a `sessionId` to resume a task, including from another ChatGPT conversation or branch. Read recent `history` to recover its progress. When `globalAgents` is present, its path identifies the host's global instruction file.
+`init` accepts a `sessionId` to resume a task, including from another ChatGPT conversation or branch. When `globalAgents` is present, its path identifies the host's global instruction file.
 
 Without `sessionId`, `init` reuses the saved default or selects an online session with no saved ChatGPT binding. The first execution tool can also establish a default. Once a default exists, another tool's `sessionId` selects only that operation's target; `init({ sessionId })` changes the default.
 
@@ -63,23 +62,9 @@ A session can request generated text, such as a summary or title. The result inc
 }
 ```
 
-During a pending model request, `call` reports the batch as unexecuted with `cancelled` and an error status. Read context with `history`, reply to the request, then submit the tools still needed. Each request has its own ID; a reply can include another request when the session needs several summaries.
+During a pending model request, `call` reports the batch as unexecuted with `cancelled` and an error status. Reply to the request, then submit the tools still needed. Each request has its own ID; a reply can include another request when the session needs several summaries.
 
-ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Use history pagination or limit native tool output when needed; local tools have no such response limit.
-
-## History
-
-`history` reads the native transcript using the saved default or an explicit `sessionId`:
-
-```json
-{ "sessionId": "<session-id>", "limit": 20, "before": "<entry-id>" }
-```
-
-The default is the latest 20 readable entries. `before` pages backward and `after` pages forward; both can delimit a range. Named entries are excluded from that range. Results follow transcript order, with native IDs and recorded timestamps. `hasMore` indicates more entries in the requested direction.
-
-Use `after` with `wait: true` to follow progress. Available entries return immediately; at the end of the transcript the request waits up to 30 seconds, returning an empty page when no entries arrive. Reads with `before` return immediately.
-
-History includes native messages, tool calls and results, summaries, images, and resource references. Each read reflects the host's current records, including work in progress. Re-read the same range to see updates to existing entries.
+ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Limit native tool output when needed; local tools have no such response limit.
 
 ## Files and images
 
@@ -149,12 +134,11 @@ Every agent session provides `transfer`. Enable `localTools` in Chappie's config
 | `remote_tools`    | Tool definitions from the required `sessionId`.                          |
 | `remote_call`     | One native tool batch in the required `sessionId`.                       |
 | `remote_chat`     | An assistant message or model-request reply in the required `sessionId`. |
-| `history`         | The current local transcript, or a Chappie session named by `sessionId`. |
 | `transfer`        | Local files and resources exchanged with Chappie sessions.               |
 
 Select the Chappie model in each target session. This supports agent-to-agent collaboration, such as building a project on another operating system.
 
-Local `history` reads the controlling session; pass `sessionId` for a target's transcript. `transfer` uses local paths and exchanges files with targets through `from` and `to`.
+`transfer` uses local paths and exchanges files with targets through `from` and `to`.
 
 Use `remote_tools` to discover a target's definitions, then `remote_call` to execute them. When `globalAgents.path` is returned, read that file for the target's instructions. `remote_chat` sends an assistant message to the target:
 

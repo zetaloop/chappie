@@ -3,7 +3,6 @@ import { mkdir } from "node:fs/promises";
 import { type Activity, source, sourceLabel } from "./activity.ts";
 import { readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
-import type { HistoryRange } from "./history.ts";
 import type { ToolCall, ToolResultMessage } from "./host.ts";
 import {
 	type BrokerMessage,
@@ -267,29 +266,6 @@ export class Broker {
 			};
 		}
 		throw new Error("Session returned no tool results");
-	}
-
-	async history(
-		chatId: string,
-		sessionId: string | undefined,
-		range: HistoryRange,
-		signal: AbortSignal,
-	) {
-		const target = sessionId ?? this.#state.binding(chatId);
-		if (!target) throw new Error("Specify a sessionId to read history");
-		await this.#waitForSession(target, signal);
-		const result = await this.#request(
-			target,
-			(id) => ({
-				type: "history",
-				id,
-				sessionId: target,
-				range,
-			}),
-			signal,
-		);
-		if ("history" in result) return { sessionId: target, ...result };
-		throw new Error("Session returned no history");
 	}
 
 	async inputs(

@@ -11,7 +11,6 @@ import { join, resolve } from "node:path";
 import type { Activity, Source } from "./activity.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { TransferDetails } from "./files.ts";
-import type { HistoryRange, HistoryResult } from "./history.ts";
 import type {
 	AssistantMessage,
 	SkillInfo,
@@ -73,7 +72,6 @@ export type SessionResult = (
 	  }
 	| { inputs: SessionInput[] }
 	| { sessions: SessionDescription[] }
-	| { history: HistoryResult; cwd: string }
 	| { resource: ResourceData }
 	| { transfer: TransferDetails }
 	| { error: string }
@@ -91,7 +89,6 @@ export type SessionRequest =
 			paths: string[];
 			overwrite?: boolean;
 	  }
-	| { type: "history"; sessionId: string; range: HistoryRange }
 	| ({
 			type: "chat";
 			sessionId: string;

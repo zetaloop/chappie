@@ -10,7 +10,7 @@ The broker owns ChatGPT conversation bindings, pending results, and resource rou
 
 Requests are ordered per session, with execution inside a tool batch managed by the host. Host generation requests carry their original input through a separate output stream, allowing replies to arrive during an active operation.
 
-Native transcripts remain in their host's storage and are read on demand. `Session` owns resource descriptors and their file pointers or image bytes; the broker routes reads to the producing connection, including unregistered requesters. Transfers use those connections so each device resolves its own paths.
+Native transcripts remain in their host's storage. `Session` owns resource descriptors and their file pointers or image bytes; the broker routes reads to the producing connection, including unregistered requesters. Transfers use those connections so each device resolves its own paths.
 
 Pi and OMP register native streaming providers. OpenCode's plugin and AI SDK provider share a session map. The Codex plugin owns a local Responses service. It controls desktop sessions through the App's collaboration IPC and CLI sessions through their app-server connection. Skill queries use an existing CLI connection or a short-lived native app-server process.
 

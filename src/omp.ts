@@ -15,7 +15,6 @@ import * as z from "zod";
 import { getDirectory, readConfig } from "./config.ts";
 import type { Host } from "./host.ts";
 import { ipcEndpoint, type SessionInput } from "./ipc.ts";
-import { journalHistory } from "./journal.ts";
 import { localTools } from "./local.ts";
 import { createMessage, ProviderOutput } from "./provider.ts";
 import { Session } from "./session.ts";
@@ -67,14 +66,6 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 					.filter((command) => command.source === "skill"),
 				...(globalAgents ? { globalAgents } : {}),
 			};
-		},
-		async history(range) {
-			const ctx = current();
-			return journalHistory(
-				ctx.sessionManager.getBranch(),
-				ctx.sessionManager.getSessionId(),
-				range,
-			);
 		},
 		inputs() {
 			const store = current().sessionManager;
@@ -146,7 +137,6 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 	omp.on("session_tree", (_event, ctx) => {
 		update(ctx);
 		session.resetInputs();
-		session.historyChanged();
 	});
 	omp.on("context", (event) => ({
 		messages: host.active()
@@ -159,15 +149,6 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 	}));
 	omp.on("message_start", (_event, ctx) => {
 		context = ctx;
-		session.historyChanged();
-	});
-	omp.on("message_end", (_event, ctx) => {
-		context = ctx;
-		session.historyChanged();
-	});
-	omp.on("session_compact", (_event, ctx) => {
-		context = ctx;
-		session.historyChanged();
 	});
 	omp.on("turn_end", (event, ctx) => {
 		context = ctx;

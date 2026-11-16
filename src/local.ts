@@ -2,7 +2,6 @@ import * as z from "zod";
 import type { CallResult, ChatResult } from "./broker.ts";
 import { deliveryContent } from "./delivery.ts";
 import { transferDescription, transferInput } from "./files.ts";
-import { historyInput } from "./history.ts";
 import type { Content } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
 import { resourceDescriptors } from "./resources.ts";
@@ -70,23 +69,6 @@ export const definitions = [
 				session,
 				await session.chat(sessionId, text, replyTo, signal),
 			),
-	),
-	tool(
-		"history",
-		"Read this session's history, or a Chappie session identified by sessionId. Use before/after to page and wait to follow remote progress.",
-		historyInput.extend({
-			sessionId: z.string().optional(),
-		}),
-		async (session, { sessionId, ...range }, signal) => {
-			const { content, ...page } = await session.history(
-				range,
-				sessionId,
-				signal,
-			);
-			return {
-				content: [...textResult(page).content, ...nativeContent(content)],
-			};
-		},
 	),
 	tool(
 		"transfer",

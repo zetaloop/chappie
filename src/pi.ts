@@ -25,7 +25,6 @@ import type { Activity } from "./activity.ts";
 import { readConfig } from "./config.ts";
 import type { Host, Output } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
-import { journalHistory } from "./journal.ts";
 import { localDeliveries, localTools } from "./local.ts";
 import { createMessage, ProviderOutput } from "./provider.ts";
 import { Session } from "./session.ts";
@@ -83,10 +82,6 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 					.filter((command) => command.source === "skill"),
 				...(globalAgents ? { globalAgents } : {}),
 			};
-		},
-		async history(range) {
-			const manager = current().sessionManager;
-			return journalHistory(manager.getBranch(), manager.getSessionId(), range);
 		},
 		inputs(): SessionInput[] {
 			const manager = current().sessionManager;
@@ -159,26 +154,12 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 			session.resetInputs();
 			inputCursor = event.newLeafId;
 		}
-		session.historyChanged();
-	});
-	// Pi persists messages after message_end handlers finish.
-	pi.on("message_start", (_event, ctx) => {
-		context = ctx;
-		session.historyChanged();
-	});
-	pi.on("tool_call", (_event, ctx) => {
-		context = ctx;
-		session.historyChanged();
 	});
 	pi.on("session_before_compact", (event) => {
 		requests.set(event.signal, "compaction");
 	});
 	pi.on("session_before_tree", (event) => {
 		requests.set(event.signal, "summary");
-	});
-	pi.on("session_compact", (_event, ctx) => {
-		context = ctx;
-		session.historyChanged();
 	});
 	pi.on("context", (event) => ({
 		messages: host.active()

@@ -88,7 +88,7 @@ export function inputContent(
 						request: id,
 						sessionId,
 						kind: input.request.kind,
-						instructions: `This session is requesting ${task}. Follow the input below and reply with ${replyTool} using this sessionId and the request ID as replyTo. Use history if needed; ${callTool} cannot execute tools in this session until this request finishes.`,
+						instructions: `This session is requesting ${task}. Follow the input below and reply with ${replyTool} using this sessionId and the request ID as replyTo. ${callTool} cannot execute tools in this session until this request finishes.`,
 					}),
 				},
 				{ type: "text" as const, text: JSON.stringify(input.request.input) },
