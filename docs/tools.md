@@ -143,14 +143,14 @@ Both sides use their existing broker connections and resolve paths on their own 
 
 Every agent session provides `transfer`. Enable `localTools` in Chappie's configuration for the complete tool set:
 
-| Tool           | Target                                                                   |
-| -------------- | ------------------------------------------------------------------------ |
-| `sessions`     | Online Chappie sessions, with the current local ID reported as `self`.   |
-| `remote_tools` | Tool definitions from the required `sessionId`.                          |
-| `remote_call`  | One native tool batch in the required `sessionId`.                       |
-| `remote_chat`  | An assistant message or model-request reply in the required `sessionId`. |
-| `history`      | The current local transcript, or a Chappie session named by `sessionId`. |
-| `transfer`     | Local files and resources exchanged with Chappie sessions.               |
+| Tool              | Target                                                                   |
+| ----------------- | ------------------------------------------------------------------------ |
+| `remote_sessions` | Online Chappie sessions, with the current local ID reported as `self`.   |
+| `remote_tools`    | Tool definitions from the required `sessionId`.                          |
+| `remote_call`     | One native tool batch in the required `sessionId`.                       |
+| `remote_chat`     | An assistant message or model-request reply in the required `sessionId`. |
+| `history`         | The current local transcript, or a Chappie session named by `sessionId`. |
+| `transfer`        | Local files and resources exchanged with Chappie sessions.               |
 
 Select the Chappie model in each target session. This supports agent-to-agent collaboration, such as building a project on another operating system.
 

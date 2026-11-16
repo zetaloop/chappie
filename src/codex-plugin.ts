@@ -93,7 +93,7 @@ export async function serveCodexPlugin(): Promise<void> {
 			{
 				description: definition.description,
 				inputSchema: definition.parameters,
-				...(definition.name === "sessions" ||
+				...(definition.name === "remote_sessions" ||
 				definition.name === "remote_tools" ||
 				definition.name === "history"
 					? { annotations: { readOnlyHint: true } }

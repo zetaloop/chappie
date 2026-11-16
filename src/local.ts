@@ -27,7 +27,7 @@ export interface NativeTool {
 
 export const definitions = [
 	tool(
-		"sessions",
+		"remote_sessions",
 		"List connected Chappie sessions and identify this local session.",
 		z.object({
 			sessionId: z.string().optional(),
