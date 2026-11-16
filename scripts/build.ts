@@ -17,6 +17,6 @@ await build({
 	target: "es2024",
 	external: Object.keys(packageJson.peerDependencies),
 });
-for await (const source of glob("src/*.{md,html,json}")) {
+for await (const source of glob("src/*.{md,json}")) {
 	await copyFile(source, `dist/${basename(source)}`);
 }

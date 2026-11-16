@@ -2,17 +2,15 @@
 
 ChatGPT uses the tools below. Agent sessions also provide [local tools](#local-tools).
 
-| Tool         | Purpose                                                                      |
-| ------------ | ---------------------------------------------------------------------------- |
-| `sessions`   | Find sessions by agent, device, directory, or name.                          |
-| `init`       | Select this ChatGPT conversation's default session and read its environment. |
-| `tools`      | Read the selected session's native tool definitions.                         |
-| `call`       | Execute a native tool batch.                                                 |
-| `chat`       | Send an assistant message or answer a model request.                         |
-| `history`    | Read the agent's transcript with entry IDs and timestamps.                   |
-| `transfer`   | Exchange files and images with ChatGPT or another session.                   |
-| `ask`        | Create a persistent question in ChatGPT.                                     |
-| `ask_assert` | Confirm that its widget loaded.                                              |
+| Tool       | Purpose                                                                      |
+| ---------- | ---------------------------------------------------------------------------- |
+| `sessions` | Find sessions by agent, device, directory, or name.                          |
+| `init`     | Select this ChatGPT conversation's default session and read its environment. |
+| `tools`    | Read the selected session's native tool definitions.                         |
+| `call`     | Execute a native tool batch.                                                 |
+| `chat`     | Send an assistant message or answer a model request.                         |
+| `history`  | Read the agent's transcript with entry IDs and timestamps.                   |
+| `transfer` | Exchange files and images with ChatGPT or another session.                   |
 
 ## Sessions
 
@@ -165,26 +163,3 @@ Use `remote_tools` to discover a target's definitions, then `remote_call` to exe
 ```
 
 Model requests include instructions naming the local tools. Supply `replyTo` to answer with `remote_chat`, then submit the tools still needed with `remote_call`. These operations use native session IDs, independently of ChatGPT conversation bindings.
-
-## Questions in ChatGPT
-
-`ask` saves a question and requests its widget:
-
-```json
-{
-	"header": "Export format",
-	"question": "Which export format should the command use?",
-	"options": [
-		{
-			"title": "JSON",
-			"description": "Structured data for programs.",
-			"recommended": true
-		},
-		{ "title": "CSV", "description": "Tabular data for spreadsheets." }
-	]
-}
-```
-
-Call `ask_assert` with the returned `question.id`. It confirms loading or marks the question skipped after 10 seconds. Native agent interaction tools are also available through `call`.
-
-Answers, revisions, and skips arrive as `webAnswer` in later results. Omit `options` for a text answer; use `allowMultiple: true` for multiple choices. Questions persist across replies and broker restarts.

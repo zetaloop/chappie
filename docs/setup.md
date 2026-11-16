@@ -45,7 +45,6 @@ Agent plugins provide `transfer` in every session. Enable `localTools` for the c
 
 | Setting      | Default      | Used by       | Purpose                                                                    |
 | ------------ | ------------ | ------------- | -------------------------------------------------------------------------- |
-| `ask`        | `true`       | Broker        | Enable question widgets in ChatGPT.                                        |
 | `listen`     | `false`      | Broker        | Accept TCP connections; `true` uses port `24274`, or supply a port number. |
 | `connect`    | Local socket | Agent plugins | Broker hostname, optionally followed by `:port`.                           |
 | `localTools` | `false`      | Agent plugins | Enable collaboration tools.                                                |

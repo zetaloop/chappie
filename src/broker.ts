@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { type Activity, source, sourceLabel } from "./activity.ts";
-import { type Config, readConfig } from "./config.ts";
+import { readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { HistoryRange } from "./history.ts";
 import type { ToolCall, ToolResultMessage } from "./host.ts";
@@ -16,13 +16,6 @@ import {
 	type SessionMessage,
 	type SessionResult,
 } from "./ipc.ts";
-import {
-	type Question,
-	type QuestionAnswer,
-	type QuestionInput,
-	type QuestionRecord,
-	questionView,
-} from "./questions.ts";
 import { type ResourceData, resourceSessionId } from "./resources.ts";
 import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
@@ -84,7 +77,6 @@ export class Broker {
 		JsonLinePeer<SessionMessage, BrokerMessage>,
 		Map<number, AbortController>
 	>();
-	#config: Config = {};
 	#nextRequestId = 1;
 
 	constructor(directory: string) {
@@ -98,10 +90,10 @@ export class Broker {
 	}
 
 	async start(): Promise<void> {
-		this.#config = await readConfig(this.#directory);
+		const config = await readConfig(this.#directory);
 		await mkdir(this.#directory, { recursive: true });
 		await this.#state.load();
-		await this.#ipc.start(this.#config.listen ?? false);
+		await this.#ipc.start(config.listen ?? false);
 	}
 
 	async close(): Promise<void> {
@@ -134,10 +126,6 @@ export class Broker {
 				...description,
 				bindingCount: counts.get(description.id) ?? 0,
 			}));
-	}
-
-	get askEnabled(): boolean {
-		return this.#config.ask ?? true;
 	}
 
 	binding(chatId: string): string | undefined {
@@ -321,122 +309,6 @@ export class Broker {
 		return result.inputs;
 	}
 
-	async ask(
-		chatId: string,
-		sessionId: string | undefined,
-		input: QuestionInput,
-		requestId: unknown,
-		signal: AbortSignal,
-	): Promise<Question> {
-		const { sessionId: target } = await this.#selectSession(
-			chatId,
-			sessionId,
-			requestId,
-			signal,
-		);
-		signal.throwIfAborted();
-		const session = this.#sessions.get(target);
-		if (!session) throw new Error(`Session ${target} is offline`);
-		const question: QuestionRecord = {
-			...input,
-			id: randomUUID(),
-			chatId,
-			sessionId: target,
-			cwd: session.description.cwd,
-			delivered: false,
-		};
-		await this.#state.addQuestion(question);
-		const activity = source(chatId, requestId);
-		void this.#notify(
-			target,
-			`${sourceLabel(activity)} asked: ${question.question}`,
-			{
-				event: "asked",
-				...activity,
-			},
-		).catch(() => {});
-		return questionView(question);
-	}
-
-	async assertQuestion(
-		chatId: string,
-		id: string,
-		signal: AbortSignal,
-	): Promise<Question> {
-		const timeout = AbortSignal.timeout(10_000);
-		const combined = AbortSignal.any([signal, timeout]);
-		try {
-			for (;;) {
-				signal.throwIfAborted();
-				const question = this.#state.question(chatId, id);
-				if (question.loaded) return questionView(question);
-				await this.#waitForChange(combined);
-			}
-		} catch (error) {
-			signal.throwIfAborted();
-			if (!timeout.aborted) throw error;
-			const question = this.#state.question(chatId, id);
-			if (question.loaded) return questionView(question);
-			if (!question.answer) {
-				await this.#state.answer(chatId, id, {
-					selections: [],
-					text: "",
-					skipped: true,
-				});
-				void this.#notify(
-					question.sessionId,
-					`Question skipped after display timeout: ${question.question}`,
-					{ event: "skipped", clientId: chatId },
-				).catch(() => {});
-			}
-			throw new Error(
-				"Question widget did not load within 10 seconds. The question was automatically skipped. Use an installed native interactive tool through call if an answer is needed.",
-			);
-		}
-	}
-
-	async answer(
-		chatId: string,
-		id: string,
-		answer?: QuestionAnswer,
-		loaded = false,
-	): Promise<Question> {
-		let question = this.#state.question(chatId, id);
-		if ((loaded || answer) && !question.loaded) {
-			question = { ...question, loaded: true };
-			await this.#state.addQuestion(question);
-			this.#notifyChange();
-		}
-		if (answer) {
-			const previous = question.answer;
-			question = await this.#state.answer(chatId, id, answer);
-			if (question.answer !== previous) {
-				const response = [
-					...(question.answer?.selections ?? []).map(
-						(index) => question.options[index]?.title,
-					),
-					question.answer?.text,
-				]
-					.filter(Boolean)
-					.join(", ");
-				const message = question.answer?.skipped
-					? `Skipped in ChatGPT ${chatId.slice(-4)}: ${question.question}`
-					: previous
-						? `Answer updated in ChatGPT ${chatId.slice(-4)}: ${question.question} — ${response}`
-						: `Answered in ChatGPT ${chatId.slice(-4)}: ${question.question} — ${response}`;
-				void this.#notify(question.sessionId, message, {
-					event: question.answer?.skipped ? "skipped" : "answered",
-					clientId: chatId,
-				}).catch(() => {});
-			}
-		}
-		return questionView(question);
-	}
-
-	answers(chatId: string): QuestionRecord[] {
-		return this.#state.answers(chatId);
-	}
-
 	async readResource(uri: string, signal: AbortSignal): Promise<ResourceData> {
 		const sessionId = resourceSessionId(uri);
 		const result = await this.#request(
@@ -454,10 +326,9 @@ export class Broker {
 
 	acknowledge(
 		deliveries: DeliveryRecord[],
-		answers: QuestionRecord[],
 		signal: AbortSignal,
 	): Promise<void> {
-		return this.#state.acknowledge(deliveries, answers, signal);
+		return this.#state.acknowledge(deliveries, signal);
 	}
 
 	async request(
@@ -499,7 +370,7 @@ export class Broker {
 								id: message.id,
 								...(deliveries.length ? { deliveries } : {}),
 							});
-							await this.#state.acknowledge(deliveries, [], controller.signal);
+							await this.#state.acknowledge(deliveries, controller.signal);
 						},
 						(error: unknown) =>
 							peer.send({
