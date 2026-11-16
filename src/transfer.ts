@@ -24,19 +24,24 @@ export const transfer = {
 	renderCall(args, theme, context) {
 		const device = context.state.device ?? hostname();
 		const from = args.files
-			? "ChatGPT"
+			? "Attachments"
 			: args.from
 				? (context.state.from ?? "Session")
 				: device;
 		const to =
 			args.files || args.from
 				? device
-				: (context.state.to ?? (args.to ? "Session" : "ChatGPT"));
+				: (context.state.to ?? (args.to ? "Session" : undefined));
 		const header =
 			context.lastComponent instanceof Text
 				? context.lastComponent
 				: new Text("", 0, 0);
-		header.setText(theme.fg("toolTitle", theme.bold(`${from} → ${to}`)));
+		header.setText(
+			theme.fg(
+				"toolTitle",
+				theme.bold(to ? `${from} → ${to}` : "Export files"),
+			),
+		);
 		context.state.header = header;
 		return header;
 	},
@@ -54,17 +59,20 @@ export const transfer = {
 		}
 		const args = context.args;
 		context.state.device = details.device;
-		context.state.to = details.to?.device ?? "ChatGPT";
+		context.state.to = details.to?.device ?? details.fileRecipient;
 		context.state.from = details.from?.device;
 		const from = args.files
-			? "ChatGPT"
+			? "Attachments"
 			: (details.from?.device ?? details.device);
 		const to =
 			args.files || args.from
 				? details.device
-				: (details.to?.device ?? "ChatGPT");
+				: (details.to?.device ?? details.fileRecipient);
 		context.state.header?.setText(
-			theme.fg("toolTitle", theme.bold(`${from} → ${to}`)),
+			theme.fg(
+				"toolTitle",
+				theme.bold(to ? `${from} → ${to}` : "Export files"),
+			),
 		);
 		const lines =
 			details.resources.length > 0
@@ -96,7 +104,12 @@ export const transfer = {
 	ToolDefinition<
 		typeof parameters,
 		TransferDetails,
-		{ header?: Text; device?: string; to?: string; from?: string | undefined }
+		{
+			header?: Text;
+			device?: string;
+			to?: string | undefined;
+			from?: string | undefined;
+		}
 	>,
 	"execute"
 >;

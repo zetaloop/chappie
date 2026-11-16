@@ -95,7 +95,12 @@ export type SessionRequest =
 			text: string;
 			replyTo?: string;
 	  } & Source)
-	| ({ type: "call"; sessionId: string; calls: ToolCall[] } & Source);
+	| ({
+			type: "call";
+			sessionId: string;
+			calls: ToolCall[];
+			fileRecipient?: string;
+	  } & Source);
 
 export type ClientRequest =
 	| SessionRequest

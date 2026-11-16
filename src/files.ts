@@ -11,6 +11,7 @@ export interface TransferDetails {
 	device: string;
 	files: ({ path: string; bytes: number } | { path: string; error: string })[];
 	resources: ResourceDescriptor[];
+	fileRecipient?: string;
 	to?: { sessionId: string; device: string };
 	from?: { sessionId: string; device: string };
 }
@@ -44,14 +45,14 @@ export const transferInput = z.object({
 		.array(z.string())
 		.min(1)
 		.describe(
-			"Destination paths for import; source paths or chappie:// image references for export or session copies",
+			"Local destination paths for incoming files; local source paths or chappie:// image references for outgoing files",
 		),
 	files: z
 		.array(transferFile)
 		.min(1)
 		.optional()
 		.describe(
-			"ChatGPT files paired with paths in order; omit for session sources",
+			"Attached files paired with paths in order; omit for session sources",
 		),
 	from: z
 		.object({
@@ -77,7 +78,7 @@ export const transferInput = z.object({
 export type TransferInput = z.infer<typeof transferInput>;
 
 export const transferDescription =
-	"Import ChatGPT files with files, send local paths to a session with to, or retrieve session files with from. Otherwise, export local paths or chappie:// image references as resources.";
+	"Import attached files with files, send local files to a session with to, or retrieve session files with from.";
 
 export async function transferFiles(
 	args: TransferInput,

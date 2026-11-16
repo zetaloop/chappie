@@ -138,7 +138,7 @@ Every agent session provides `transfer`. Enable `localTools` in Chappie's config
 
 Select the Chappie model in each target session. This supports agent-to-agent collaboration, such as building a project on another operating system.
 
-`transfer` uses local paths and exchanges files with targets through `from` and `to`.
+`transfer` uses local paths and exchanges files with targets through `from` and `to`. Supply `files` to import attachments.
 
 Use `remote_tools` to discover a target's definitions, then `remote_call` to execute them. When `globalAgents.path` is returned, read that file for the target's instructions. `remote_chat` sends an assistant message to the target:
 

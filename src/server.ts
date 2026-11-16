@@ -200,7 +200,7 @@ export function createServer(broker: Broker): McpServer {
 		"transfer",
 		{
 			title: "Transfer files",
-			description: transferDescription,
+			description: `${transferDescription} Omit files, from, and to to return files to this conversation.`,
 			outputSchema,
 			inputSchema: transferInput.extend({
 				sessionId: z

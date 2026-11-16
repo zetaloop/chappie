@@ -252,6 +252,7 @@ export class Broker {
 				...source(chatId, requestId),
 				sessionId: target,
 				calls: toolCalls,
+				fileRecipient: "ChatGPT",
 			}),
 			signal,
 		);

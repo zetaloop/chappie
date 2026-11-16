@@ -6,6 +6,7 @@ import { type Config, getDirectory } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import {
 	copyFiles,
+	type FileContext,
 	type TransferDetails,
 	type TransferInput,
 	type TransferResult,
@@ -89,6 +90,11 @@ export class Session {
 		return this.#host.describe().id;
 	}
 
+	get #fileRecipient(): string | undefined {
+		const request = this.#active?.request;
+		return request?.type === "call" ? request.fileRecipient : undefined;
+	}
+
 	async sessions(sessionId?: string, signal?: AbortSignal) {
 		const result = await this.#request(
 			{ type: "sessions", ...(sessionId ? { sessionId } : {}) },
@@ -128,6 +134,7 @@ export class Session {
 
 	async call(sessionId: string, calls: ToolInput[], signal?: AbortSignal) {
 		const self = this.#host.describe();
+		const fileRecipient = this.#fileRecipient;
 		const result = await this.#request(
 			{
 				type: "call",
@@ -138,6 +145,7 @@ export class Session {
 					id: `chappie-${randomUUID()}`,
 				})),
 				...source(self.id, randomUUID(), self.name ?? self.agent),
+				...(fileRecipient ? { fileRecipient } : {}),
 			},
 			signal,
 		);
@@ -282,6 +290,18 @@ export class Session {
 		};
 		if ([args.files, args.from, args.to].filter(Boolean).length > 1)
 			throw new Error("Supply one of files, from, or to");
+		if (!args.files && !args.from && !args.to) {
+			const fileRecipient = this.#fileRecipient;
+			if (!fileRecipient) throw new Error("Supply one of files, from, or to");
+			update?.({
+				device: context.device,
+				files: [],
+				resources: [],
+				fileRecipient,
+			});
+			const result = await this.#export(args.paths, context, signal);
+			return transferResult({ ...result.details, fileRecipient });
+		}
 		if (args.from) {
 			const result = await this.#request(
 				{
@@ -313,22 +333,13 @@ export class Session {
 				},
 			});
 		}
-		if (!args.to) {
-			const result = await transferFiles(args, context, signal, update);
-			this.#publish(result.details.resources);
-			return result;
-		}
+		if (!args.to) return transferFiles(args, context, signal, update);
 		if (args.paths.length !== args.to.paths.length)
 			throw new Error("Source and destination counts must match");
 		const { sessions } = await this.sessions(args.to.sessionId, signal);
 		const destination = sessions[0];
 		if (!destination) throw new Error("Destination session is unavailable");
-		const exported = await transferFiles(
-			{ paths: args.paths },
-			context,
-			signal,
-		);
-		this.#publish(exported.details.resources);
+		const exported = await this.#export(args.paths, context, signal);
 		update?.({
 			...exported.details,
 			to: {
@@ -349,6 +360,16 @@ export class Session {
 		if (!("transfer" in result))
 			throw new Error("Session returned no transfer result");
 		return transferResult({ ...result.transfer, device: hostname() });
+	}
+
+	async #export(
+		paths: string[],
+		context: FileContext,
+		signal?: AbortSignal,
+	): Promise<TransferResult> {
+		const result = await transferFiles({ paths }, context, signal);
+		this.#publish(result.details.resources);
+		return result;
 	}
 
 	close(): void {
@@ -509,8 +530,14 @@ export class Session {
 				break;
 			case "export":
 				await this.#reply(message.id, async (signal) => {
-					this.#description(message.sessionId);
-					const result = await this.transfer({ paths: message.paths }, signal);
+					const result = await this.#export(
+						message.paths,
+						{
+							...this.#description(message.sessionId),
+							resources: this.#resources,
+						},
+						signal,
+					);
 					return { type: "result", id: message.id, transfer: result.details };
 				});
 				break;
