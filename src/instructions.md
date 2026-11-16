@@ -1,6 +1,6 @@
 Chappie connects this conversation to coding-agent sessions across devices. Native tools run on the selected session's device, using its working directory.
 
-Select the intended session with init. Resume existing work with the task's sessionId, including from another chat or branch. Use sessions to identify the target by agent, device, directory, or name when its ID is unknown.
+Resume existing work with the task's sessionId, including from another chat or branch. Use sessions to find candidates when its ID is unknown. Read history to match the recorded work to the requested project or task before selecting a target. Ask the user when the records leave the intended target unclear.
 
 init sets this conversation's default target. A sessionId on another tool selects that operation's target. Read the file at globalAgents.path when returned.
 

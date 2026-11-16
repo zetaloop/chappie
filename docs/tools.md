@@ -9,13 +9,14 @@ ChatGPT uses the tools below. Agent sessions also provide [local tools](#local-t
 | `tools`    | Read the selected session's native tool definitions.                         |
 | `call`     | Execute a native tool batch.                                                 |
 | `chat`     | Send an assistant message or answer a model request.                         |
+| `history`  | Read a session's native records to identify its project and task.            |
 | `transfer` | Exchange files and images with ChatGPT or another session.                   |
 
 ## Sessions
 
-`init` accepts a `sessionId` to resume a task, including from another ChatGPT conversation or branch. When `globalAgents` is present, its path identifies the host's global instruction file.
+Use `sessions` to find candidates and `history` to identify the project and task recorded in each. Select the intended target with `init({ sessionId })`. When `globalAgents` is present, its path identifies the host's global instruction file.
 
-Without `sessionId`, `init` reuses the saved default or selects an online session with no saved ChatGPT binding. The first execution tool can also establish a default. Once a default exists, another tool's `sessionId` selects only that operation's target; `init({ sessionId })` changes the default.
+`init` sets this conversation's default session, including when resuming work from another ChatGPT conversation or branch. Omitting `sessionId` reuses the existing default. Other tools use that default or an explicit `sessionId` for the current operation. Without a default, supply a session ID.
 
 Several conversations can share a session, and one conversation can work with several sessions. An operation stays associated with the target selected when it started. Conversation bindings survive broker restarts.
 
@@ -65,6 +66,10 @@ A session can request generated text, such as a summary or title. The result inc
 During a pending model request, `call` reports the batch as unexecuted with `cancelled` and an error status. Reply to the request, then submit the tools still needed. Each request has its own ID; a reply can include another request when the session needs several summaries.
 
 ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Limit native tool output when needed; local tools have no such response limit.
+
+## History
+
+`history` returns native session records as text, with attachments represented by their metadata. Pass `sessionId` to inspect a candidate, or omit it to read the default selected with `init`.
 
 ## Files and images
 

@@ -76,9 +76,7 @@ export function createServer(broker: Broker): McpServer {
 				sessionId: z
 					.string()
 					.optional()
-					.describe(
-						"Session to select; omit to reuse the default or choose an online unbound session",
-					),
+					.describe("Session to select; omit to reuse the current default"),
 			}),
 			annotations: toolAnnotations,
 		},
@@ -105,7 +103,7 @@ export function createServer(broker: Broker): McpServer {
 					.string()
 					.optional()
 					.describe(
-						"session for this operation; becomes the default if none is set",
+						"Session for this operation; defaults to this chat's session",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -140,7 +138,7 @@ export function createServer(broker: Broker): McpServer {
 					.string()
 					.optional()
 					.describe(
-						"session for this operation; becomes the default if none is set",
+						"Session for this operation; defaults to this chat's session",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -150,7 +148,6 @@ export function createServer(broker: Broker): McpServer {
 				context.chatId,
 				args.sessionId,
 				args.names,
-				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);
 			return finishResult(
@@ -179,7 +176,7 @@ export function createServer(broker: Broker): McpServer {
 					.string()
 					.optional()
 					.describe(
-						"session for this operation; becomes the default if none is set",
+						"Session for this operation; defaults to this chat's session",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -222,6 +219,36 @@ export function createServer(broker: Broker): McpServer {
 				context.mcpReq.signal,
 			);
 			return finishResult(broker, context, toolResult(result));
+		}),
+	);
+
+	server.registerTool(
+		"history",
+		{
+			title: "Session history",
+			description:
+				"Read native conversation records to identify a session's project and task before selecting it.",
+			outputSchema,
+			inputSchema: z.object({
+				sessionId: z
+					.string()
+					.optional()
+					.describe("Session to read; defaults to this chat's session"),
+			}),
+			annotations: toolAnnotations,
+		},
+		handle(async (args, context) => {
+			const { history, ...session } = await broker.history(
+				context.chatId,
+				args.sessionId,
+				context.mcpReq.signal,
+			);
+			return formatResult({
+				content: [
+					...textResult(session).content,
+					{ type: "text", text: history },
+				],
+			});
 		}),
 	);
 

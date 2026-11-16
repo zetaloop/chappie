@@ -23,6 +23,7 @@ import { Type } from "typebox";
 import * as z from "zod";
 import type { Activity } from "./activity.ts";
 import { readConfig } from "./config.ts";
+import { historyText } from "./history.ts";
 import type { Host, Output } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
 import { localDeliveries, localTools } from "./local.ts";
@@ -82,6 +83,9 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 					.filter((command) => command.source === "skill"),
 				...(globalAgents ? { globalAgents } : {}),
 			};
+		},
+		async history() {
+			return historyText(current().sessionManager.getBranch());
 		},
 		inputs(): SessionInput[] {
 			const manager = current().sessionManager;

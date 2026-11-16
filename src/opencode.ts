@@ -13,12 +13,14 @@ import {
 	OpenCode,
 	type OpenCodeClient,
 	type SessionInfo,
+	type SessionMessageInfo,
 	type SessionMessageUser,
 } from "@opencode/client";
 import { discover, headers } from "@opencode/client/service";
 import type { Model, Plugin, Provider } from "@opencode/plugin";
 import * as z from "zod";
 import { type Config, readConfig } from "./config.ts";
+import { historyText } from "./history.ts";
 import type {
 	Content,
 	Environment,
@@ -43,11 +45,13 @@ const usage: LanguageModelV3Usage = {
 };
 
 const sessions = new Map<string, OpenSession>();
+type Client = () => Promise<OpenCodeClient>;
 
 class OpenSession implements Host {
 	readonly session: Session;
 	readonly tools;
 	readonly #context: Plugin.Context;
+	readonly #client: Client;
 	readonly #inputs = new Map<string, SessionInput>();
 	readonly #results = new Map<string, ToolResultMessage>();
 	#step: PromiseWithResolvers<void> | undefined;
@@ -56,9 +60,15 @@ class OpenSession implements Host {
 	output: Output | undefined;
 	catalog: ToolInfo[] | undefined;
 
-	constructor(info: SessionInfo, context: Plugin.Context, config: Config) {
+	constructor(
+		info: SessionInfo,
+		context: Plugin.Context,
+		client: Client,
+		config: Config,
+	) {
 		this.info = info;
 		this.#context = context;
+		this.#client = client;
 		this.session = new Session(this, config);
 		this.tools = localTools(this.session);
 	}
@@ -107,6 +117,30 @@ class OpenSession implements Host {
 			})),
 			...(globalAgents ? { globalAgents } : {}),
 		};
+	}
+	async history(signal: AbortSignal): Promise<string> {
+		const client = await this.#client();
+		const messages: SessionMessageInfo[] = [];
+		let cursor: string | undefined;
+		let current = this.info.revert === undefined;
+		do {
+			const page = await client.message.list(
+				{
+					sessionID: this.info.id,
+					...(cursor ? { cursor } : { order: "desc" as const }),
+				},
+				{ signal },
+			);
+			for (const message of page.data) {
+				if (!current) {
+					if (message.id === this.info.revert?.messageID) current = true;
+					continue;
+				}
+				messages.push(message);
+			}
+			cursor = page.cursor.next ?? undefined;
+		} while (cursor);
+		return historyText(messages.reverse());
 	}
 	inputs(): SessionInput[] {
 		const values = [...this.#inputs.values()];
@@ -294,7 +328,7 @@ export default {
 			const info = await context.session.get({ sessionID: id });
 			const previous = sessions.get(id);
 			if (previous) return previous;
-			const state = new OpenSession(info, context, config);
+			const state = new OpenSession(info, context, client, config);
 			sessions.set(id, state);
 			owned.add(id);
 			state.session.update();

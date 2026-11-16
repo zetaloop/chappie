@@ -40,7 +40,7 @@ interface ChangeWaiter {
 }
 
 export interface InitializedSession extends Omit<SessionInspection, "tools"> {
-	selection: "existing" | "explicit" | "automatic";
+	selection: "existing" | "explicit";
 	globalAgents?: { path: string };
 	inputs: SessionInput[];
 	tools: { name: string; description: string }[];
@@ -140,10 +140,9 @@ export class Broker {
 		const { sessionId: target, selection } = await this.#selectSession(
 			chatId,
 			sessionId,
-			requestId,
 			signal,
-			true,
 		);
+		await this.#join(chatId, target, requestId, signal);
 		const { inspection, inputs, globalAgents } = await this.#inspect(
 			target,
 			signal,
@@ -172,7 +171,6 @@ export class Broker {
 		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
-			requestId,
 			signal,
 		);
 		const result = await this.#request(
@@ -204,13 +202,11 @@ export class Broker {
 		chatId: string,
 		sessionId: string | undefined,
 		names: string[] | undefined,
-		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<InspectedSession> {
 		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
-			requestId,
 			signal,
 		);
 		const { inspection, inputs } = await this.#inspect(target, signal);
@@ -235,7 +231,6 @@ export class Broker {
 		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
-			requestId,
 			signal,
 		);
 		const toolCalls: ToolCall[] = calls.map((call) => ({
@@ -267,6 +262,25 @@ export class Broker {
 			};
 		}
 		throw new Error("Session returned no tool results");
+	}
+
+	async history(
+		chatId: string,
+		sessionId: string | undefined,
+		signal: AbortSignal,
+	) {
+		const { sessionId: target } = await this.#selectSession(
+			chatId,
+			sessionId,
+			signal,
+		);
+		const result = await this.#request(
+			target,
+			(id) => ({ type: "history", id, sessionId: target }),
+			signal,
+		);
+		if ("history" in result) return { sessionId: target, ...result };
+		throw new Error("Session returned no history");
 	}
 
 	async inputs(
@@ -415,38 +429,23 @@ export class Broker {
 	async #selectSession(
 		chatId: string,
 		requestedId: string | undefined,
-		requestId: unknown,
 		signal: AbortSignal,
-		bindRequested = false,
 	): Promise<{
 		sessionId: string;
 		selection: InitializedSession["selection"];
 	}> {
-		for (;;) {
-			signal.throwIfAborted();
-			const boundId = this.#state.binding(chatId);
-			let target = requestedId ?? boundId;
-			if (!target) {
-				const occupied = this.#state.bindingCounts();
-				target = [...this.#sessions.keys()].find((id) => !occupied.has(id));
-			}
-			if (!target) {
-				await this.#waitForChange(signal);
-				continue;
-			}
-			await this.#waitForSession(target, signal);
-			signal.throwIfAborted();
-			if (bindRequested || !this.#state.binding(chatId))
-				await this.#join(chatId, target, requestId, signal);
-			return {
-				sessionId: target,
-				selection: requestedId
-					? "explicit"
-					: boundId
-						? "existing"
-						: "automatic",
-			};
-		}
+		signal.throwIfAborted();
+		const target = requestedId ?? this.#state.binding(chatId);
+		if (!target)
+			throw new Error(
+				"Specify a sessionId or select a default session with init",
+			);
+		await this.#waitForSession(target, signal);
+		signal.throwIfAborted();
+		return {
+			sessionId: target,
+			selection: requestedId ? "explicit" : "existing",
+		};
 	}
 
 	async #join(
@@ -460,14 +459,11 @@ export class Broker {
 		await this.#state.bind(chatId, sessionId);
 		signal.throwIfAborted();
 		const activity = source(chatId, requestId);
-		if (previous !== sessionId) {
-			this.#notifyChange();
-			if (previous)
-				await this.#notify(previous, `${sourceLabel(activity)} left`, {
-					...activity,
-					event: "left",
-				});
-		}
+		if (previous && previous !== sessionId)
+			await this.#notify(previous, `${sourceLabel(activity)} left`, {
+				...activity,
+				event: "left",
+			});
 		signal.throwIfAborted();
 		await this.#notify(sessionId, `${sourceLabel(activity)} joined`, {
 			...activity,

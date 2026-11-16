@@ -77,6 +77,7 @@ export interface Host {
 	active(): boolean;
 	isIdle(): boolean;
 	inspect(signal: AbortSignal): Promise<Environment>;
+	history(signal: AbortSignal): Promise<string>;
 	inputs(): SessionInput[];
 	resetInputs(): void;
 	wake(): void | Promise<void>;

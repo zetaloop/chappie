@@ -502,6 +502,17 @@ export class Session {
 					};
 				});
 				break;
+			case "history":
+				await this.#reply(message.id, async (signal) => {
+					const { cwd } = this.#description(message.sessionId);
+					return {
+						type: "result",
+						id: message.id,
+						cwd,
+						history: await this.#host.history(signal),
+					};
+				});
+				break;
 			case "inputs":
 				await this.#reply(message.id, () => {
 					this.#description(message.sessionId);

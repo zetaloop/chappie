@@ -10,6 +10,7 @@ import mime from "mime";
 import { AppServer, type RpcMessage } from "./appserver.ts";
 import { type Config, readConfig } from "./config.ts";
 import { Desktop, type DesktopMessage } from "./desktop.ts";
+import { historyText } from "./history.ts";
 import type {
 	Content,
 	Environment,
@@ -239,6 +240,43 @@ class CodexSession implements Host {
 			skills: result.data.flatMap((entry) => entry.skills),
 			...(globalAgents ? { globalAgents } : {}),
 		};
+	}
+
+	async history(signal: AbortSignal): Promise<string> {
+		if (this.connection instanceof AppServer) {
+			const turns: Turn[] = [];
+			let cursor: string | null = null;
+			do {
+				const page: Page<Turn> = await this.connection.request(
+					"thread/turns/list",
+					{
+						threadId: this.thread.id,
+						itemsView: "full",
+						sortDirection: "asc",
+						...(cursor ? { cursor } : {}),
+					},
+					signal,
+				);
+				turns.push(...page.data);
+				cursor = page.nextCursor;
+			} while (cursor);
+			return historyText(turns);
+		}
+		const { desktop } = this.connection;
+		const { handledByClientId } = await desktop.request(
+			"thread-follower-load-complete-history",
+			{ conversationId: this.thread.id },
+			1,
+			undefined,
+			300_000,
+		);
+		signal.throwIfAborted();
+		const snapshot = await desktop.snapshot<Snapshot>(
+			this.thread.id,
+			handledByClientId,
+		);
+		signal.throwIfAborted();
+		return historyText(desktopTurns(snapshot).map(({ turn }) => turn));
 	}
 
 	inputs(): SessionInput[] {

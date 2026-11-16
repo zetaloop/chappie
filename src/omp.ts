@@ -13,6 +13,7 @@ import type { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-m
 import { getAgentDir } from "@oh-my-pi/pi-utils";
 import * as z from "zod";
 import { getDirectory, readConfig } from "./config.ts";
+import { historyText } from "./history.ts";
 import type { Host } from "./host.ts";
 import { ipcEndpoint, type SessionInput } from "./ipc.ts";
 import { localTools } from "./local.ts";
@@ -66,6 +67,9 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 					.filter((command) => command.source === "skill"),
 				...(globalAgents ? { globalAgents } : {}),
 			};
+		},
+		async history() {
+			return historyText(current().sessionManager.getBranch());
 		},
 		inputs() {
 			const store = current().sessionManager;
