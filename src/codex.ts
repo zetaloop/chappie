@@ -529,14 +529,16 @@ class CodexSession implements Host {
 				// A new thread is materialized before its first provider request.
 				const result = await this.connection.request<{
 					thread: Thread;
-					initialTurnsPage: Page<Turn>;
 				}>("thread/resume", {
 					threadId: this.thread.id,
 					excludeTurns: true,
-					initialTurnsPage: { limit: 1, itemsView: "full" },
 				});
 				this.thread = result.thread;
-				for (const turn of result.initialTurnsPage.data) {
+				const page = await this.connection.request<Page<Turn>>(
+					"thread/turns/list",
+					{ threadId: this.thread.id, limit: 1, itemsView: "full" },
+				);
+				for (const turn of page.data) {
 					if (turn.status === "inProgress") this.turn = turn.id;
 					for (const item of turn.items) await this.item(item);
 				}
