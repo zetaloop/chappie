@@ -574,7 +574,7 @@ function languageModel(modelId: string): LanguageModelV3 {
 		modelId,
 		supportedUrls: {},
 		async doStream(options) {
-			const id = options.headers?.["x-opencode-session"];
+			const id = options.headers?.["x-opencode-session-id"];
 			if (!id) throw new Error("OpenCode did not provide a session ID");
 			const state = sessions.get(id);
 			if (!state) throw new Error("OpenCode session is unavailable");
@@ -720,8 +720,8 @@ async function historyEntry(
 			break;
 		case "assistant":
 			delete record.content;
-			if (message.providerState?.chappie)
-				record.chappie = message.providerState.chappie;
+			if (message.model.providerID === "chappie" && message.native)
+				record.chappie = message.native;
 			for (const part of message.content) {
 				if (part.type === "text" || part.type === "reasoning")
 					content.push({ type: "text", text: part.text });
@@ -749,13 +749,8 @@ async function historyEntry(
 			break;
 		case "compaction":
 			delete record.summary;
-			delete record.recent;
-			delete record.providerContext;
 			if ("summary" in message)
-				content.push(
-					{ type: "text", text: message.summary },
-					{ type: "text", text: message.recent },
-				);
+				content.push({ type: "text", text: message.summary });
 			break;
 		case "shell":
 			delete record.output;

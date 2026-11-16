@@ -1,5 +1,5 @@
 allowBuilds:
-  '@google/genai': true
+  "@google/genai": true
   esbuild: true
   msgpackr-extract: true
   onnxruntime-node: true

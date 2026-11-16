@@ -36,10 +36,10 @@ Names and parameters come from the selected agent. For example, a Pi session acc
 
 ```json
 {
-  "calls": [
-    { "name": "read", "arguments": { "path": "package.json" } },
-    { "name": "read", "arguments": { "path": "src/index.ts" } }
-  ]
+	"calls": [
+		{ "name": "read", "arguments": { "path": "package.json" } },
+		{ "name": "read", "arguments": { "path": "src/index.ts" } }
+	]
 }
 ```
 
@@ -59,9 +59,9 @@ A session can request generated text, such as a summary or title. The result inc
 
 ```json
 {
-  "sessionId": "<session-id>",
-  "replyTo": "<request-id>",
-  "text": "The requested summary."
+	"sessionId": "<session-id>",
+	"replyTo": "<request-id>",
+	"text": "The requested summary."
 }
 ```
 
@@ -97,8 +97,8 @@ Pair destination paths with ChatGPT attachments:
 
 ```json
 {
-  "paths": ["assets/reference.png", "data/input.csv"],
-  "files": ["/mnt/data/reference.png", "/mnt/data/input.csv"]
+	"paths": ["assets/reference.png", "data/input.csv"],
+	"files": ["/mnt/data/reference.png", "/mnt/data/input.csv"]
 }
 ```
 
@@ -122,12 +122,12 @@ Send files using `to`:
 
 ```json
 {
-  "sessionId": "<source-session>",
-  "paths": ["build/output.zip"],
-  "to": {
-    "sessionId": "<destination-session>",
-    "paths": ["downloads/output.zip"]
-  }
+	"sessionId": "<source-session>",
+	"paths": ["build/output.zip"],
+	"to": {
+		"sessionId": "<destination-session>",
+		"paths": ["downloads/output.zip"]
+	}
 }
 ```
 
@@ -135,11 +135,11 @@ Retrieve files using `from`:
 
 ```json
 {
-  "paths": ["downloads/output.zip"],
-  "from": {
-    "sessionId": "<source-session>",
-    "paths": ["build/output.zip"]
-  }
+	"paths": ["downloads/output.zip"],
+	"from": {
+		"sessionId": "<source-session>",
+		"paths": ["build/output.zip"]
+	}
 }
 ```
 
@@ -176,12 +176,16 @@ Model requests include instructions naming the local tools. Supply `replyTo` to 
 
 ```json
 {
-  "header": "Export format",
-  "question": "Which export format should the command use?",
-  "options": [
-    { "title": "JSON", "description": "Structured data for programs.", "recommended": true },
-    { "title": "CSV", "description": "Tabular data for spreadsheets." }
-  ]
+	"header": "Export format",
+	"question": "Which export format should the command use?",
+	"options": [
+		{
+			"title": "JSON",
+			"description": "Structured data for programs.",
+			"recommended": true
+		},
+		{ "title": "CSV", "description": "Tabular data for spreadsheets." }
+	]
 }
 ```
 
