@@ -50,7 +50,7 @@ export function toolResult(
 	result: ChatResult | CallResult,
 	replyTool: "chat" | "remote_chat" = "chat",
 ) {
-	const { sessionId, cwd, inputs, initialization, cancelled } = result;
+	const { sessionId, cwd, inputs, cancelled } = result;
 	const toolResults = "toolResults" in result ? result.toolResults : [];
 	return {
 		content: [
@@ -59,7 +59,6 @@ export function toolResult(
 				text: JSON.stringify({
 					sessionId,
 					cwd,
-					...(initialization ? { initialization } : {}),
 					...(cancelled ? { cancelled } : {}),
 				}),
 			},

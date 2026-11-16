@@ -85,7 +85,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Connect to a session",
 			description:
-				"Select the default session for this conversation and return its environment, tool catalog, and participation instructions.",
+				"Select the default session for this conversation and return its environment and tool catalog.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
@@ -158,7 +158,7 @@ export function createServer(broker: Broker): McpServer {
 				_meta: { ui: { resourceUri: questionTemplate } },
 			},
 			handle(async ({ sessionId, ...input }, context) => {
-				const { initialization, ...question } = await broker.ask(
+				const question = await broker.ask(
 					context.chatId,
 					sessionId,
 					input,
@@ -167,7 +167,6 @@ export function createServer(broker: Broker): McpServer {
 				);
 				const result = await finishResult(broker, context, {
 					content: [
-						...(initialization ? textResult({ initialization }).content : []),
 						{
 							type: "text",
 							text: `Question widget requested. Call ask_assert({"questionId":"${question.id}"}) next.`,
@@ -312,9 +311,6 @@ export function createServer(broker: Broker): McpServer {
 					{
 						session: inspected.session,
 						tools: inspected.tools,
-						...(inspected.initialization
-							? { initialization: inspected.initialization }
-							: {}),
 					},
 					inputs,
 				),
@@ -400,19 +396,15 @@ export function createServer(broker: Broker): McpServer {
 				context.chatId,
 				sessionId,
 				range,
-				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
 			);
 			const { content, ...page } = history;
-			return formatResult(
-				{
-					content: [
-						...textResult({ ...session, history: page }).content,
-						...content,
-					],
-				},
-				context.chatId,
-			);
+			return formatResult({
+				content: [
+					...textResult({ ...session, history: page }).content,
+					...content,
+				],
+			});
 		}),
 	);
 
@@ -451,12 +443,9 @@ export function createServer(broker: Broker): McpServer {
 
 	server.registerResource(
 		"Session resource",
-		new ResourceTemplate(
-			"chappie://session/{sessionId}/{kind}/{id}/{name}{?chatId}",
-			{
-				list: undefined,
-			},
-		),
+		new ResourceTemplate("chappie://session/{sessionId}/{kind}/{id}/{name}", {
+			list: undefined,
+		}),
 		{ title: "Session resource" },
 		async (uri, _variables, context) => {
 			const resource = await broker.readResource(
@@ -503,23 +492,16 @@ async function finishResult<
 		...answerContent(answers),
 	];
 	await broker.acknowledge(deliveries, answers, context.mcpReq.signal);
-	return formatResult({ ...result, content }, chatId);
+	return formatResult({ ...result, content });
 }
 
 function formatResult<
 	T extends { content: ReturnType<typeof toolResult>["content"] },
->(result: T, chatId: string) {
-	const content = result.content.map((block) => {
-		if (block.type !== "resource_link") return block;
-		const uri = new URL(block.uri);
-		uri.searchParams.set("chatId", chatId);
-		return { ...block, uri: uri.href };
-	});
+>(result: T) {
 	return {
 		...result,
-		content,
 		structuredContent: {
-			text: content
+			text: result.content
 				.flatMap((block) => (block.type === "text" ? [block.text] : []))
 				.join("\n"),
 		},

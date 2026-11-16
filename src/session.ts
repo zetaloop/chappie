@@ -145,7 +145,6 @@ export class Session {
 				type: "history",
 				sessionId,
 				range,
-				...source(self.id, randomUUID(), self.name ?? self.agent),
 			},
 			signal,
 		);
@@ -763,16 +762,6 @@ export class Session {
 				return;
 			}
 			this.#finishHistory(request.id);
-			if (!request.range.observer) {
-				this.#notify(
-					`${sourceLabel(request)} read history: ${history.count} entries`,
-					"info",
-					{
-						event: "history",
-						...source(request.clientId, request.requestId, request.label),
-					},
-				);
-			}
 			await this.#connection?.send({
 				type: "result",
 				id: request.id,

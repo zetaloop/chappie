@@ -91,7 +91,7 @@ export type SessionRequest =
 			paths: string[];
 			overwrite?: boolean;
 	  }
-	| ({ type: "history"; sessionId: string; range: HistoryRange } & Source)
+	| { type: "history"; sessionId: string; range: HistoryRange }
 	| ({
 			type: "chat";
 			sessionId: string;

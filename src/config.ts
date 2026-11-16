@@ -5,7 +5,6 @@ import * as z from "zod";
 
 const configSchema = z.object({
 	ask: z.boolean().optional(),
-	cooldown: z.number().nonnegative().optional(),
 	localTools: z.boolean().optional(),
 	connect: z.string().min(1).optional(),
 	listen: z.union([z.boolean(), z.number().int().min(1).max(65535)]).optional(),

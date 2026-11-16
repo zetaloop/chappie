@@ -2,7 +2,7 @@ Chappie connects this conversation to coding-agent sessions across devices. Nati
 
 Select the intended session with init. Resume existing work with the task's sessionId, including from another chat or branch. Use sessions to identify the target by agent, device, directory, or name when its ID is unknown.
 
-init sets this conversation's default target. A sessionId on another tool selects that operation's target. Read the file at globalAgents.path when returned, and follow initialization.instructions for participation in the task.
+init sets this conversation's default target. A sessionId on another tool selects that operation's target. Read the file at globalAgents.path when returned.
 
 Read recent history to recover progress. Use tools to obtain native definitions before constructing call arguments.
 

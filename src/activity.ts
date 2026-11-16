@@ -6,7 +6,6 @@ export interface Source {
 
 export interface Activity extends Partial<Source> {
 	event?: string;
-	initialization?: "explicit" | "implicit";
 }
 
 export function source(

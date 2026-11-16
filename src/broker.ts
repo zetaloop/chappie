@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { type Activity, source, sourceLabel } from "./activity.ts";
 import { type Config, readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
-import { type HistoryRange, historyInstructions } from "./history.ts";
+import type { HistoryRange } from "./history.ts";
 import type { ToolCall, ToolResultMessage } from "./host.ts";
 import {
 	type BrokerMessage,
@@ -27,9 +27,6 @@ import { type ResourceData, resourceSessionId } from "./resources.ts";
 import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
 
-const observerInstructions =
-	"This conversation recently interacted with this session. Participate as an observer for this task: follow progress through history with observer: true, then explain the recorded outcome in ChatGPT.";
-
 interface RegisteredSession {
 	description: SessionDescription;
 	peer: JsonLinePeer<SessionMessage, BrokerMessage>;
@@ -50,26 +47,18 @@ interface ChangeWaiter {
 	onAbort(): void;
 }
 
-export interface Initialization {
-	sessionId: string;
-	instructions: string;
-}
-
 export interface InitializedSession extends Omit<SessionInspection, "tools"> {
 	selection: "existing" | "explicit" | "automatic";
-	initialization?: Initialization;
 	globalAgents?: { path: string };
 	inputs: SessionInput[];
 	tools: { name: string; description: string }[];
 }
 
 export interface InspectedSession extends SessionInspection {
-	initialization?: Initialization;
 	inputs: SessionInput[];
 }
 
 export interface ChatResult {
-	initialization?: Initialization;
 	cancelled?: string;
 	sessionId: string;
 	cwd: string;
@@ -91,7 +80,6 @@ export class Broker {
 	>();
 	readonly #pending = new Map<number, PendingRequest>();
 	readonly #waiters = new Set<ChangeWaiter>();
-	readonly #cooldowns = new Map<string, number>();
 	readonly #relays = new Map<
 		JsonLinePeer<SessionMessage, BrokerMessage>,
 		Map<number, AbortController>
@@ -118,7 +106,6 @@ export class Broker {
 
 	async close(): Promise<void> {
 		const error = new Error("Chappie broker ended");
-		this.#cooldowns.clear();
 		for (const relays of this.#relays.values()) {
 			for (const controller of relays.values()) controller.abort(error);
 		}
@@ -163,11 +150,13 @@ export class Broker {
 		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<InitializedSession> {
-		const {
-			sessionId: target,
-			selection,
-			initialization,
-		} = await this.#selectSession(chatId, sessionId, requestId, signal, true);
+		const { sessionId: target, selection } = await this.#selectSession(
+			chatId,
+			sessionId,
+			requestId,
+			signal,
+			true,
+		);
 		const { inspection, inputs, globalAgents } = await this.#inspect(
 			target,
 			signal,
@@ -175,7 +164,6 @@ export class Broker {
 		await this.#ackInputs(target, inputs, signal);
 		return {
 			selection,
-			...(initialization ? { initialization } : {}),
 			...inspection,
 			tools: inspection.tools.map(({ name, description }) => ({
 				name,
@@ -194,7 +182,7 @@ export class Broker {
 		signal: AbortSignal,
 		replyTo?: string,
 	): Promise<ChatResult> {
-		const { sessionId: target, initialization } = await this.#selectSession(
+		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
 			requestId,
@@ -219,7 +207,6 @@ export class Broker {
 				sessionId: target,
 				cwd: result.cwd,
 				inputs,
-				...(initialization ? { initialization } : {}),
 				...("cancelled" in result ? { cancelled: result.cancelled } : {}),
 			};
 		}
@@ -233,7 +220,7 @@ export class Broker {
 		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<InspectedSession> {
-		const { sessionId: target, initialization } = await this.#selectSession(
+		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
 			requestId,
@@ -244,7 +231,6 @@ export class Broker {
 		const selected = names ? new Set(names) : undefined;
 		return {
 			...inspection,
-			...(initialization ? { initialization } : {}),
 			tools: selected
 				? inspection.tools.filter(({ name }) => selected.has(name))
 				: inspection.tools,
@@ -259,7 +245,7 @@ export class Broker {
 		requestId: unknown,
 		signal: AbortSignal,
 	): Promise<CallResult> {
-		const { sessionId: target, initialization } = await this.#selectSession(
+		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
 			requestId,
@@ -286,7 +272,6 @@ export class Broker {
 			await this.#ackInputs(target, result.inputs, signal);
 			return {
 				sessionId: target,
-				...(initialization ? { initialization } : {}),
 				cwd: result.cwd,
 				toolResults: result.toolResults,
 				inputs: result.inputs,
@@ -300,7 +285,6 @@ export class Broker {
 		chatId: string,
 		sessionId: string | undefined,
 		range: HistoryRange,
-		requestId: unknown,
 		signal: AbortSignal,
 	) {
 		const target = sessionId ?? this.#state.binding(chatId);
@@ -313,7 +297,6 @@ export class Broker {
 				id,
 				sessionId: target,
 				range,
-				...source(chatId, requestId),
 			}),
 			signal,
 		);
@@ -344,8 +327,8 @@ export class Broker {
 		input: QuestionInput,
 		requestId: unknown,
 		signal: AbortSignal,
-	): Promise<Question & { initialization?: Initialization }> {
-		const { sessionId: target, initialization } = await this.#selectSession(
+	): Promise<Question> {
+		const { sessionId: target } = await this.#selectSession(
 			chatId,
 			sessionId,
 			requestId,
@@ -372,10 +355,7 @@ export class Broker {
 				...activity,
 			},
 		).catch(() => {});
-		return {
-			...questionView(question),
-			...(initialization ? { initialization } : {}),
-		};
+		return questionView(question);
 	}
 
 	async assertQuestion(
@@ -423,7 +403,6 @@ export class Broker {
 	): Promise<Question> {
 		let question = this.#state.question(chatId, id);
 		if ((loaded || answer) && !question.loaded) {
-			this.#cooldown(chatId, question.sessionId);
 			question = { ...question, loaded: true };
 			await this.#state.addQuestion(question);
 			this.#notifyChange();
@@ -459,20 +438,13 @@ export class Broker {
 	}
 
 	async readResource(uri: string, signal: AbortSignal): Promise<ResourceData> {
-		const requested = new URL(uri);
-		const chatId = requested.searchParams.get("chatId");
-		requested.search = "";
-		const sessionId = resourceSessionId(requested.href);
-		if (chatId) this.#cooldown(chatId, sessionId);
+		const sessionId = resourceSessionId(uri);
 		const result = await this.#request(
 			sessionId,
-			(id) => ({ type: "readResource", id, sessionId, uri: requested.href }),
+			(id) => ({ type: "readResource", id, sessionId, uri }),
 			signal,
 		);
-		if ("resource" in result) {
-			if (chatId) this.#cooldown(chatId, sessionId);
-			return { ...result.resource, uri };
-		}
+		if ("resource" in result) return result.resource;
 		throw new Error("Session returned no resource");
 	}
 
@@ -601,7 +573,6 @@ export class Broker {
 	): Promise<{
 		sessionId: string;
 		selection: InitializedSession["selection"];
-		initialization?: Initialization;
 	}> {
 		for (;;) {
 			signal.throwIfAborted();
@@ -617,10 +588,8 @@ export class Broker {
 			}
 			await this.#waitForSession(target, signal);
 			signal.throwIfAborted();
-			const initialization =
-				bindRequested || !this.#state.binding(chatId)
-					? await this.#join(chatId, target, requestId, signal, bindRequested)
-					: undefined;
+			if (bindRequested || !this.#state.binding(chatId))
+				await this.#join(chatId, target, requestId, signal);
 			return {
 				sessionId: target,
 				selection: requestedId
@@ -628,7 +597,6 @@ export class Broker {
 					: boundId
 						? "existing"
 						: "automatic",
-				...(initialization ? { initialization } : {}),
 			};
 		}
 	}
@@ -638,13 +606,9 @@ export class Broker {
 		sessionId: string,
 		requestId: unknown,
 		signal: AbortSignal,
-		explicit = false,
-	): Promise<Initialization> {
+	): Promise<void> {
 		signal.throwIfAborted();
 		const previous = this.#state.binding(chatId);
-		const key = JSON.stringify([chatId, sessionId]);
-		const observer = (this.#cooldowns.get(key) ?? 0) > Date.now();
-		if (!observer) this.#cooldown(chatId, sessionId);
 		await this.#state.bind(chatId, sessionId);
 		signal.throwIfAborted();
 		const activity = source(chatId, requestId);
@@ -660,23 +624,7 @@ export class Broker {
 		await this.#notify(sessionId, `${sourceLabel(activity)} joined`, {
 			...activity,
 			event: "joined",
-			initialization: explicit ? "explicit" : "implicit",
 		});
-		return {
-			sessionId,
-			instructions: observer ? observerInstructions : historyInstructions,
-		};
-	}
-
-	#cooldown(chatId: string, sessionId: string): void {
-		const now = Date.now();
-		for (const [key, expires] of this.#cooldowns) {
-			if (expires <= now) this.#cooldowns.delete(key);
-		}
-		this.#cooldowns.set(
-			JSON.stringify([chatId, sessionId]),
-			now + (this.#config.cooldown ?? 20) * 1000,
-		);
 	}
 
 	async #notify(

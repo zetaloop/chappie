@@ -30,10 +30,6 @@ export const historyInput = z.object({
 		.describe(
 			"Wait up to 30 seconds for new entries when caught up; before reads return immediately",
 		),
-	observer: z
-		.boolean()
-		.optional()
-		.describe("Read work progress as an observer"),
 });
 
 export type HistoryRange = z.infer<typeof historyInput>;
@@ -50,9 +46,6 @@ export interface HistoryEntry {
 	content?: unknown;
 	[key: string]: unknown;
 }
-
-export const historyInstructions =
-	"When resuming work, read recent history to recover progress, then continue from the current request.";
 
 export function historyPage<T extends { id: string }>(
 	branch: readonly T[],

@@ -83,10 +83,6 @@ Use `after` with `wait: true` to follow progress. Available entries return immed
 
 History includes native messages, tool calls and results, summaries, images, and resource references. Each read reflects the host's current records, including work in progress. Re-read the same range to see updates to existing entries.
 
-### Participation
-
-The executing assistant uses `chat` for progress and completion. When `initialization.instructions` assigns observation, read that work through `history` with `observer: true` and `wait: true`, then report its recorded outcome in ChatGPT.
-
 ## Files and images
 
 `paths` names files on the selected session's device. Relative paths use its working directory; absolute paths and `~/` are accepted. Each transfer pairs source and destination paths by position.
