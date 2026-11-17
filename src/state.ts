@@ -40,14 +40,6 @@ export class State {
 		return this.#bindings.get(chatId);
 	}
 
-	bindingCounts(): Map<string, number> {
-		const counts = new Map<string, number>();
-		for (const sessionId of this.#bindings.values()) {
-			counts.set(sessionId, (counts.get(sessionId) ?? 0) + 1);
-		}
-		return counts;
-	}
-
 	bind(chatId: string, sessionId: string): Promise<void> {
 		this.#bindings.set(chatId, sessionId);
 		return this.#save();

@@ -446,15 +446,22 @@ export class Session {
 	#description(sessionId = this.#sessionId): SessionDescription {
 		if (sessionId !== this.#sessionId)
 			throw new Error("The requested session is no longer active");
+		const request = this.#active?.request;
+		const activity: SessionDescription["activity"] = this.#generations.size
+			? {
+					type: "generation",
+					kinds: [...this.#generations.values()].map(
+						({ request }) => request.kind,
+					),
+				}
+			: request?.type === "call"
+				? { type: "call", tools: request.calls.map((call) => call.name) }
+				: request
+					? { type: "chat" }
+					: undefined;
 		return {
 			...this.#host.describe(),
-			status: this.#generations.size
-				? "generating"
-				: this.#active
-					? "executing"
-					: this.#output && !this.#output.closed
-						? "ready"
-						: "idle",
+			...(activity ? { activity } : {}),
 		};
 	}
 

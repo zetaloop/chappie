@@ -73,7 +73,7 @@ export interface Output {
 }
 
 export interface Host {
-	describe(): Omit<SessionDescription, "status">;
+	describe(): Omit<SessionDescription, "activity">;
 	active(): boolean;
 	isIdle(): boolean;
 	inspect(signal: AbortSignal): Promise<Environment>;

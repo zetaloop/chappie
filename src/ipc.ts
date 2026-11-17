@@ -25,8 +25,6 @@ import type { ResourceData, ResourceDescriptor } from "./resources.ts";
 
 const defaultPort = 24274;
 
-export type SessionStatus = "idle" | "ready" | "executing" | "generating";
-
 export interface SessionDescription {
 	id: string;
 	agent: string;
@@ -34,7 +32,10 @@ export interface SessionDescription {
 	cwd: string;
 	device: string;
 	name?: string;
-	status: SessionStatus;
+	activity?:
+		| { type: "call"; tools: string[] }
+		| { type: "chat" }
+		| { type: "generation"; kinds: string[] };
 }
 
 export interface SessionInspection {

@@ -21,9 +21,11 @@ Use `sessions` to find candidates and `history` to identify the project and task
 
 Several conversations can share a session, and one conversation can work with several sessions. An operation stays associated with the target selected when it started. Conversation bindings survive broker restarts.
 
-`sessions` returns IDs, agents, devices, working directories, names, models, execution status, and binding counts. A session registers while its Chappie provider is selected. Devices using `listen` and `connect` share this directory of sessions.
+`sessions` returns IDs, agents, devices, working directories, names, models, and any current `activity`. The top-level `defaultSessionId` identifies this conversation's default target.
 
-The `devices` array lists each connected device's ID, name, and platform.
+The optional `activity` describes a current request: `call` lists tool names in `tools`, `chat` indicates delivery of an assistant message, and `generation` lists requested text kinds in `kinds`. Sessions retain their task context between requests; select a target by its recorded work or explicit user choice.
+
+A session registers while its Chappie provider is selected. The `devices` array lists each connected device's ID, name, and platform. Devices using `listen` and `connect` share this directory.
 
 ## Starting a session
 

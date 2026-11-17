@@ -135,16 +135,10 @@ export class Broker {
 		await this.#ipc.close();
 	}
 
-	listSessions(sessionId?: string): (SessionDescription & {
-		bindingCount: number;
-	})[] {
-		const counts = this.#state.bindingCounts();
+	listSessions(sessionId?: string): SessionDescription[] {
 		return [...this.#sessions.values()]
 			.filter(({ description }) => !sessionId || description.id === sessionId)
-			.map(({ description }) => ({
-				...description,
-				bindingCount: counts.get(description.id) ?? 0,
-			}));
+			.map(({ description }) => description);
 	}
 
 	binding(chatId: string): string | undefined {
