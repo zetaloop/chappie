@@ -5,7 +5,13 @@ import packageJson from "../package.json" with { type: "json" };
 
 await rm("dist", { recursive: true, force: true });
 await build({
-	entryPoints: ["src/cli.ts", "src/index.ts", "src/omp.ts", "src/opencode.ts"],
+	entryPoints: [
+		"src/cli.ts",
+		"src/index.ts",
+		"src/omp.ts",
+		"src/opencode.ts",
+		"src/terminal.ts",
+	],
 	outdir: "dist",
 	bundle: true,
 	splitting: true,

@@ -67,6 +67,12 @@ The default TCP port is `24274`. All connected agents share the session director
 
 Run `chappie` with `connect` configured to keep a device available independently of its agents.
 
+### Starting sessions
+
+A connected agent plugin makes its device available for starting sessions, including while using an ordinary model.
+
+Session launching opens a terminal in the device's logged-in desktop. The selected agent and its Chappie integration must be installed. On Linux desktops, install `xdg-terminal-exec` for terminal launching.
+
 ### OpenCode
 
 Chappie discovers OpenCode's local background service automatically. For a standalone server, set `opencode.url` to its HTTP address and `opencode.password` when authentication is enabled.

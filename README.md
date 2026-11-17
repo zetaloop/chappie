@@ -38,6 +38,8 @@ Tool activity and assistant messages appear in the agent's interface. Messages e
 
 To continue from another chat or branch, ask ChatGPT to reconnect to the same agent session.
 
+To start fresh, ask for a new session in a directory on a connected device. Chappie opens a terminal there and starts the selected agent with the Remote model.
+
 ## Between agents
 
 An agent using its usual model can work through another agent session. For example, an assistant on macOS can run a build in a Windows session and retrieve the output files.

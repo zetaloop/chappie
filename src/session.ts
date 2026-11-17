@@ -28,6 +28,7 @@ import type {
 	SessionInput,
 	SessionResult,
 } from "./ipc.ts";
+import type { LaunchInput } from "./launch.ts";
 import {
 	type ResourceDescriptor,
 	Resources,
@@ -72,10 +73,12 @@ export class Session {
 	#sessionId: string | undefined;
 	#flushing = Promise.resolve();
 	#provider: boolean | undefined;
+	#launchId = process.env.CHAPPIE_LAUNCH_ID;
 
 	constructor(host: Host, config: Config = {}) {
 		this.#host = host;
 		this.#config = config;
+		delete process.env.CHAPPIE_LAUNCH_ID;
 	}
 
 	get localTools(): boolean {
@@ -103,6 +106,13 @@ export class Session {
 		if (!("sessions" in result))
 			throw new Error("Broker returned no session list");
 		return { self: this.id, ...result };
+	}
+
+	async launch(input: LaunchInput, signal?: AbortSignal) {
+		const result = await this.#request({ type: "launch", ...input }, signal);
+		if (!("session" in result))
+			throw new Error("Broker returned no launched session");
+		return result;
 	}
 
 	async tools(sessionId: string, names?: string[], signal?: AbortSignal) {
@@ -457,6 +467,14 @@ export class Session {
 		try {
 			await connection.send({ type: "sync", id, session: this.#description() });
 			await completion.promise;
+			if (this.#launchId) {
+				await connection.send({
+					type: "launched",
+					id: this.#launchId,
+					sessionId: this.id,
+				});
+				this.#launchId = undefined;
+			}
 		} finally {
 			this.#syncs.delete(id);
 		}

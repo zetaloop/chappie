@@ -11,6 +11,7 @@ import { join } from "node:path";
 import * as z from "zod";
 import { type Config, getDirectory } from "./config.ts";
 import { type ConnectionCallbacks, IpcClient } from "./ipc.ts";
+import { openTerminal } from "./launch.ts";
 
 export interface DeviceDescription {
 	id: string;
@@ -27,7 +28,18 @@ export class Client extends IpcClient {
 				await this.send({ type: "client", device: await device() });
 				await callbacks.onOpen?.();
 			},
-			onMessage: (message) => callbacks.onMessage?.(message),
+			onMessage: async (message) => {
+				if (message.type !== "launch") return callbacks.onMessage?.(message);
+				try {
+					await openTerminal(message, config);
+				} catch (error) {
+					await this.send({
+						type: "launched",
+						id: message.id,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			},
 			onClose: (error) => callbacks.onClose?.(error),
 		});
 	}

@@ -5,6 +5,7 @@ import packageJson from "../package.json" with { type: "json" };
 import type { Broker } from "./broker.ts";
 import { deliveryContent } from "./delivery.ts";
 import { transferDescription, transferInput } from "./files.ts";
+import { launchDescription, launchInput } from "./launch.ts";
 import {
 	callInput,
 	callsInput,
@@ -250,6 +251,24 @@ export function createServer(broker: Broker): McpServer {
 				],
 			});
 		}),
+	);
+
+	server.registerTool(
+		"launch",
+		{
+			title: "Launch session",
+			description: launchDescription,
+			outputSchema,
+			inputSchema: launchInput,
+			annotations: toolAnnotations,
+		},
+		handle(async (args, context) =>
+			finishResult(
+				broker,
+				context,
+				textResult(await broker.launch(args, context.mcpReq.signal)),
+			),
+		),
 	);
 
 	server.registerTool(

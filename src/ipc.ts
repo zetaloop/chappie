@@ -20,6 +20,7 @@ import type {
 	ToolResultMessage,
 	UserMessage,
 } from "./host.ts";
+import type { LaunchInput, LaunchRequest } from "./launch.ts";
 import type { ResourceData, ResourceDescriptor } from "./resources.ts";
 
 const defaultPort = 24274;
@@ -73,6 +74,7 @@ export type SessionResult = (
 	  }
 	| { inputs: SessionInput[] }
 	| { sessions: SessionDescription[]; devices: DeviceDescription[] }
+	| { session: SessionDescription }
 	| { history: string; cwd: string }
 	| { resource: ResourceData }
 	| { transfer: TransferDetails }
@@ -107,10 +109,16 @@ export type SessionRequest =
 
 export type ClientRequest =
 	| SessionRequest
-	| { type: "sessions"; sessionId?: string };
+	| { type: "sessions"; sessionId?: string }
+	| ({ type: "launch" } & LaunchInput);
 
 export type SessionMessage =
 	| { type: "client"; device: DeviceDescription }
+	| { type: "launching"; id: string }
+	| ({ type: "launched"; id: string } & (
+			| { sessionId: string }
+			| { error: string }
+	  ))
 	| { type: "sync"; id: number; session: SessionDescription }
 	| { type: "unregister"; sessionId: string }
 	| { type: "resources"; resources: ResourceDescriptor[] }
@@ -120,6 +128,8 @@ export type SessionMessage =
 	| ({ type: "result"; id: number } & SessionResult);
 
 export type BrokerMessage =
+	| ({ type: "launch" } & LaunchRequest)
+	| { type: "launchDone"; id: string }
 	| { type: "synced"; id: number; sessionId: string }
 	| { type: "stored"; id: string }
 	| { type: "notice"; sessionId: string; message: string; activity?: Activity }

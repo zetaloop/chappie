@@ -6,6 +6,8 @@ Chappie connects ChatGPT and native coding-agent sessions. One TypeScript packag
 
 `Host` supplies native session data and execution callbacks. `Session` handles request ordering, provider output, input delivery, and file operations. Adapters translate native events and records into these shared structural interfaces.
 
+`Client` provides device registration and terminal launching for plugins and standalone processes. The broker routes a launch to an available client on the requested device and returns the newly registered session.
+
 The broker owns ChatGPT conversation bindings, pending results, and resource routes. Agent sessions connect as requesters; those using the Chappie provider also register as targets. ChatGPT and local tools use the same session operations.
 
 Requests are ordered per session, with execution inside a tool batch managed by the host. Host generation requests carry their original input through a separate output stream, allowing replies to arrive during an active operation.

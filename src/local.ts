@@ -4,6 +4,7 @@ import { deliveryContent } from "./delivery.ts";
 import { transferDescription, transferInput } from "./files.ts";
 import type { Content } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
+import { launchDescription, launchInput } from "./launch.ts";
 import { resourceDescriptors } from "./resources.ts";
 import type { Session } from "./session.ts";
 import { callsInput, chatInput, inputContent, toolResult } from "./tools.ts";
@@ -33,6 +34,13 @@ export const definitions = [
 		}),
 		async (session, { sessionId }, signal) =>
 			textResult(await session.sessions(sessionId, signal)),
+	),
+	tool(
+		"remote_launch",
+		launchDescription,
+		launchInput,
+		async (session, args, signal) =>
+			textResult(await session.launch(args, signal)),
 	),
 	tool(
 		"remote_tools",

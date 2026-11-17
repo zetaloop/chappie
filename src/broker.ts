@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { addAbortListener } from "node:events";
 import { mkdir } from "node:fs/promises";
 import { type Activity, source, sourceLabel } from "./activity.ts";
 import type { DeviceDescription } from "./client.ts";
@@ -16,6 +17,7 @@ import {
 	type SessionMessage,
 	type SessionResult,
 } from "./ipc.ts";
+import type { LaunchInput } from "./launch.ts";
 import { type ResourceData, resourceSessionId } from "./resources.ts";
 import { State } from "./state.ts";
 import type { ToolInput } from "./tools.ts";
@@ -38,6 +40,15 @@ interface ChangeWaiter {
 	reject(error: Error): void;
 	signal: AbortSignal;
 	onAbort(): void;
+}
+
+interface PendingLaunch {
+	peer: JsonLinePeer<SessionMessage, BrokerMessage>;
+	worker?: JsonLinePeer<SessionMessage, BrokerMessage>;
+	device: string;
+	sessionId?: string;
+	resolve(sessionId: string): void;
+	reject(error: Error): void;
 }
 
 export interface InitializedSession extends Omit<SessionInspection, "tools"> {
@@ -71,6 +82,7 @@ export class Broker {
 		JsonLinePeer<SessionMessage, BrokerMessage>,
 		DeviceDescription
 	>();
+	readonly #launches = new Map<string, PendingLaunch>();
 	readonly #resources = new Map<
 		string,
 		JsonLinePeer<SessionMessage, BrokerMessage>
@@ -102,6 +114,8 @@ export class Broker {
 
 	async close(): Promise<void> {
 		const error = new Error("Chappie broker ended");
+		for (const launch of this.#launches.values()) launch.reject(error);
+		this.#launches.clear();
 		this.#clients.clear();
 		for (const relays of this.#relays.values()) {
 			for (const controller of relays.values()) controller.abort(error);
@@ -143,6 +157,40 @@ export class Broker {
 				[...this.#clients.values()].map((device) => [device.id, device]),
 			).values(),
 		];
+	}
+
+	async launch(input: LaunchInput, signal: AbortSignal) {
+		signal.throwIfAborted();
+		const connection = [...this.#clients].find(
+			([, device]) => device.id === input.device,
+		);
+		if (!connection) throw new Error(`Device ${input.device} is offline`);
+		const [peer] = connection;
+		const id = randomUUID();
+		const completion = Promise.withResolvers<string>();
+		this.#launches.set(id, {
+			peer,
+			device: input.device,
+			resolve: completion.resolve,
+			reject: completion.reject,
+		});
+		using _abort = addAbortListener(signal, () =>
+			completion.reject(abortError(signal)),
+		);
+		try {
+			void peer
+				.send({ type: "launch", id, agent: input.agent, cwd: input.cwd })
+				.catch(completion.reject);
+			const sessionId = await completion.promise;
+			signal.throwIfAborted();
+			const session = this.#sessions.get(sessionId);
+			if (!session) throw new Error(`Session ${sessionId} is offline`);
+			return { session: session.description };
+		} finally {
+			const launch = this.#launches.get(id);
+			this.#launches.delete(id);
+			await launch?.worker?.send({ type: "launchDone", id }).catch(() => {});
+		}
 	}
 
 	async initialize(
@@ -345,6 +393,7 @@ export class Broker {
 				sessions: this.listSessions(request.sessionId),
 				devices: this.listDevices(),
 			};
+		if (request.type === "launch") return this.launch(request, signal);
 		const result = await this.#request(
 			request.sessionId,
 			(id) => ({ ...request, id }),
@@ -363,6 +412,28 @@ export class Broker {
 			case "client":
 				this.#clients.set(peer, message.device);
 				break;
+			case "launching": {
+				const launch = this.#launches.get(message.id);
+				if (launch) launch.worker = peer;
+				else await peer.send({ type: "launchDone", id: message.id });
+				break;
+			}
+			case "launched": {
+				const launch = this.#launches.get(message.id);
+				if (
+					!launch ||
+					(launch.worker !== peer &&
+						this.#clients.get(peer)?.id !== launch.device)
+				)
+					break;
+				if ("error" in message) launch.reject(new Error(message.error));
+				else {
+					launch.sessionId = message.sessionId;
+					if (this.#sessions.has(message.sessionId))
+						launch.resolve(message.sessionId);
+				}
+				break;
+			}
 			case "request": {
 				let relays = this.#relays.get(peer);
 				if (!relays) {
@@ -411,6 +482,9 @@ export class Broker {
 					description: message.session,
 					peer,
 				});
+				for (const launch of this.#launches.values())
+					if (launch.sessionId === message.session.id)
+						launch.resolve(message.session.id);
 				await peer.send({
 					type: "synced",
 					id: message.id,
@@ -614,6 +688,9 @@ export class Broker {
 
 	#removePeer(peer: JsonLinePeer<SessionMessage, BrokerMessage>): void {
 		this.#clients.delete(peer);
+		for (const launch of this.#launches.values())
+			if ((launch.worker ?? launch.peer) === peer)
+				launch.reject(new Error("Session launcher disconnected"));
 		for (const controller of this.#relays.get(peer)?.values() ?? []) {
 			controller.abort(new Error("Session disconnected"));
 		}

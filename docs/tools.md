@@ -5,6 +5,7 @@ ChatGPT uses the tools below. Agent sessions also provide [local tools](#local-t
 | Tool       | Purpose                                                                      |
 | ---------- | ---------------------------------------------------------------------------- |
 | `sessions` | Find connected devices and sessions by agent, directory, or name.            |
+| `launch`   | Start an agent session in a new terminal on a connected device.              |
 | `init`     | Select this ChatGPT conversation's default session and read its environment. |
 | `tools`    | Read the selected session's native tool definitions.                         |
 | `call`     | Execute a native tool batch.                                                 |
@@ -23,6 +24,22 @@ Several conversations can share a session, and one conversation can work with se
 `sessions` returns IDs, agents, devices, working directories, names, models, execution status, and binding counts. A session registers while its Chappie provider is selected. Devices using `listen` and `connect` share this directory of sessions.
 
 The `devices` array lists each connected device's ID, name, and platform.
+
+## Starting a session
+
+Use `launch` when the user explicitly requests or agrees to creating a new session:
+
+```json
+{
+	"device": "<device-id>",
+	"agent": "pi",
+	"cwd": "/path/to/project"
+}
+```
+
+Choose `device` from the session list. `agent` selects `pi`, `omp`, `opencode`, or `codex`. The working directory must exist; relative paths and `~/` start at the device's home directory.
+
+The selected agent opens in a new terminal with Chappie's Remote model. The result's `session.id` identifies it for subsequent operations. Use `init` to select it as this conversation's default.
 
 ## Native tools
 
@@ -138,12 +155,15 @@ Every agent session provides `transfer`. Enable `localTools` in Chappie's config
 | Tool              | Target                                                                        |
 | ----------------- | ----------------------------------------------------------------------------- |
 | `remote_sessions` | Connected devices and sessions, with the current local ID reported as `self`. |
+| `remote_launch`   | A connected device on which to open a new agent session.                      |
 | `remote_tools`    | Tool definitions from the required `sessionId`.                               |
 | `remote_call`     | One native tool batch in the required `sessionId`.                            |
 | `remote_chat`     | An assistant message or model-request reply in the required `sessionId`.      |
 | `transfer`        | Local files and resources exchanged with Chappie sessions.                    |
 
 Select Chappie's Remote model in each target session. This supports agent-to-agent collaboration, such as building a project on another operating system.
+
+`remote_launch` accepts the same parameters as `launch` and requires an explicit user request or agreement to create a session.
 
 `transfer` uses local paths and exchanges files with targets through `from` and `to`. Supply `files` to import attachments.
 
