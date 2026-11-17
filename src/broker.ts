@@ -470,8 +470,6 @@ export class Broker {
 					?.abort(new Error("Request cancelled"));
 				break;
 			case "sync": {
-				const registered =
-					this.#sessions.get(message.session.id)?.peer === peer;
 				this.#sessions.set(message.session.id, {
 					description: message.session,
 					peer,
@@ -484,10 +482,6 @@ export class Broker {
 					id: message.id,
 					sessionId: message.session.id,
 				});
-				if (!registered)
-					await this.#notify(message.session.id, "Chappie connected", {
-						event: "connected",
-					});
 				this.#notifyChange();
 				break;
 			}

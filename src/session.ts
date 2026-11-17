@@ -93,6 +93,10 @@ export class Session {
 		return this.#host.describe().id;
 	}
 
+	get connectionStatus() {
+		return this.#connection?.status;
+	}
+
 	get #fileRecipient(): string | undefined {
 		const request = this.#active?.request;
 		return request?.type === "call" ? request.fileRecipient : undefined;
@@ -402,6 +406,7 @@ export class Session {
 		this.#starting = false;
 		this.#connection?.close();
 		this.#connection = undefined;
+		this.#host.status?.(undefined);
 		this.resetInputs();
 		this.#cancelRequests(new Error("Chappie session ended"));
 		this.#rejectReady(new Error("Chappie session ended"));
@@ -432,13 +437,13 @@ export class Session {
 					this.#rejectSyncs(error);
 					this.#rejectStores(error);
 					if (this.#output && !this.#output.closed) this.#output.fail(error);
-					else this.#notify(error.message, "error");
 					for (const { output } of this.#generations.values())
 						output.fail(error);
 					this.#active = undefined;
 					this.#queue.length = 0;
 					this.#starting = false;
 				},
+				onStatus: (status) => this.#host.status?.(status),
 			});
 			this.#connection.start();
 		} else {

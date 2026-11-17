@@ -13,6 +13,7 @@ import type { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-m
 import { getAgentDir } from "@oh-my-pi/pi-utils";
 import * as z from "zod";
 import { getDirectory, readConfig } from "./config.ts";
+import { connectionLabels } from "./connection.ts";
 import { historyText } from "./history.ts";
 import type { Host } from "./host.ts";
 import { ipcEndpoint, type SessionInput } from "./ipc.ts";
@@ -105,6 +106,22 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 			);
 		},
 		abort: () => current().abort(),
+		status(status) {
+			const { ui } = current();
+			ui.setStatus(
+				"chappie",
+				status === undefined
+					? undefined
+					: ui.theme.fg(
+							status === "disconnected"
+								? "error"
+								: status === "connecting"
+									? "dim"
+									: "success",
+							`chp: ${connectionLabels[status]}`,
+						),
+			);
+		},
 		notify(message, type, activity) {
 			omp.appendEntry("chappie.notice", { message, type, ...activity });
 			context?.ui.notify(message, type);

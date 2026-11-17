@@ -10,6 +10,7 @@ import {
 import { join, resolve } from "node:path";
 import type { Activity, Source } from "./activity.ts";
 import type { DeviceDescription } from "./client.ts";
+import type { ConnectionStatus } from "./connection.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { TransferDetails } from "./files.ts";
 import type {
@@ -286,6 +287,7 @@ export interface ConnectionCallbacks {
 	onOpen(): Promise<void> | void;
 	onMessage(message: BrokerMessage): Promise<void> | void;
 	onClose(error: Error): void;
+	onStatus?(status: ConnectionStatus): void;
 }
 
 export class IpcClient {
@@ -313,6 +315,12 @@ export class IpcClient {
 		return this.#peer !== undefined && !this.#peer.closed;
 	}
 
+	get status(): ConnectionStatus {
+		if (this.#opening) return "connecting";
+		if (this.connected) return this.#remote ? "remote" : "local";
+		return "disconnected";
+	}
+
 	start(keepAlive = false): void {
 		this.#keepAlive = keepAlive;
 		void this.connect().catch(() => {});
@@ -330,7 +338,9 @@ export class IpcClient {
 		this.#opening = this.#open(controller.signal).finally(() => {
 			this.#opening = undefined;
 			if (this.#controller === controller) this.#controller = undefined;
+			if (!this.#closed) this.#callbacks.onStatus?.(this.status);
 		});
+		this.#callbacks.onStatus?.(this.status);
 		return this.#opening;
 	}
 
@@ -376,6 +386,7 @@ export class IpcClient {
 				if (!this.#closed) {
 					this.#callbacks.onClose(failure);
 					this.#scheduleReconnect();
+					this.#callbacks.onStatus?.(this.status);
 				}
 			},
 		);

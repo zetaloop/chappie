@@ -41,6 +41,7 @@ export class Client extends IpcClient {
 				}
 			},
 			onClose: (error) => callbacks.onClose?.(error),
+			onStatus: (status) => callbacks.onStatus?.(status),
 		});
 	}
 }
