@@ -15,17 +15,13 @@ ChatGPT uses the tools below. Agent sessions also provide [local tools](#local-t
 
 ## Sessions
 
-Use `sessions` to find candidates and `history` to identify the project and task recorded in each. Select the intended target with `init({ sessionId })`. When `globalAgents` is present, its path identifies the host's global instruction file.
+Use `sessions` to find candidates and `history` to match their recorded work to the task. `history` returns native conversation records as text, with attachment metadata.
 
-`init` sets this conversation's default session, including when resuming work from another ChatGPT conversation or branch. Omitting `sessionId` reuses the existing default. Other tools use that default or an explicit `sessionId` for the current operation. Without a default, supply a session ID.
+Select the intended session with `init({ sessionId })`. This saves a default for the conversation; other tools use it unless given a `sessionId`. Several conversations can use the same session, and saved defaults survive broker restarts.
 
-Several conversations can share a session, and one conversation can work with several sessions. An operation stays associated with the target selected when it started. Conversation bindings survive broker restarts.
+The list contains sessions using Chappie's Remote model. The `devices` array lists connected devices on which new sessions can be launched; `defaultSessionId` identifies this conversation's saved target.
 
-`sessions` returns IDs, agents, devices, working directories, names, models, and any current `activity`. The top-level `defaultSessionId` identifies this conversation's default target.
-
-The optional `activity` describes a current request: `call` lists tool names in `tools`, `chat` indicates delivery of an assistant message, and `generation` lists requested text kinds in `kinds`. Sessions retain their task context between requests; select a target by its recorded work or explicit user choice.
-
-A session registers while its Chappie provider is selected. The `devices` array lists each connected device's ID, name, and platform. Devices using `listen` and `connect` share this directory.
+The optional `activity` describes the current request: a `call` lists its tool names, `chat` sends an assistant message, and `generation` lists the kinds of text requested by the agent.
 
 ## Starting a session
 
@@ -39,13 +35,13 @@ Use `launch` when the user explicitly requests or agrees to creating a new sessi
 }
 ```
 
-Choose `device` from the session list. `agent` selects `pi`, `omp`, `opencode`, or `codex`. The working directory must exist; relative paths and `~/` start at the device's home directory.
+Choose `device` from the returned `devices` array. `agent` selects `pi`, `omp`, `opencode`, or `codex`. The working directory must exist; relative paths and `~/` start at the device's home directory.
 
 The selected agent opens in a new terminal with Chappie's Remote model. The result's `session.id` identifies it for subsequent operations. Use `init` to select it as this conversation's default.
 
 ## Native tools
 
-`init` includes a short tool catalog. `tools` returns full definitions, optionally selected by name:
+`init` includes a short tool catalog. When `globalAgents.path` is returned, read that file for the agent's instructions. Use `tools` for full definitions, optionally selected by name:
 
 ```json
 { "names": ["read", "bash"] }
@@ -62,9 +58,13 @@ Names and parameters come from the selected agent. For example, a Pi session acc
 }
 ```
 
-A `calls` array executes as one native batch. Separate requests are ordered within a session; different sessions can execute independently. Tools retain their host's execution, interaction, and transcript behavior.
+The agent schedules the tools within each batch. Separate requests are ordered within a session; different sessions can execute independently.
 
 `call` also accepts `base64`: the same `calls` array serialized as UTF-8 JSON and encoded as Base64. Supply either representation, with `sessionId` outside the encoded array.
+
+ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Limit native tool output when needed.
+
+## Messages
 
 `chat` sends progress and completion messages to the selected session:
 
@@ -72,9 +72,9 @@ A `calls` array executes as one native batch. Separate requests are ordered with
 { "text": "Updated the parser and its callers." }
 ```
 
-Local user input accompanies later results, including images. Completed output from an interrupted request can be delivered to its originating conversation with a later response.
+Messages and images entered in the agent arrive with later tool results. Results from interrupted calls may also arrive later; check them before repeating an operation.
 
-A session can request generated text, such as a summary or title. The result includes a `request` ID, its `sessionId`, instructions, and the original input. Reply with `chat`:
+When the agent requests a summary or title, the result includes its instructions and original input. Reply with `chat`, using the returned `request` ID as `replyTo`:
 
 ```json
 {
@@ -84,13 +84,7 @@ A session can request generated text, such as a summary or title. The result inc
 }
 ```
 
-During a pending model request, `call` reports the batch as unexecuted with `cancelled` and an error status. Reply to the request, then submit the tools still needed. Each request has its own ID; a reply can include another request when the session needs several summaries.
-
-ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Limit native tool output when needed; local tools have no such response limit.
-
-## History
-
-`history` returns native session records as text, with attachments represented by their metadata. Pass `sessionId` to inspect a candidate, or omit it to read the default selected with `init`.
+A `call` made while a model request is pending returns `cancelled` without running. Reply to the request, then issue any calls still needed. The response to `chat` may include another request.
 
 ## Files and images
 
@@ -117,7 +111,7 @@ Export files from the selected session:
 { "paths": ["build/output.zip", "renders/preview.png"] }
 ```
 
-The returned resource links identify the original session and file. ChatGPT retrieves their bytes through resource materialization, which may prompt for approval. The producing connection and source file provide those bytes even after the conversation changes its default session.
+ChatGPT downloads the returned file links from the source session and may ask for approval.
 
 Native image results also carry `chappie://` references. Pass a reference to `transfer.paths` to retrieve those exact bytes, or use the original file path to export the source image.
 
@@ -148,24 +142,24 @@ Retrieve files using `from`:
 }
 ```
 
-Both sides use their existing broker connections and resolve paths on their own devices. Different agents use the same transfer operations. Completed files remain available when another file in the batch fails or is cancelled.
+Each side resolves paths on its own device. Completed files remain available if another file fails or the transfer is cancelled.
 
 ## Local tools
 
 Every agent session provides `transfer`. Enable `localTools` in Chappie's configuration for the complete tool set:
 
-| Tool              | Target                                                                        |
-| ----------------- | ----------------------------------------------------------------------------- |
-| `remote_sessions` | Connected devices and sessions, with the current local ID reported as `self`. |
-| `remote_launch`   | A connected device on which to open a new agent session.                      |
-| `remote_tools`    | Tool definitions from the required `sessionId`.                               |
-| `remote_call`     | One native tool batch in the required `sessionId`.                            |
-| `remote_chat`     | An assistant message or model-request reply in the required `sessionId`.      |
-| `transfer`        | Local files and resources exchanged with Chappie sessions.                    |
+| Tool              | Purpose                                                                     |
+| ----------------- | --------------------------------------------------------------------------- |
+| `remote_sessions` | List connected devices and target sessions, with the caller's ID in `self`. |
+| `remote_launch`   | Open a new agent session on a connected device.                             |
+| `remote_tools`    | Read the target session's native tool definitions.                          |
+| `remote_call`     | Execute a native tool batch in the target session.                          |
+| `remote_chat`     | Send an assistant message or answer a model request in the target session.  |
+| `transfer`        | Exchange files and attachments.                                             |
 
-Select Chappie's Remote model in each target session. This supports agent-to-agent collaboration, such as building a project on another operating system.
+Select Chappie's Remote model in each target session. `remote_tools`, `remote_call`, and `remote_chat` take an explicit `sessionId`.
 
-`remote_launch` accepts the same parameters as `launch` and requires an explicit user request or agreement to create a session.
+Use `remote_launch` as described under [Starting a session](#starting-a-session).
 
 `transfer` uses local paths and exchanges files with targets through `from` and `to`. Supply `files` to import attachments.
 
@@ -175,4 +169,4 @@ Use `remote_tools` to discover a target's definitions, then `remote_call` to exe
 { "sessionId": "<target-session>", "text": "The build completed successfully." }
 ```
 
-Model requests include instructions naming the local tools. Supply `replyTo` to answer with `remote_chat`, then submit the tools still needed with `remote_call`. These operations use native session IDs, independently of ChatGPT conversation bindings.
+Supply `replyTo` to answer a model request with `remote_chat`, then submit the tools still needed with `remote_call`.

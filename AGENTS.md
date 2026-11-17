@@ -22,4 +22,4 @@ Configuration and persisted broker state live in `~/.chappie`. Session connectio
 
 Use `pnpm format`, `pnpm check`, and `pnpm build`. The build bundles runtime dependencies and leaves host SDKs external so adapters share the host's runtime instances.
 
-Version tags and manual release runs produce an npm archive and a release draft. Publishing the draft publishes that archive to npm.
+Version tags produce a release draft containing the npm archive. Manual runs can build the archive alone or create a draft. Publishing the draft publishes the archive to npm.

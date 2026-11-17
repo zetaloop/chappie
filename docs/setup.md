@@ -19,16 +19,20 @@ Enable `localTools` in Chappie's configuration. The installed plugin provides to
 
 ### Using the Remote model
 
-To receive work in Codex, select Chappie in Codex's user configuration, `~/.codex/config.toml` or `$CODEX_HOME/config.toml`:
+To let connected assistants launch Codex sessions, add Chappie's provider to `~/.codex/config.toml` or `$CODEX_HOME/config.toml`:
+
+```toml
+[model_providers.chappie]
+name = "Chappie"
+base_url = "http://127.0.0.1:24275/v1"
+```
+
+To use Remote by default in Codex, also add these settings at the top of the file:
 
 ```toml
 model_provider = "chappie"
 model = "remote"
 model_catalog_json = "~/.chappie/codex.json"
-
-[model_providers.chappie]
-name = "Chappie"
-base_url = "http://127.0.0.1:24275/v1"
 ```
 
 Restart the Codex app after changing its provider configuration. The plugin starts the local provider service and refreshes the model catalog.
@@ -39,7 +43,7 @@ To start new conversations with an ordinary model, restore its model, provider, 
 
 ## Configuration
 
-Settings live in `~/.chappie/config.json`. The broker and agent plugins read this file at startup; an absent file uses the defaults.
+Settings live in `~/.chappie/config.json` and are read at startup.
 
 Agent plugins provide `transfer` in every session. Enable `localTools` for the complete [local tool set](tools.md#local-tools).
 
@@ -63,7 +67,7 @@ On each other device:
 { "connect": "<broker>.local" }
 ```
 
-The default TCP port is `24274`. All connected agents share the session directory and file transfer service. Paths are resolved on their respective devices.
+Connected agents can discover Remote sessions and transfer files across devices.
 
 Run `chappie` with `connect` configured to keep a device available independently of its agents.
 
