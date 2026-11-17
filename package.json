@@ -13,12 +13,14 @@
 		"@oh-my-pi/pi-utils": "^18.20.2",
 		"@opencode/client": "^2.3.0",
 		"@opencode/plugin": "^2.3.0",
+		"@opentui/solid": "^0.9.1",
 		"@types/cross-spawn": "^6.0.6",
 		"@types/node": "^26.6.6",
 		"@types/ws": "^8.18.2",
 		"cross-spawn": "^7.0.6",
 		"esbuild": "^0.28.2",
 		"mime": "^4.1.2",
+		"solid-js": "^1.9.19",
 		"typebox": "^1.4.7",
 		"typescript": "^7.0.2",
 		"ws": "^8.23.0",
@@ -54,7 +56,9 @@
 		"@earendil-works/pi-tui": "*",
 		"@oh-my-pi/pi-ai": "*",
 		"@oh-my-pi/pi-coding-agent": "*",
-		"@oh-my-pi/pi-utils": "*"
+		"@oh-my-pi/pi-utils": "*",
+		"@opentui/solid": "^0.9.1",
+		"solid-js": "^1.9.19"
 	},
 	"files": [
 		"dist",
@@ -89,6 +93,12 @@
 		},
 		"@oh-my-pi/pi-utils": {
 			"optional": true
+		},
+		"@opentui/solid": {
+			"optional": true
+		},
+		"solid-js": {
+			"optional": true
 		}
 	},
 	"omp": {
@@ -98,6 +108,7 @@
 	},
 	"exports": {
 		".": "./dist/index.js",
-		"./server": "./dist/opencode.js"
+		"./server": "./dist/opencode.js",
+		"./tui": "./dist/opencode-tui.jsx"
 	}
 }

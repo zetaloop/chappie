@@ -31,6 +31,7 @@ import type {
 } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
 import { definitions, localTools } from "./local.ts";
+import { connectionRpc } from "./opencode-rpc.ts";
 import {
 	createMessage,
 	ProviderOutput,
@@ -50,6 +51,7 @@ type Client = () => Promise<OpenCodeClient>;
 class OpenSession implements Host {
 	readonly session: Session;
 	readonly tools;
+	readonly status: NonNullable<Host["status"]>;
 	readonly #context: Plugin.Context;
 	readonly #client: Client;
 	readonly #inputs = new Map<string, SessionInput>();
@@ -65,10 +67,12 @@ class OpenSession implements Host {
 		context: Plugin.Context,
 		client: Client,
 		config: Config,
+		status: NonNullable<Host["status"]>,
 	) {
 		this.info = info;
 		this.#context = context;
 		this.#client = client;
+		this.status = status;
 		this.session = new Session(this, config);
 		this.tools = localTools(this.session);
 	}
@@ -288,7 +292,14 @@ export default {
 		const config = await readConfig();
 		const owned = new Set<string>();
 		const controller = new AbortController();
+		const report = (error: unknown) => {
+			if (!controller.signal.aborted) console.error(error);
+		};
 		let connection: OpenCodeClient | undefined;
+		const updates = await context.rpc.register(connectionRpc, {
+			status: async ({ sessionID }) =>
+				(await get(sessionID)).session.connectionStatus ?? null,
+		});
 		async function client(): Promise<OpenCodeClient> {
 			if (connection) return connection;
 			const endpoint = config.opencode
@@ -328,7 +339,11 @@ export default {
 			const info = await context.session.get({ sessionID: id });
 			const previous = sessions.get(id);
 			if (previous) return previous;
-			const state = new OpenSession(info, context, client, config);
+			const state = new OpenSession(info, context, client, config, (status) => {
+				void updates.events
+					.emit("status", { sessionID: id, status: status ?? null })
+					.catch(report);
+			});
 			sessions.set(id, state);
 			owned.add(id);
 			state.session.update();
@@ -421,9 +436,6 @@ export default {
 			{ providerID },
 		);
 
-		const report = (error: unknown) => {
-			if (!controller.signal.aborted) console.error(error);
-		};
 		const scanning = (async () => {
 			const api = await client();
 			const active = await api.session.active({ signal: controller.signal });
@@ -449,6 +461,7 @@ export default {
 				signal: controller.signal,
 			})) {
 				if (
+					!event.type.startsWith("session.") ||
 					!("sessionID" in event.data) ||
 					typeof event.data.sessionID !== "string"
 				)
