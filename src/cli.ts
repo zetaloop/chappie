@@ -15,7 +15,7 @@ const usage = "Usage: chappie [codex [setup]]";
 
 if (values.help) {
 	console.log(
-		`${usage}\n\nRun the broker and ChatGPT MCP server.\nThe codex command runs the installed Codex plugin.\nUse codex setup to write the model catalog to ~/.chappie/codex.json.`,
+		`${usage}\n\nRun the broker and ChatGPT MCP server, or connect as a client when connect is configured.\nThe codex command runs the installed Codex plugin.\nUse codex setup to write the model catalog to ~/.chappie/codex.json.`,
 	);
 } else if (values.version) {
 	console.log(packageJson.version);

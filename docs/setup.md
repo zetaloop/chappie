@@ -1,6 +1,6 @@
 # Setup and configuration
 
-The broker is available as `chappie` after global installation. Agent plugins connect to it from their own devices.
+The `chappie` command runs the broker and ChatGPT MCP server. When `connect` is configured, it runs as a client of that broker instead. Agent plugins also connect from their own devices.
 
 ## Codex
 
@@ -46,7 +46,7 @@ Agent plugins provide `transfer` in every session. Enable `localTools` for the c
 | Setting      | Default      | Used by       | Purpose                                                                    |
 | ------------ | ------------ | ------------- | -------------------------------------------------------------------------- |
 | `listen`     | `false`      | Broker        | Accept TCP connections; `true` uses port `24274`, or supply a port number. |
-| `connect`    | Local socket | Agent plugins | Broker hostname, optionally followed by `:port`.                           |
+| `connect`    | Local socket | Clients       | Broker hostname, optionally followed by `:port`.                           |
 | `localTools` | `false`      | Agent plugins | Enable collaboration tools.                                                |
 
 ### Multiple devices
@@ -64,6 +64,8 @@ On each other device:
 ```
 
 The default TCP port is `24274`. All connected agents share the session directory and file transfer service. Paths are resolved on their respective devices.
+
+Run `chappie` with `connect` configured to keep a device available independently of its agents.
 
 ### OpenCode
 

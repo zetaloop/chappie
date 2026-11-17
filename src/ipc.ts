@@ -286,6 +286,7 @@ export class IpcClient {
 	#controller: AbortController | undefined;
 	#retry: NodeJS.Timeout | undefined;
 	#closed = false;
+	#keepAlive = false;
 
 	constructor(
 		directory: string,
@@ -301,7 +302,8 @@ export class IpcClient {
 		return this.#peer !== undefined && !this.#peer.closed;
 	}
 
-	start(): void {
+	start(keepAlive = false): void {
+		this.#keepAlive = keepAlive;
 		void this.connect().catch(() => {});
 	}
 
@@ -382,7 +384,7 @@ export class IpcClient {
 			this.#retry = undefined;
 			void this.connect().catch(() => {});
 		}, 500);
-		this.#retry.unref();
+		if (!this.#keepAlive) this.#retry.unref();
 	}
 }
 
