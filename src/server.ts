@@ -69,7 +69,7 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"init",
 		{
-			title: "Connect to a session",
+			title: "Set default session",
 			description:
 				"Select the default session for this conversation and return its environment and tool catalog.",
 			outputSchema,
@@ -97,14 +97,14 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Reply in the session",
 			description:
-				"Send a Markdown assistant message, or reply to a model request using its request ID as replyTo.",
+				"Send an assistant message, or answer a model request using replyTo.",
 			outputSchema,
 			inputSchema: chatInput.extend({
 				sessionId: z
 					.string()
 					.optional()
 					.describe(
-						"Session for this operation; defaults to this chat's session",
+						"Target session; defaults to the session selected with init",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -126,8 +126,7 @@ export function createServer(broker: Broker): McpServer {
 		"tools",
 		{
 			title: "Native tools",
-			description:
-				"Get full definitions of native tools for call. Filter by names, or omit names to list all active tools.",
+			description: "Read full native tool definitions for use with call.",
 			outputSchema,
 			inputSchema: z.object({
 				names: z
@@ -139,7 +138,7 @@ export function createServer(broker: Broker): McpServer {
 					.string()
 					.optional()
 					.describe(
-						"Session for this operation; defaults to this chat's session",
+						"Target session; defaults to the session selected with init",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -177,7 +176,7 @@ export function createServer(broker: Broker): McpServer {
 					.string()
 					.optional()
 					.describe(
-						"Session for this operation; defaults to this chat's session",
+						"Target session; defaults to the session selected with init",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -205,7 +204,7 @@ export function createServer(broker: Broker): McpServer {
 					.string()
 					.optional()
 					.describe(
-						"Session for this operation; defaults to this chat's session",
+						"Target session; defaults to the session selected with init",
 					),
 			}),
 			annotations: toolAnnotations,
@@ -227,14 +226,15 @@ export function createServer(broker: Broker): McpServer {
 		"history",
 		{
 			title: "Session history",
-			description:
-				"Read native conversation records to identify a session's project and task before selecting it.",
+			description: "Read a session's native conversation records.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Session to read; defaults to this chat's session"),
+					.describe(
+						"Session to read; defaults to the session selected with init",
+					),
 			}),
 			annotations: toolAnnotations,
 		},
@@ -276,13 +276,13 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Sessions",
 			description:
-				"List online Chappie devices and sessions, and this conversation's default session ID.",
+				"List connected devices, Chappie target sessions, and this conversation's default session.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
 					.string()
 					.optional()
-					.describe("Filter the online list to this session"),
+					.describe("Filter the session list by ID"),
 			}),
 			annotations: toolAnnotations,
 		},

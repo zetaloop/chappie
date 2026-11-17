@@ -10,7 +10,7 @@ import type { AppServer } from "./appserver.ts";
 import type { Config } from "./config.ts";
 
 export const launchInput = z.object({
-	device: z.string().min(1).describe("Device ID from the session list"),
+	device: z.string().min(1).describe("Device ID from the devices array"),
 	agent: z
 		.enum(["pi", "omp", "opencode", "codex"])
 		.describe(
@@ -23,7 +23,7 @@ export const launchInput = z.object({
 });
 
 export const launchDescription =
-	"Start a new agent session in a new terminal window. Use only when the user explicitly requests or agrees to creating a new session.";
+	"Launch a session in a new terminal at the user's request or with their agreement.";
 
 export type LaunchInput = z.infer<typeof launchInput>;
 

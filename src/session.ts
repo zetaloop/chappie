@@ -299,10 +299,13 @@ export class Session {
 			...(this.#host.mutate ? { mutate: this.#host.mutate } : {}),
 		};
 		if ([args.files, args.from, args.to].filter(Boolean).length > 1)
-			throw new Error("Supply one of files, from, or to");
+			throw new Error("Use only one of files, from, or to");
 		if (!args.files && !args.from && !args.to) {
 			const fileRecipient = this.#fileRecipient;
-			if (!fileRecipient) throw new Error("Supply one of files, from, or to");
+			if (!fileRecipient)
+				throw new Error(
+					"Specify the transfer direction with files, from, or to",
+				);
 			update?.({
 				device: context.device,
 				files: [],

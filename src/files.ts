@@ -45,7 +45,7 @@ export const transferInput = z.object({
 		.array(z.string())
 		.min(1)
 		.describe(
-			"Local destination paths for incoming files; local source paths or chappie:// image references for outgoing files",
+			"Source or destination paths on this session's device. Relative paths use its working directory; sources also accept chappie:// image references.",
 		),
 	files: z
 		.array(transferFile)

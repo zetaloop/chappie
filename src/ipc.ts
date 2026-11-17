@@ -337,7 +337,7 @@ export class IpcClient {
 	send(message: SessionMessage): Promise<void> {
 		const peer = this.#peer;
 		if (!peer || peer.closed)
-			return Promise.reject(new Error("Chappie broker is not running"));
+			return Promise.reject(new Error("Not connected to the Chappie broker"));
 		return peer.send(message);
 	}
 

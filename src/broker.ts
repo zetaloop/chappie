@@ -548,15 +548,23 @@ export class Broker {
 		signal.throwIfAborted();
 		const activity = source(chatId, requestId);
 		if (previous && previous !== sessionId)
-			await this.#notify(previous, `${sourceLabel(activity)} left`, {
-				...activity,
-				event: "left",
-			});
+			await this.#notify(
+				previous,
+				`${sourceLabel(activity)} selected another default session`,
+				{
+					...activity,
+					event: "left",
+				},
+			);
 		signal.throwIfAborted();
-		await this.#notify(sessionId, `${sourceLabel(activity)} joined`, {
-			...activity,
-			event: "joined",
-		});
+		await this.#notify(
+			sessionId,
+			`${sourceLabel(activity)} selected this session as its default`,
+			{
+				...activity,
+				event: "joined",
+			},
+		);
 	}
 
 	async #notify(
