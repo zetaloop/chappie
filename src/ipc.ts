@@ -9,6 +9,7 @@ import {
 } from "node:net";
 import { join, resolve } from "node:path";
 import type { Activity, Source } from "./activity.ts";
+import type { DeviceDescription } from "./client.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { TransferDetails } from "./files.ts";
 import type {
@@ -71,7 +72,7 @@ export type SessionResult = (
 			toolResults: ToolResultMessage[];
 	  }
 	| { inputs: SessionInput[] }
-	| { sessions: SessionDescription[] }
+	| { sessions: SessionDescription[]; devices: DeviceDescription[] }
 	| { history: string; cwd: string }
 	| { resource: ResourceData }
 	| { transfer: TransferDetails }
@@ -109,6 +110,7 @@ export type ClientRequest =
 	| { type: "sessions"; sessionId?: string };
 
 export type SessionMessage =
+	| { type: "client"; device: DeviceDescription }
 	| { type: "sync"; id: number; session: SessionDescription }
 	| { type: "unregister"; sessionId: string }
 	| { type: "resources"; resources: ResourceDescriptor[] }
@@ -269,7 +271,7 @@ export class IpcServer {
 	}
 }
 
-interface ConnectionCallbacks {
+export interface ConnectionCallbacks {
 	onOpen(): Promise<void> | void;
 	onMessage(message: BrokerMessage): Promise<void> | void;
 	onClose(error: Error): void;

@@ -257,7 +257,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Sessions",
 			description:
-				"List online Chappie sessions and this conversation's default target.",
+				"List online Chappie devices and sessions, and this conversation's default target.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
@@ -278,6 +278,7 @@ export function createServer(broker: Broker): McpServer {
 				{
 					binding: broker.binding(chatId) ?? null,
 					sessions: broker.listSessions(args.sessionId),
+					devices: broker.listDevices(),
 				},
 				inputs,
 			);

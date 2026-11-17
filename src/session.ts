@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { addAbortListener } from "node:events";
 import { hostname } from "node:os";
 import { type Activity, source, sourceLabel } from "./activity.ts";
-import { type Config, getDirectory } from "./config.ts";
+import { Client } from "./client.ts";
+import type { Config } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import {
 	copyFiles,
@@ -19,14 +20,13 @@ import type {
 	Output,
 	ToolResultMessage,
 } from "./host.ts";
-import {
-	type BrokerMessage,
-	type ClientRequest,
-	IpcClient,
-	type ModelRequest,
-	type SessionDescription,
-	type SessionInput,
-	type SessionResult,
+import type {
+	BrokerMessage,
+	ClientRequest,
+	ModelRequest,
+	SessionDescription,
+	SessionInput,
+	SessionResult,
 } from "./ipc.ts";
 import {
 	type ResourceDescriptor,
@@ -64,7 +64,7 @@ export class Session {
 	readonly #operations = new Map<number, AbortController>();
 	readonly #resources = new Resources();
 	readonly #receivedDeliveries: DeliveryRecord[] = [];
-	#connection: IpcClient | undefined;
+	#connection: Client | undefined;
 	#output: Output | undefined;
 	#active: ActiveRequest | undefined;
 	#nextRequestId = 1;
@@ -102,7 +102,7 @@ export class Session {
 		);
 		if (!("sessions" in result))
 			throw new Error("Broker returned no session list");
-		return { self: this.id, sessions: result.sessions };
+		return { self: this.id, ...result };
 	}
 
 	async tools(sessionId: string, names?: string[], signal?: AbortSignal) {
@@ -406,7 +406,7 @@ export class Session {
 		this.#provider = active;
 
 		if (!this.#connection) {
-			this.#connection = new IpcClient(getDirectory(), this.#config.connect, {
+			this.#connection = new Client(this.#config, {
 				onOpen: async () => {
 					this.#publish(this.#resources.list());
 					await this.#sync();
@@ -940,9 +940,7 @@ export class Session {
 		id: number,
 		response: (
 			signal: AbortSignal,
-		) =>
-			| Parameters<IpcClient["send"]>[0]
-			| Promise<Parameters<IpcClient["send"]>[0]>,
+		) => Parameters<Client["send"]>[0] | Promise<Parameters<Client["send"]>[0]>,
 	): Promise<void> {
 		const controller = new AbortController();
 		this.#operations.set(id, controller);

@@ -4,7 +4,7 @@ ChatGPT uses the tools below. Agent sessions also provide [local tools](#local-t
 
 | Tool       | Purpose                                                                      |
 | ---------- | ---------------------------------------------------------------------------- |
-| `sessions` | Find sessions by agent, device, directory, or name.                          |
+| `sessions` | Find connected devices and sessions by agent, directory, or name.            |
 | `init`     | Select this ChatGPT conversation's default session and read its environment. |
 | `tools`    | Read the selected session's native tool definitions.                         |
 | `call`     | Execute a native tool batch.                                                 |
@@ -21,6 +21,8 @@ Use `sessions` to find candidates and `history` to identify the project and task
 Several conversations can share a session, and one conversation can work with several sessions. An operation stays associated with the target selected when it started. Conversation bindings survive broker restarts.
 
 `sessions` returns IDs, agents, devices, working directories, names, models, execution status, and binding counts. A session registers while its Chappie provider is selected. Devices using `listen` and `connect` share this directory of sessions.
+
+The `devices` array lists each connected device's ID, name, and platform.
 
 ## Native tools
 
@@ -133,13 +135,13 @@ Both sides use their existing broker connections and resolve paths on their own 
 
 Every agent session provides `transfer`. Enable `localTools` in Chappie's configuration for the complete tool set:
 
-| Tool              | Target                                                                   |
-| ----------------- | ------------------------------------------------------------------------ |
-| `remote_sessions` | Online Chappie sessions, with the current local ID reported as `self`.   |
-| `remote_tools`    | Tool definitions from the required `sessionId`.                          |
-| `remote_call`     | One native tool batch in the required `sessionId`.                       |
-| `remote_chat`     | An assistant message or model-request reply in the required `sessionId`. |
-| `transfer`        | Local files and resources exchanged with Chappie sessions.               |
+| Tool              | Target                                                                        |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `remote_sessions` | Connected devices and sessions, with the current local ID reported as `self`. |
+| `remote_tools`    | Tool definitions from the required `sessionId`.                               |
+| `remote_call`     | One native tool batch in the required `sessionId`.                            |
+| `remote_chat`     | An assistant message or model-request reply in the required `sessionId`.      |
+| `transfer`        | Local files and resources exchanged with Chappie sessions.                    |
 
 Select Chappie's Remote model in each target session. This supports agent-to-agent collaboration, such as building a project on another operating system.
 

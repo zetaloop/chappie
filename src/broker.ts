@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { type Activity, source, sourceLabel } from "./activity.ts";
+import type { DeviceDescription } from "./client.ts";
 import { readConfig } from "./config.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { ToolCall, ToolResultMessage } from "./host.ts";
@@ -66,6 +67,10 @@ export class Broker {
 	readonly #ipc: IpcServer;
 	readonly #state: State;
 	readonly #sessions = new Map<string, RegisteredSession>();
+	readonly #clients = new Map<
+		JsonLinePeer<SessionMessage, BrokerMessage>,
+		DeviceDescription
+	>();
 	readonly #resources = new Map<
 		string,
 		JsonLinePeer<SessionMessage, BrokerMessage>
@@ -97,6 +102,7 @@ export class Broker {
 
 	async close(): Promise<void> {
 		const error = new Error("Chappie broker ended");
+		this.#clients.clear();
 		for (const relays of this.#relays.values()) {
 			for (const controller of relays.values()) controller.abort(error);
 		}
@@ -129,6 +135,14 @@ export class Broker {
 
 	binding(chatId: string): string | undefined {
 		return this.#state.binding(chatId);
+	}
+
+	listDevices(): DeviceDescription[] {
+		return [
+			...new Map(
+				[...this.#clients.values()].map((device) => [device.id, device]),
+			).values(),
+		];
 	}
 
 	async initialize(
@@ -327,7 +341,10 @@ export class Broker {
 		signal: AbortSignal,
 	): Promise<SessionResult> {
 		if (request.type === "sessions")
-			return { sessions: this.listSessions(request.sessionId) };
+			return {
+				sessions: this.listSessions(request.sessionId),
+				devices: this.listDevices(),
+			};
 		const result = await this.#request(
 			request.sessionId,
 			(id) => ({ ...request, id }),
@@ -343,6 +360,9 @@ export class Broker {
 		message: SessionMessage,
 	): Promise<void> {
 		switch (message.type) {
+			case "client":
+				this.#clients.set(peer, message.device);
+				break;
 			case "request": {
 				let relays = this.#relays.get(peer);
 				if (!relays) {
@@ -593,6 +613,7 @@ export class Broker {
 	}
 
 	#removePeer(peer: JsonLinePeer<SessionMessage, BrokerMessage>): void {
+		this.#clients.delete(peer);
 		for (const controller of this.#relays.get(peer)?.values() ?? []) {
 			controller.abort(new Error("Session disconnected"));
 		}
