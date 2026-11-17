@@ -263,8 +263,8 @@ function createChappieProvider(
 		},
 		models: [
 			{
-				id: "chatgpt",
-				name: "ChatGPT",
+				id: "remote",
+				name: "Remote",
 				api: "chappie",
 				provider: "chappie",
 				baseUrl: "",

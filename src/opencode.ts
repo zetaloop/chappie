@@ -249,7 +249,7 @@ class OpenSession implements Host {
 			start: (controller) => {
 				const response = new ProviderOutput(
 					createMessage(
-						{ api: "chappie", provider: "chappie", id: "chatgpt" },
+						{ api: "chappie", provider: "chappie", id: "remote" },
 						"stop",
 					),
 					{
@@ -335,7 +335,7 @@ export default {
 			return state;
 		}
 		const providerID = "chappie" as Provider.ID;
-		const modelID = "chatgpt" as Model.ID;
+		const modelID = "remote" as Model.ID;
 		await context.provider.transform((editor) =>
 			editor.add({
 				info: {
@@ -349,7 +349,7 @@ export default {
 						id: modelID,
 						modelID,
 						providerID,
-						name: "ChatGPT",
+						name: "Remote",
 						capabilities: {
 							tools: true,
 							input: ["text", "image"],

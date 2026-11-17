@@ -186,8 +186,8 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 		apiKey: "chappie",
 		models: [
 			{
-				id: "chatgpt",
-				name: "ChatGPT",
+				id: "remote",
+				name: "Remote",
 				reasoning: false,
 				input: ["text", "image"],
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

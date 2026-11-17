@@ -30,7 +30,7 @@ mcp:
       command: chappie
 ```
 
-Add the tunnel as a developer-mode app in ChatGPT. Open a project in the agent with its Chappie model selected, then tell ChatGPT which project or session to use and what to do:
+Add the tunnel as a developer-mode app in ChatGPT. Open a project in the agent with Chappie's Remote model selected, then tell ChatGPT which project or session to use and what to do:
 
 > Use \@Chappie to review the recent changes in the website project.
 
@@ -48,6 +48,6 @@ Start `chappie` in a terminal, or use the broker already running through otunnel
 { "localTools": true }
 ```
 
-Use the usual model in the controlling session and the Chappie model in the target session. Ask the controlling assistant to find that session and work on its project.
+Use the usual model in the controlling session and Chappie's Remote model in the target session. Ask the controlling assistant to find that session and work on its project.
 
 See [setup and configuration](docs/setup.md) for device connections and agent-specific settings, and the [tool guide](docs/tools.md) for the available operations and their parameters.

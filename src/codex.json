@@ -1,9 +1,9 @@
 {
 	"models": [
 		{
-			"slug": "chatgpt",
-			"display_name": "ChatGPT",
-			"description": "ChatGPT through Chappie",
+			"slug": "remote",
+			"display_name": "Remote",
+			"description": "Responses from ChatGPT or another agent",
 			"model_messages": { "instructions_template": "" },
 			"supported_reasoning_levels": [],
 			"shell_type": "unified_exec",

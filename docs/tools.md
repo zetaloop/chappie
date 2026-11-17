@@ -141,7 +141,7 @@ Every agent session provides `transfer`. Enable `localTools` in Chappie's config
 | `remote_chat`     | An assistant message or model-request reply in the required `sessionId`. |
 | `transfer`        | Local files and resources exchanged with Chappie sessions.               |
 
-Select the Chappie model in each target session. This supports agent-to-agent collaboration, such as building a project on another operating system.
+Select Chappie's Remote model in each target session. This supports agent-to-agent collaboration, such as building a project on another operating system.
 
 `transfer` uses local paths and exchanges files with targets through `from` and `to`. Supply `files` to import attachments.
 

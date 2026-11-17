@@ -17,13 +17,13 @@ codex plugin add chappie@chappie
 
 Enable `localTools` in Chappie's configuration. The installed plugin provides tools for working with other Chappie sessions.
 
-### Using the Chappie model
+### Using the Remote model
 
 To receive work in Codex, select Chappie in Codex's user configuration, `~/.codex/config.toml` or `$CODEX_HOME/config.toml`:
 
 ```toml
 model_provider = "chappie"
-model = "chatgpt"
+model = "remote"
 model_catalog_json = "~/.chappie/codex.json"
 
 [model_providers.chappie]
