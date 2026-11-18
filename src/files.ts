@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { link, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { link, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -217,10 +217,9 @@ async function importFile(
 			if (signal) await pipeline(readable, writable, { signal });
 			else await pipeline(readable, writable);
 			signal?.throwIfAborted();
-			const bytes = (await stat(staged)).size;
 			if (overwrite) await rename(staged, path);
 			else await link(staged, path);
-			return bytes;
+			return writable.bytesWritten;
 		} finally {
 			await rm(temporary, { recursive: true, force: true });
 		}
