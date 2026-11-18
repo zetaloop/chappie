@@ -64,14 +64,8 @@ export type SessionResult = (
 	  }
 	| { message: AssistantMessage; cwd: string; inputs: SessionInput[] }
 	| {
-			message: AssistantMessage;
 			cwd: string;
-			toolResults: ToolResultMessage[];
-			inputs: SessionInput[];
-	  }
-	| {
-			cancelled: string;
-			cwd: string;
+			cancelled?: string;
 			inputs: SessionInput[];
 			toolResults: ToolResultMessage[];
 	  }

@@ -954,11 +954,10 @@ export class Session {
 				type: "result",
 				id: active.request.id,
 				cwd: active.session.cwd,
-				message: active.message,
 				inputs,
 				...(active.request.type === "call"
 					? { toolResults: active.toolResults }
-					: {}),
+					: { message: active.message }),
 			});
 		}
 		this.#active = undefined;
