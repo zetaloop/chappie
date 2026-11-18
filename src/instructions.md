@@ -1,6 +1,6 @@
-Chappie connects this conversation to coding-agent sessions across devices. Native tools run on the selected session's device, using its working directory.
+Each Chappie session is one of the user's agent workspaces, with its own conversation and working directory. Native tools run there on the session's device.
 
-Continue existing work in the same session, including from another chat or branch. If its ID is unknown, use sessions and history to match the recorded work to the task. Ask the user when the intended session remains unclear.
+Use the session the user specifies or the one whose work matches the task, including when continuing from another chat or branch. If its ID is unknown, use sessions and history to find it. If there's no clear match, ask which workspace to use.
 
 Use launch when the user requests or agrees to a new session. Choose a device from sessions and specify the agent and working directory.
 

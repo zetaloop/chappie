@@ -276,7 +276,7 @@ export function createServer(broker: Broker): McpServer {
 		{
 			title: "Sessions",
 			description:
-				"List connected devices, Chappie target sessions, and this conversation's default session.",
+				"List connected devices and the user's agent workspaces reachable through Chappie, including this conversation's default session ID.",
 			outputSchema,
 			inputSchema: z.object({
 				sessionId: z
