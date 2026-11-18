@@ -17,7 +17,7 @@ export interface ResourceData extends ResourceDescriptor {
 
 type ResourceEntry =
 	| { type: "file"; path: string; descriptor: ResourceDescriptor }
-	| { type: "image"; data: string; descriptor: ResourceDescriptor };
+	| { type: "image"; data: Buffer; descriptor: ResourceDescriptor };
 
 export class Resources {
 	readonly #entries = new Map<string, ResourceEntry>();
@@ -51,12 +51,9 @@ export class Resources {
 	): ResourceDescriptor[] {
 		return content.flatMap((block) => {
 			if (block.type !== "image") return [];
-			const descriptor = imageDescriptor(sessionId, block);
-			this.#entries.set(descriptor.uri, {
-				type: "image",
-				data: block.data,
-				descriptor,
-			});
+			const data = Buffer.from(block.data, "base64");
+			const descriptor = imageDescriptor(sessionId, block.mimeType, data);
+			this.#entries.set(descriptor.uri, { type: "image", data, descriptor });
 			return [descriptor];
 		});
 	}
@@ -73,11 +70,9 @@ export class Resources {
 		const entry = this.#entry(sessionId, uri);
 		const { descriptor } = entry;
 		if (offset === undefined) {
-			const blob =
-				entry.type === "file"
-					? (await readFile(entry.path)).toString("base64")
-					: entry.data;
-			return { ...descriptor, blob };
+			const data =
+				entry.type === "file" ? await readFile(entry.path) : entry.data;
+			return { ...descriptor, blob: data.toString("base64") };
 		}
 		if (!Number.isSafeInteger(offset) || offset < 0)
 			throw new Error("Resource offset must be a nonnegative integer");
@@ -93,10 +88,7 @@ export class Resources {
 			);
 			data = buffer.subarray(0, bytesRead);
 		} else {
-			data = Buffer.from(entry.data, "base64").subarray(
-				offset,
-				offset + length,
-			);
+			data = entry.data.subarray(offset, offset + length);
 		}
 		return { ...descriptor, blob: data.toString("base64") };
 	}
@@ -110,21 +102,20 @@ export class Resources {
 	}
 }
 
-export function imageDescriptor(
+function imageDescriptor(
 	sessionId: string,
-	image: ImageContent,
+	mimeType: string,
+	data: Buffer,
 ): ResourceDescriptor {
-	const digest = createHash("sha256")
-		.update(image.data, "base64")
-		.digest("hex");
-	const extension = mime.getExtension(image.mimeType) ?? "bin";
+	const digest = createHash("sha256").update(data).digest("hex");
+	const extension = mime.getExtension(mimeType) ?? "bin";
 	return resourceDescriptor(
 		sessionId,
 		"image",
 		digest,
 		`image.${extension}`,
-		image.mimeType,
-		Buffer.byteLength(image.data, "base64"),
+		mimeType,
+		data.length,
 	);
 }
 
@@ -139,7 +130,11 @@ export function contentWithImageReferences(
 					{
 						type: "text" as const,
 						text: JSON.stringify({
-							image: imageDescriptor(sessionId, block).uri,
+							image: imageDescriptor(
+								sessionId,
+								block.mimeType,
+								Buffer.from(block.data, "base64"),
+							).uri,
 						}),
 					},
 				]
