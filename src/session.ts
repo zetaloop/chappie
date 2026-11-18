@@ -273,14 +273,12 @@ export class Session {
 			if (output.closed) return;
 			this.#collectInputs();
 			await this.#completeActive();
-			await this.#sync();
 			if (output.closed) return;
 			output.begin();
 			this.#dispatch();
 			await output.finished;
 		} finally {
 			if (this.#output === output) this.#output = undefined;
-			void this.#sync().catch(() => {});
 		}
 	}
 
