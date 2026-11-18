@@ -198,11 +198,11 @@ export class Broker {
 			sessionId,
 			signal,
 		);
-		await this.#join(chatId, target, requestId, signal);
 		const { inspection, inputs, globalAgents } = await this.#inspect(
 			{ type: "inspect", sessionId: target, environment: true },
 			signal,
 		);
+		await this.#join(chatId, target, requestId, signal);
 		await this.#ackInputs(target, inputs, signal);
 		return {
 			selection,
