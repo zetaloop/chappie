@@ -135,10 +135,11 @@ export class Broker {
 		await this.#ipc.close();
 	}
 
-	listSessions(sessionId?: string): SessionDescription[] {
-		return [...this.#sessions.values()]
-			.filter(({ description }) => !sessionId || description.id === sessionId)
-			.map(({ description }) => description);
+	listSessions(): SessionDescription[] {
+		return Array.from(
+			this.#sessions.values(),
+			({ description }) => description,
+		);
 	}
 
 	binding(chatId: string): string | undefined {
@@ -354,12 +355,8 @@ export class Broker {
 		throw new Error("Session returned no history");
 	}
 
-	async inputs(
-		chatId: string,
-		sessionId: string | undefined,
-		signal: AbortSignal,
-	): Promise<SessionInput[]> {
-		const target = sessionId ?? this.#state.binding(chatId);
+	async inputs(chatId: string, signal: AbortSignal): Promise<SessionInput[]> {
+		const target = this.#state.binding(chatId);
 		if (!target || !this.#sessions.has(target)) return [];
 		const result = await this.#request(
 			target,
@@ -399,7 +396,7 @@ export class Broker {
 	): Promise<SessionResult> {
 		if (request.type === "sessions")
 			return {
-				sessions: this.listSessions(request.sessionId),
+				sessions: this.listSessions(),
 				devices: this.listDevices(),
 			};
 		if (request.type === "launch") return this.launch(request, signal);

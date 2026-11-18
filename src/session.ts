@@ -116,11 +116,8 @@ export class Session {
 		return request?.type === "call" ? request.fileRecipient : undefined;
 	}
 
-	async sessions(sessionId?: string, signal?: AbortSignal) {
-		const result = await this.#request(
-			{ type: "sessions", ...(sessionId ? { sessionId } : {}) },
-			signal,
-		);
+	async sessions(signal?: AbortSignal) {
+		const result = await this.#request({ type: "sessions" }, signal);
 		if (!("sessions" in result))
 			throw new Error("Broker returned no session list");
 		return { self: this.id, ...result };
@@ -371,25 +368,26 @@ export class Session {
 				},
 			});
 		}
-		if (!args.to) return transferFiles(args, context, signal, update);
-		if (args.paths.length !== args.to.paths.length)
+		const { to } = args;
+		if (!to) return transferFiles(args, context, signal, update);
+		if (args.paths.length !== to.paths.length)
 			throw new Error("Source and destination counts must match");
-		const { sessions } = await this.sessions(args.to.sessionId, signal);
-		const destination = sessions[0];
+		const { sessions } = await this.sessions(signal);
+		const destination = sessions.find(({ id }) => id === to.sessionId);
 		if (!destination) throw new Error("Destination session is unavailable");
 		const exported = await this.#export(args.paths, context, signal);
 		update?.({
 			...exported.details,
 			to: {
-				sessionId: args.to.sessionId,
+				sessionId: to.sessionId,
 				device: destination.device,
 			},
 		});
 		const result = await this.#request(
 			{
 				type: "copy",
-				sessionId: args.to.sessionId,
-				paths: args.to.paths,
+				sessionId: to.sessionId,
+				paths: to.paths,
 				resources: exported.details.resources,
 				...(args.overwrite !== undefined ? { overwrite: args.overwrite } : {}),
 			},

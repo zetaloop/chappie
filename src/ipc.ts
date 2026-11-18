@@ -111,7 +111,7 @@ export type SessionRequest =
 
 export type ClientRequest =
 	| SessionRequest
-	| { type: "sessions"; sessionId?: string }
+	| { type: "sessions" }
 	| ({ type: "launch" } & LaunchInput);
 
 export type SessionMessage =

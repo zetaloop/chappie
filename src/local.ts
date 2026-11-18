@@ -29,14 +29,9 @@ export const definitions = [
 	tool(
 		"remote_sessions",
 		"List connected devices and the user's agent workspaces reachable through Chappie, and identify this local session.",
-		z.object({
-			sessionId: z
-				.string()
-				.optional()
-				.describe("Filter the session list by ID"),
-		}),
-		async (session, { sessionId }, signal) =>
-			textResult(await session.sessions(sessionId, signal)),
+		z.object({}),
+		async (session, _args, signal) =>
+			textResult(await session.sessions(signal)),
 	),
 	tool(
 		"remote_launch",

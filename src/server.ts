@@ -308,25 +308,16 @@ export function createServer(broker: Broker): McpServer {
 			description:
 				"List connected devices and the user's agent workspaces reachable through Chappie, including this conversation's default session ID.",
 			outputSchema,
-			inputSchema: z.object({
-				sessionId: z
-					.string()
-					.optional()
-					.describe("Filter the session list by ID"),
-			}),
+			inputSchema: z.object({}),
 			annotations: toolAnnotations,
 		},
-		handle(async (args, context) => {
+		handle(async (_args, context) => {
 			const { chatId } = context;
-			const inputs = await broker.inputs(
-				chatId,
-				args.sessionId,
-				context.mcpReq.signal,
-			);
+			const inputs = await broker.inputs(chatId, context.mcpReq.signal);
 			const result = textResult(
 				{
 					defaultSessionId: broker.binding(chatId) ?? null,
-					sessions: broker.listSessions(args.sessionId),
+					sessions: broker.listSessions(),
 					devices: broker.listDevices(),
 				},
 				inputs,
