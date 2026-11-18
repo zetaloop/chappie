@@ -23,7 +23,6 @@ import { Type } from "typebox";
 import * as z from "zod";
 import type { Activity } from "./activity.ts";
 import { readConfig } from "./config.ts";
-import { connectionLabels } from "./connection.ts";
 import { historyText } from "./history.ts";
 import type { Host, Output } from "./host.ts";
 import type { SessionInput } from "./ipc.ts";
@@ -132,12 +131,8 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 				status === undefined
 					? undefined
 					: ui.theme.fg(
-							status === "disconnected"
-								? "error"
-								: status === "connecting"
-									? "dim"
-									: "success",
-							`chp:${connectionLabels[status]}`,
+							status === "xx" ? "error" : status === ".." ? "dim" : "success",
+							`chp:${status}`,
 						),
 			);
 		},

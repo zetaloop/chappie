@@ -22,22 +22,45 @@ export interface DeviceDescription {
 let identity: Promise<string> | undefined;
 
 export class Client extends IpcClient {
-	constructor(config: Config, callbacks: Partial<ConnectionCallbacks> = {}) {
+	handling = 0;
+
+	constructor(
+		config: Config,
+		callbacks: Partial<ConnectionCallbacks> & { onActivity?(): void } = {},
+	) {
 		super(getDirectory(), config.connect, {
 			onOpen: async () => {
 				await this.send({ type: "client", device: await device() });
 				await callbacks.onOpen?.();
 			},
 			onMessage: async (message) => {
-				if (message.type !== "launch") return callbacks.onMessage?.(message);
+				switch (message.type) {
+					case "response":
+					case "synced":
+					case "stored":
+					case "notice":
+					case "ackInputs":
+					case "launchDone":
+					case "cancel":
+						return callbacks.onMessage?.(message);
+				}
+				this.handling++;
+				callbacks.onActivity?.();
 				try {
-					await openTerminal(message, config);
-				} catch (error) {
-					await this.send({
-						type: "launched",
-						id: message.id,
-						error: error instanceof Error ? error.message : String(error),
-					});
+					if (message.type !== "launch")
+						return await callbacks.onMessage?.(message);
+					try {
+						await openTerminal(message, config);
+					} catch (error) {
+						await this.send({
+							type: "launched",
+							id: message.id,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					}
+				} finally {
+					this.handling--;
+					callbacks.onActivity?.();
 				}
 			},
 			onClose: (error) => callbacks.onClose?.(error),

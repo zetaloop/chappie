@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { type Activity, source, sourceLabel } from "./activity.ts";
 import { Client } from "./client.ts";
 import type { Config } from "./config.ts";
+import { ConnectionIndicator } from "./connection.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import {
 	copyFiles,
@@ -64,6 +65,7 @@ export class Session {
 	readonly #requests = new Map<number, PromiseWithResolvers<SessionResult>>();
 	readonly #operations = new Map<number, AbortController>();
 	readonly #resources = new Resources();
+	readonly #indicator?: ConnectionIndicator;
 	readonly #receivedDeliveries: DeliveryRecord[] = [];
 	#connection: Client | undefined;
 	#output: Output | undefined;
@@ -77,6 +79,10 @@ export class Session {
 
 	constructor(host: Host, config: Config = {}) {
 		this.#host = host;
+		if (host.status)
+			this.#indicator = new ConnectionIndicator((label) =>
+				host.status?.(label),
+			);
 		this.#config = config;
 		delete process.env.CHAPPIE_LAUNCH_ID;
 	}
@@ -94,7 +100,15 @@ export class Session {
 	}
 
 	get connectionStatus() {
-		return this.#connection?.status;
+		return this.#indicator?.label;
+	}
+
+	#refreshStatus(): void {
+		this.#indicator?.update(
+			this.#connection?.status,
+			this.#requests.size > 0,
+			Boolean(this.#connection?.handling || this.#queue.length || this.#active),
+		);
 	}
 
 	get #fileRecipient(): string | undefined {
@@ -227,6 +241,7 @@ export class Session {
 		} else if (!active && starting) {
 			const request = this.#queue.shift();
 			if (request) await this.#sendError(request.id, reason);
+			this.#refreshStatus();
 		}
 		this.#collectInputs();
 		await this.#completeActive();
@@ -286,6 +301,7 @@ export class Session {
 			await this.#sync();
 			for (const queued of this.#queue.splice(0))
 				await this.#cancelPending(queued);
+			this.#refreshStatus();
 			await output.finished;
 		} finally {
 			this.#generations.delete(id);
@@ -396,7 +412,7 @@ export class Session {
 		this.#leave(error);
 		this.#connection?.close();
 		this.#connection = undefined;
-		this.#host.status?.(undefined);
+		this.#refreshStatus();
 		this.resetInputs();
 		this.#cancelRequests(error);
 		this.#rejectSyncs(error);
@@ -440,6 +456,7 @@ export class Session {
 						this.#notify(String(error), "error"),
 					);
 				this.#leave(new Error("Session switched away from Remote"));
+				this.#refreshStatus();
 			}
 			this.resetInputs();
 		}
@@ -465,7 +482,8 @@ export class Session {
 					this.#queue.length = 0;
 					this.#starting = false;
 				},
-				onStatus: (status) => this.#host.status?.(status),
+				onStatus: () => this.#refreshStatus(),
+				onActivity: () => this.#refreshStatus(),
 			});
 			this.#connection.start();
 		} else {
@@ -661,6 +679,7 @@ export class Session {
 				);
 				if (queued !== -1) {
 					this.#queue.splice(queued, 1);
+					this.#refreshStatus();
 					break;
 				}
 				const active = this.#active;
@@ -750,6 +769,7 @@ export class Session {
 			void connection.send({ type: "cancelRequest", id }).catch(() => {});
 		};
 		this.#requests.set(id, completion);
+		this.#refreshStatus();
 		signal?.addEventListener("abort", onAbort, { once: true });
 		void connection
 			.send({ type: "request", id, clientId: this.id, request })
@@ -758,6 +778,7 @@ export class Session {
 			return await completion.promise;
 		} finally {
 			this.#requests.delete(id);
+			this.#refreshStatus();
 			signal?.removeEventListener("abort", onAbort);
 		}
 	}
@@ -843,15 +864,16 @@ export class Session {
 			.then(() => {
 				if (this.#starting && this.#host.active()) return this.#host.wake();
 			})
-			.catch((error: unknown) => {
+			.catch(async (error: unknown) => {
 				this.#starting = false;
 				this.#rejectReady(error);
 				const request = this.#queue.shift();
 				if (request)
-					return this.#sendError(
+					await this.#sendError(
 						request.id,
 						error instanceof Error ? error.message : String(error),
 					);
+				this.#refreshStatus();
 			});
 	}
 
@@ -929,6 +951,7 @@ export class Session {
 			});
 		}
 		this.#active = undefined;
+		this.#refreshStatus();
 		void this.#sync().catch(() => {});
 	}
 

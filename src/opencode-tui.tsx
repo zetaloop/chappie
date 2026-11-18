@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode/plugin/tui";
 import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
-import { type ConnectionStatus, connectionLabels } from "./connection.ts";
+import type { ConnectionLabel } from "./connection.ts";
 import { connectionRpc } from "./opencode-rpc.ts";
 
 export default {
@@ -10,7 +10,7 @@ export default {
 			append: "prompt.footer.status",
 			render(input) {
 				const rpc = context.client.rpc(connectionRpc);
-				const [status, setStatus] = createSignal<ConnectionStatus | null>(null);
+				const [status, setStatus] = createSignal<ConnectionLabel | null>(null);
 				let request = 0;
 				const load = (sessionID: string) => {
 					const current = ++request;
@@ -26,7 +26,7 @@ export default {
 								if (current === request) setStatus(value);
 							},
 							() => {
-								if (current === request) setStatus("disconnected");
+								if (current === request) setStatus("xx");
 							},
 						);
 				};
@@ -62,14 +62,14 @@ export default {
 								flexShrink={0}
 								wrapMode="none"
 								fg={
-									value() === "disconnected"
+									value() === "xx"
 										? context.theme.text.feedback.error.base
-										: value() === "connecting"
+										: value() === ".."
 											? context.theme.text.muted
 											: context.theme.text.feedback.success.base
 								}
 							>
-								{`chp:${connectionLabels[value()]}`}
+								{`chp:${value()}`}
 							</text>
 						)}
 					</Show>

@@ -1,20 +1,20 @@
 import type { Rpc } from "@opencode/plugin/rpc";
 import * as z from "zod";
-import { connectionStatus } from "./connection.ts";
+import { connectionLabel } from "./connection.ts";
 
 export const connectionRpc = {
 	id: "chappie",
 	methods: {
 		status: {
 			input: z.object({ sessionID: z.string() }),
-			output: connectionStatus.nullable(),
+			output: connectionLabel.nullable(),
 		},
 	},
 	events: {
 		status: {
 			schema: z.object({
 				sessionID: z.string(),
-				status: connectionStatus.nullable(),
+				status: connectionLabel.nullable(),
 			}),
 		},
 	},

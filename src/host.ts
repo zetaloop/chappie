@@ -1,5 +1,5 @@
 import type { Activity, Source } from "./activity.ts";
-import type { ConnectionStatus } from "./connection.ts";
+import type { ConnectionLabel } from "./connection.ts";
 import type { FileMutation } from "./files.ts";
 import type { SessionDescription, SessionInput } from "./ipc.ts";
 import type { ToolInput } from "./tools.ts";
@@ -83,7 +83,7 @@ export interface Host {
 	resetInputs(): void;
 	wake(): void | Promise<void>;
 	abort(): void | Promise<void>;
-	status?(status: ConnectionStatus | undefined): void;
+	status?(label: ConnectionLabel | undefined): void;
 	notify?(
 		message: string,
 		type: "info" | "warning" | "error",
