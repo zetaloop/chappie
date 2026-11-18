@@ -1,6 +1,6 @@
-Each Chappie session is one of the user's agent workspaces, with its own conversation and working directory. Native tools run there on the session's device.
+Each Chappie session is one of the user's agent workspaces, with its own conversation. Native tools run in its working directory on its device.
 
-Use the session the user specifies or the one whose work matches the task, including when continuing from another chat or branch. If its ID is unknown, use sessions and history to find it. If there's no clear match, ask which workspace to use.
+Use the session the user specifies, or continue in the session already established for this task. To find a previous session, use sessions and read history to identify the discussion you're resuming. If the intended session is unclear, ask the user which workspace to use.
 
 Use launch when the user requests or agrees to a new session. Choose a device from sessions and specify the agent and working directory.
 
