@@ -192,6 +192,8 @@ export class Session {
 
 	async ready(signal: AbortSignal): Promise<void> {
 		signal.throwIfAborted();
+		if (!this.#host.active())
+			throw new Error("The requested session is no longer active");
 		if (this.#generations.size || (this.#output && !this.#output.closed))
 			return;
 		const completion = Promise.withResolvers<void>();
@@ -390,36 +392,56 @@ export class Session {
 	}
 
 	close(): void {
+		const error = new Error("Chappie session ended");
+		this.#leave(error);
+		this.#connection?.close();
+		this.#connection = undefined;
+		this.#host.status?.(undefined);
+		this.resetInputs();
+		this.#cancelRequests(error);
+		this.#rejectSyncs(error);
+		this.#rejectStores(error);
+	}
+
+	#leave(error: Error): void {
 		const sessionId = this.#sessionId;
-		if (sessionId && this.#connection?.connected) {
+		if (this.#provider && sessionId && this.#connection?.connected) {
 			void this.#connection
 				.send({ type: "unregister", sessionId })
 				.catch(() => {});
+			if (this.#active)
+				void this.#sendError(this.#active.request.id, error.message).catch(
+					() => {},
+				);
+			for (const request of this.#queue)
+				void this.#sendError(request.id, error.message).catch(() => {});
 		}
-		this.#output?.fail(new Error("Chappie session ended"), true);
+		this.#output?.fail(error, true);
 		for (const { output } of this.#generations.values())
-			output.fail(new Error("Chappie session ended"), true);
+			output.fail(error, true);
 		this.#generations.clear();
 		this.#output = undefined;
 		this.#active = undefined;
 		this.#queue.length = 0;
 		this.#starting = false;
-		this.#connection?.close();
-		this.#connection = undefined;
-		this.#host.status?.(undefined);
-		this.resetInputs();
-		this.#cancelRequests(new Error("Chappie session ended"));
-		this.#rejectReady(new Error("Chappie session ended"));
-		this.#rejectSyncs(new Error("Chappie session ended"));
-		this.#rejectStores(new Error("Chappie session ended"));
+		this.#rejectReady(error);
 	}
 
 	update(): void {
 		const active = this.#host.active();
 		const id = this.#host.describe().id;
-		if (this.#sessionId !== id || this.#provider !== active) {
+		if (this.#sessionId !== id) {
 			if (this.#connection) this.close();
 			else this.resetInputs();
+		} else if (this.#provider !== active) {
+			if (this.#provider) {
+				if (this.#active && !this.#active.completed)
+					void Promise.resolve(this.#host.abort()).catch((error: unknown) =>
+						this.#notify(String(error), "error"),
+					);
+				this.#leave(new Error("Session switched away from Remote"));
+			}
+			this.resetInputs();
 		}
 		this.#provider = active;
 
@@ -452,7 +474,7 @@ export class Session {
 	}
 
 	#description(sessionId = this.#sessionId): SessionDescription {
-		if (sessionId !== this.#sessionId)
+		if (!this.#host.active() || sessionId !== this.#sessionId)
 			throw new Error("The requested session is no longer active");
 		const request = this.#active?.request;
 		const activity: SessionDescription["activity"] = this.#generations.size
@@ -650,7 +672,7 @@ export class Session {
 			}
 			case "chat":
 			case "call":
-				if (message.sessionId !== this.#sessionId) {
+				if (!this.#host.active() || message.sessionId !== this.#sessionId) {
 					await this.#sendError(
 						message.id,
 						"The requested session is no longer active",
@@ -818,7 +840,9 @@ export class Session {
 			return;
 		this.#starting = true;
 		void Promise.resolve()
-			.then(() => this.#host.wake())
+			.then(() => {
+				if (this.#starting && this.#host.active()) return this.#host.wake();
+			})
 			.catch((error: unknown) => {
 				this.#starting = false;
 				this.#rejectReady(error);
