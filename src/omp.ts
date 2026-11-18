@@ -47,8 +47,14 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 		},
 		active: () => context?.model?.provider === "chappie",
 		isIdle: () => current().isIdle(),
-		async inspect() {
+		inspect() {
 			const active = new Set(omp.getActiveTools());
+			return omp
+				.getAllTools()
+				.filter((tool) => active.has(tool.name))
+				.map((tool) => ({ ...tool, parameters: toolWireSchema(tool) }));
+		},
+		async environment() {
 			const path = resolve(getAgentDir(), "AGENTS.md");
 			let globalAgents: { path: string } | undefined;
 			try {
@@ -58,10 +64,6 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			}
 			return {
-				tools: omp
-					.getAllTools()
-					.filter((tool) => active.has(tool.name))
-					.map((tool) => ({ ...tool, parameters: toolWireSchema(tool) })),
 				skills: omp
 					.getCommands()
 					.filter((command) => command.source === "skill"),

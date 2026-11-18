@@ -95,8 +95,11 @@ class OpenSession implements Host {
 	isIdle(): boolean {
 		return !this.busy;
 	}
-	async inspect(signal: AbortSignal): Promise<Environment> {
+	async inspect(signal: AbortSignal): Promise<ToolInfo[]> {
 		await this.session.ready(signal);
+		return this.catalog ?? [];
+	}
+	async environment(): Promise<Environment> {
 		const path = join(
 			process.env.OPENCODE_CONFIG_DIR ??
 				join(
@@ -114,7 +117,6 @@ class OpenSession implements Host {
 		}
 		const result = await this.#context.skill.list();
 		return {
-			tools: this.catalog ?? [],
 			skills: result.data.map((skill) => ({
 				name: skill.name,
 				description: skill.description ?? "",

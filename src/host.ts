@@ -57,7 +57,6 @@ export interface SkillInfo {
 }
 
 export interface Environment {
-	tools: ToolInfo[];
 	skills: SkillInfo[];
 	globalAgents?: { path: string };
 }
@@ -77,7 +76,8 @@ export interface Host {
 	describe(): Omit<SessionDescription, "activity">;
 	active(): boolean;
 	isIdle(): boolean;
-	inspect(signal: AbortSignal): Promise<Environment>;
+	inspect(signal: AbortSignal): ToolInfo[] | Promise<ToolInfo[]>;
+	environment(signal: AbortSignal): Promise<Environment>;
 	history(signal: AbortSignal): Promise<string>;
 	inputs(): SessionInput[];
 	resetInputs(): void;

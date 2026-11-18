@@ -218,8 +218,12 @@ class CodexSession implements Host {
 		);
 	}
 
-	async inspect(signal: AbortSignal): Promise<Environment> {
+	async inspect(signal: AbortSignal) {
 		await this.session.ready(signal);
+		return (this.catalog ?? []).map(({ wire: _wire, ...tool }) => tool);
+	}
+
+	async environment(signal: AbortSignal): Promise<Environment> {
 		const request =
 			this.connection instanceof AppServer
 				? this.connection.request.bind(this.connection)
@@ -236,7 +240,6 @@ class CodexSession implements Host {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
 		return {
-			tools: (this.catalog ?? []).map(({ wire: _wire, ...tool }) => tool),
 			skills: result.data.flatMap((entry) => entry.skills),
 			...(globalAgents ? { globalAgents } : {}),
 		};

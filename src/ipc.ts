@@ -43,7 +43,7 @@ export interface SessionDescription {
 export interface SessionInspection {
 	session: SessionDescription;
 	tools: ToolInfo[];
-	skills: SkillInfo[];
+	skills?: SkillInfo[];
 }
 
 export interface ModelRequest {
@@ -85,7 +85,12 @@ export type SessionResult = (
 ) & { deliveries?: DeliveryRecord[] };
 
 export type SessionRequest =
-	| { type: "inspect"; sessionId: string }
+	| {
+			type: "inspect";
+			sessionId: string;
+			names?: string[];
+			environment?: boolean;
+	  }
 	| { type: "inputs"; sessionId: string }
 	| { type: "history"; sessionId: string }
 	| { type: "readResource"; sessionId: string; uri: string; offset?: number }

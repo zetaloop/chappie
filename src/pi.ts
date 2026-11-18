@@ -63,8 +63,14 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 		},
 		active: () => model?.provider === "chappie",
 		isIdle: () => current().isIdle(),
-		async inspect() {
+		inspect() {
 			const active = new Set(pi.getActiveTools());
+			return pi
+				.getAllTools()
+				.filter((tool) => active.has(tool.name))
+				.map((tool) => ({ ...tool, parameters: { ...tool.parameters } }));
+		},
+		async environment() {
 			const path = resolve(getAgentDir(), "AGENTS.md");
 			let globalAgents: { path: string } | undefined;
 			try {
@@ -74,10 +80,6 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			}
 			return {
-				tools: pi
-					.getAllTools()
-					.filter((tool) => active.has(tool.name))
-					.map((tool) => ({ ...tool, parameters: { ...tool.parameters } })),
 				skills: pi
 					.getCommands()
 					.filter((command) => command.source === "skill"),

@@ -134,16 +134,21 @@ export class Session {
 	}
 
 	async tools(sessionId: string, names?: string[], signal?: AbortSignal) {
-		const result = await this.#request({ type: "inspect", sessionId }, signal);
+		const result = await this.#request(
+			{
+				type: "inspect",
+				sessionId,
+				environment: true,
+				...(names ? { names } : {}),
+			},
+			signal,
+		);
 		if (!("inspection" in result))
 			throw new Error("Session returned no tool catalog");
 		return {
 			...result.inspection,
 			inputs: result.inputs,
 			...(result.globalAgents ? { globalAgents: result.globalAgents } : {}),
-			tools: result.inspection.tools.filter(
-				(tool) => !names || names.includes(tool.name),
-			),
 		};
 	}
 
@@ -559,17 +564,25 @@ export class Session {
 				break;
 			case "inspect":
 				await this.#reply(message.id, async (signal) => {
-					const { globalAgents, ...environment } =
-						await this.#host.inspect(signal);
+					const tools = await this.#host.inspect(signal);
+					const environment = message.environment
+						? await this.#host.environment(signal)
+						: undefined;
+					const names = message.names;
 					return {
 						type: "result",
 						id: message.id,
 						inspection: {
 							session: this.#description(message.sessionId),
-							...environment,
+							tools: names
+								? tools.filter((tool) => names.includes(tool.name))
+								: tools,
+							...(environment ? { skills: environment.skills } : {}),
 						},
 						inputs: this.#inputs(),
-						...(globalAgents ? { globalAgents } : {}),
+						...(environment?.globalAgents
+							? { globalAgents: environment.globalAgents }
+							: {}),
 					};
 				});
 				break;

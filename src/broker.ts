@@ -200,7 +200,7 @@ export class Broker {
 		);
 		await this.#join(chatId, target, requestId, signal);
 		const { inspection, inputs, globalAgents } = await this.#inspect(
-			target,
+			{ type: "inspect", sessionId: target, environment: true },
 			signal,
 		);
 		await this.#ackInputs(target, inputs, signal);
@@ -265,16 +265,12 @@ export class Broker {
 			sessionId,
 			signal,
 		);
-		const { inspection, inputs } = await this.#inspect(target, signal);
+		const { inspection, inputs } = await this.#inspect(
+			{ type: "inspect", sessionId: target, ...(names ? { names } : {}) },
+			signal,
+		);
 		await this.#ackInputs(target, inputs, signal);
-		const selected = names ? new Set(names) : undefined;
-		return {
-			...inspection,
-			tools: selected
-				? inspection.tools.filter(({ name }) => selected.has(name))
-				: inspection.tools,
-			inputs,
-		};
+		return { ...inspection, inputs };
 	}
 
 	async call(
@@ -576,12 +572,12 @@ export class Broker {
 	}
 
 	async #inspect(
-		sessionId: string,
+		request: Extract<ClientRequest, { type: "inspect" }>,
 		signal: AbortSignal,
 	): Promise<Extract<SessionResult, { inspection: SessionInspection }>> {
 		const result = await this.#request(
-			sessionId,
-			(id) => ({ type: "inspect", id, sessionId }),
+			request.sessionId,
+			(id) => ({ ...request, id }),
 			signal,
 		);
 		if ("inspection" in result) return result;
