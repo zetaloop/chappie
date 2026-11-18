@@ -8,6 +8,7 @@ import {
 	type Socket,
 } from "node:net";
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import type { Activity, Source } from "./activity.ts";
 import type { DeviceDescription } from "./client.ts";
 import type { ConnectionStatus } from "./connection.ts";
@@ -149,9 +150,6 @@ export function ipcEndpoint(root: string): string {
 
 export class JsonLinePeer<Incoming, Outgoing> {
 	readonly #socket: Socket;
-	readonly #onMessage: (message: Incoming) => Promise<void> | void;
-	readonly #onClose: () => void;
-	#buffer = "";
 	#closed = false;
 
 	constructor(
@@ -160,13 +158,22 @@ export class JsonLinePeer<Incoming, Outgoing> {
 		onClose: () => void,
 	) {
 		this.#socket = socket;
-		this.#onMessage = onMessage;
-		this.#onClose = onClose;
-		socket.setEncoding("utf8");
-		socket.on("data", (chunk: string) => this.#receive(chunk));
+		const lines = createInterface({ input: socket, crlfDelay: Infinity });
+		lines.on("line", (line) => {
+			if (!line || socket.readableEnded) return;
+			void Promise.resolve()
+				.then(() => onMessage(JSON.parse(line) as Incoming))
+				.catch((error: unknown) =>
+					socket.destroy(
+						error instanceof Error ? error : new Error(String(error)),
+					),
+				);
+		});
+		lines.on("error", () => socket.destroy());
 		socket.once("close", () => {
+			lines.close();
 			this.#closed = true;
-			this.#onClose();
+			onClose();
 		});
 		socket.on("error", () => {});
 	}
@@ -191,25 +198,6 @@ export class JsonLinePeer<Incoming, Outgoing> {
 
 	close(): void {
 		if (!this.#closed) this.#socket.end();
-	}
-
-	#receive(chunk: string): void {
-		this.#buffer += chunk;
-		let end = this.#buffer.indexOf("\n");
-		while (end !== -1) {
-			const line = this.#buffer.slice(0, end);
-			this.#buffer = this.#buffer.slice(end + 1);
-			if (line.length > 0) {
-				void Promise.resolve()
-					.then(() => this.#onMessage(JSON.parse(line) as Incoming))
-					.catch((error: unknown) => {
-						this.#socket.destroy(
-							error instanceof Error ? error : new Error(String(error)),
-						);
-					});
-			}
-			end = this.#buffer.indexOf("\n");
-		}
 	}
 }
 
