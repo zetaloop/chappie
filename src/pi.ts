@@ -163,7 +163,14 @@ export default async function chappie(pi: ExtensionAPI): Promise<void> {
 			);
 		},
 	);
-	pi.on("session_start", (_event, ctx) => update(ctx));
+	pi.on("session_start", (_event, ctx) => {
+		update(ctx);
+		// Pi stores precolored footer text; widget invalidation follows theme changes.
+		ctx.ui.setWidget("chappie", () => ({
+			render: () => [],
+			invalidate: () => host.status?.(session.connectionStatus),
+		}));
+	});
 	pi.on("model_select", (event, ctx) => update(ctx, event.model));
 	pi.on("session_info_changed", (_event, ctx) => update(ctx));
 	pi.on("session_tree", (event, ctx) => {
