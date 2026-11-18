@@ -109,6 +109,6 @@
 	"exports": {
 		".": "./dist/index.js",
 		"./server": "./dist/opencode.js",
-		"./tui": "./dist/opencode-tui.jsx"
+		"./tui": "./dist/opencode-tui.js"
 	}
 }

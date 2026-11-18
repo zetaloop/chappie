@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode/plugin/tui";
-import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
+import { type JSX, jsx } from "@opentui/solid/jsx-runtime";
+import { createEffect, createSignal, on, onCleanup } from "solid-js";
 import type { ConnectionLabel } from "./connection.ts";
 import { connectionRpc } from "./opencode-rpc.ts";
 
@@ -55,25 +56,25 @@ export default {
 						},
 					),
 				);
-				return (
-					<Show when={status()}>
-						{(value) => (
-							<text
-								flexShrink={0}
-								wrapMode="none"
-								fg={
-									value() === "xx"
-										? context.theme.text.feedback.error.base
-										: value() === ".."
-											? context.theme.text.muted
-											: context.theme.text.feedback.success.base
-								}
-							>
-								{`chp:${value()}`}
-							</text>
-						)}
-					</Show>
-				);
+				return jsx("text", {
+					flexShrink: 0,
+					wrapMode: "none",
+					get visible() {
+						return status() !== null;
+					},
+					get children() {
+						return `chp:${status() ?? ""}`;
+					},
+					get fg() {
+						const value = status();
+						const colors = context.theme.text;
+						return value === "xx"
+							? colors.feedback.error.base
+							: value === ".."
+								? colors.muted
+								: colors.feedback.success.base;
+					},
+				} satisfies JSX.IntrinsicElements["text"]);
 			},
 		});
 	},
