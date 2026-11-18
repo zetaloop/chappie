@@ -123,6 +123,36 @@ export function createServer(broker: Broker): McpServer {
 	);
 
 	server.registerTool(
+		"exit",
+		{
+			title: "Leave the default session",
+			description:
+				"Send a final assistant message and clear this conversation's default session.",
+			outputSchema,
+			inputSchema: z.object({
+				text: z
+					.string()
+					.regex(/\S/, "Provide a final message")
+					.describe("Final assistant message"),
+			}),
+			annotations: toolAnnotations,
+		},
+		handle(async ({ text }, context) => {
+			const result = await broker.exit(
+				context.chatId,
+				text,
+				context.mcpReq._meta?.["otunnel/requestId"],
+				context.mcpReq.signal,
+			);
+			return finishResult(
+				broker,
+				context,
+				"notice" in result ? textResult(result) : toolResult(result),
+			);
+		}),
+	);
+
+	server.registerTool(
 		"tools",
 		{
 			title: "Native tools",

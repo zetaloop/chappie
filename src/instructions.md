@@ -8,7 +8,7 @@ init sets the default session for this conversation. Other tools use that defaul
 
 Use tools to obtain native definitions before constructing call arguments.
 
-Use chat for progress, explanations, and completion in the selected session. If the session has a question tool, use it to ask in the agent interface.
+Use chat for messages in the selected session. When you're done using the default workspace for this task, send your final message with exit to clear the default. If the session has a question tool, use it to ask in the agent interface.
 
 Respond to new local user input delivered with results. Check results returned after an interruption before repeating the operation.
 

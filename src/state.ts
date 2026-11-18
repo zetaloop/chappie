@@ -45,6 +45,12 @@ export class State {
 		return this.#save();
 	}
 
+	async unbind(chatId: string, sessionId: string): Promise<void> {
+		if (this.#bindings.get(chatId) !== sessionId) return;
+		this.#bindings.delete(chatId);
+		await this.#save();
+	}
+
 	deliveries(chatId: string): DeliveryRecord[] {
 		return [...this.#deliveries.values()].filter(
 			(delivery) => delivery.clientId === chatId,

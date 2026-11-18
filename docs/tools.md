@@ -10,6 +10,7 @@ ChatGPT uses the tools below. Agent sessions also provide [local tools](#local-t
 | `tools`    | Read the selected session's native tool definitions.                         |
 | `call`     | Execute a native tool batch.                                                 |
 | `chat`     | Send an assistant message or answer a model request.                         |
+| `exit`     | Send a final message and clear this conversation's default session.          |
 | `history`  | Read a session's native records to identify its project and task.            |
 | `transfer` | Exchange files and images with ChatGPT or another session.                   |
 
@@ -73,6 +74,8 @@ ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Limit nati
 ```
 
 Messages and images entered in the agent arrive with later tool results. Results from interrupted calls may also arrive later; check them before repeating an operation.
+
+When finished with the default workspace, use `exit({ text: "Windows build passed. The artifacts are in dist/." })`. If the session is offline, `exit` clears the default and reports that the message was not delivered.
 
 When the agent requests a summary or title, the result includes its instructions and original input. Reply with `chat`, using the returned `request` ID as `replyTo`:
 

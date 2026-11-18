@@ -254,6 +254,25 @@ export class Broker {
 		throw new Error("Session returned no assistant message");
 	}
 
+	async exit(
+		chatId: string,
+		text: string,
+		requestId: unknown,
+		signal: AbortSignal,
+	) {
+		signal.throwIfAborted();
+		const sessionId = this.binding(chatId);
+		if (!sessionId) throw new Error("This conversation has no default session");
+		const result = this.#sessions.has(sessionId)
+			? await this.chat(chatId, sessionId, text, requestId, signal)
+			: {
+					sessionId,
+					notice: "Session is offline; the final message was not delivered.",
+				};
+		if (!("cancelled" in result)) await this.#state.unbind(chatId, sessionId);
+		return result;
+	}
+
 	async tools(
 		chatId: string,
 		sessionId: string | undefined,
