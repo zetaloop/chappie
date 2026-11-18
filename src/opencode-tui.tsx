@@ -69,7 +69,7 @@ export default {
 											: context.theme.text.feedback.success.base
 								}
 							>
-								{`chp: ${connectionLabels[value()]}`}
+								{`chp:${connectionLabels[value()]}`}
 							</text>
 						)}
 					</Show>

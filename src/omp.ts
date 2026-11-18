@@ -118,7 +118,7 @@ export default async function chappie(omp: ExtensionAPI): Promise<void> {
 								: status === "connecting"
 									? "dim"
 									: "success",
-							`chp: ${connectionLabels[status]}`,
+							`chp:${connectionLabels[status]}`,
 						),
 			);
 		},
