@@ -70,6 +70,7 @@ export class Session {
 	readonly #receivedDeliveries: DeliveryRecord[] = [];
 	#connection: Client | undefined;
 	#output: Output | undefined;
+	#idleTimer: NodeJS.Timeout | undefined;
 	#active: ActiveRequest | undefined;
 	#nextRequestId = 1;
 	#starting = false;
@@ -256,6 +257,28 @@ export class Session {
 		this.#host.notify?.(message, type, activity);
 	}
 
+	#waitForRemote(): void {
+		const minutes = this.#config.idleReminderMinutes ?? 10;
+		const output = this.#output;
+		if (!minutes || !output || output.closed) return;
+		if (this.#idleTimer) {
+			this.#idleTimer.refresh();
+			return;
+		}
+		this.#idleTimer = setTimeout(() => {
+			if (output.closed || this.#operations.size || this.#generations.size)
+				return;
+			const message = `No remote activity for ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`;
+			if (this.#host.notify) this.#notify(message);
+			else output.text(message, "commentary");
+		}, minutes * 60_000).unref();
+	}
+
+	#clearIdleTimer(): void {
+		clearTimeout(this.#idleTimer);
+		this.#idleTimer = undefined;
+	}
+
 	async start(output: Output): Promise<void> {
 		const connection = this.#connection;
 		if (!this.#host.active() || !connection) {
@@ -278,7 +301,10 @@ export class Session {
 			await this.#dispatch();
 			await output.finished;
 		} finally {
-			if (this.#output === output) this.#output = undefined;
+			if (this.#output === output) {
+				this.#clearIdleTimer();
+				this.#output = undefined;
+			}
 		}
 	}
 
@@ -303,6 +329,7 @@ export class Session {
 			await output.finished;
 		} finally {
 			this.#generations.delete(id);
+			this.#idleTimer?.refresh();
 			void this.#sync().catch(() => {});
 			await this.#dispatch();
 		}
@@ -419,6 +446,7 @@ export class Session {
 	}
 
 	#leave(error: Error): void {
+		this.#clearIdleTimer();
 		const sessionId = this.#sessionId;
 		if (this.#provider && sessionId && this.#connection?.connected) {
 			void this.#connection
@@ -470,6 +498,7 @@ export class Session {
 				},
 				onMessage: (message) => this.#receive(message),
 				onClose: (error) => {
+					this.#clearIdleTimer();
 					this.#cancelRequests(error);
 					this.#rejectReady(error);
 					this.#rejectSyncs(error);
@@ -840,6 +869,7 @@ export class Session {
 			);
 			if (request.type === "chat") {
 				output.text(request.text, "commentary");
+				this.#waitForRemote();
 				await this.#connection?.send({
 					type: "result",
 					id: request.id,
@@ -848,6 +878,7 @@ export class Session {
 				});
 				continue;
 			}
+			this.#clearIdleTimer();
 			this.#active = {
 				request,
 				session: this.#description(),
@@ -969,6 +1000,8 @@ export class Session {
 			});
 		}
 		this.#active = undefined;
+		if (active.request.type === "call" && active.cancelled === undefined)
+			this.#waitForRemote();
 		this.#refreshStatus();
 		void this.#sync().catch(() => {});
 	}
@@ -1051,6 +1084,7 @@ export class Session {
 			);
 		} finally {
 			this.#operations.delete(id);
+			this.#idleTimer?.refresh();
 		}
 	}
 

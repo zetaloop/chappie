@@ -5,6 +5,7 @@ import * as z from "zod";
 
 const configSchema = z.object({
 	localTools: z.boolean().optional(),
+	idleReminderMinutes: z.number().nonnegative().optional(),
 	connect: z.string().min(1).optional(),
 	listen: z.union([z.boolean(), z.number().int().min(1).max(65535)]).optional(),
 	opencode: z

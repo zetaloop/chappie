@@ -47,11 +47,12 @@ Settings live in `~/.chappie/config.json` and are read at startup.
 
 Agent plugins provide `transfer` in every session. Enable `localTools` for the complete [local tool set](tools.md#local-tools).
 
-| Setting      | Default      | Used by       | Purpose                                                                    |
-| ------------ | ------------ | ------------- | -------------------------------------------------------------------------- |
-| `listen`     | `false`      | Broker        | Accept TCP connections; `true` uses port `24274`, or supply a port number. |
-| `connect`    | Local socket | Clients       | Broker hostname, optionally followed by `:port`.                           |
-| `localTools` | `false`      | Agent plugins | Enable collaboration tools.                                                |
+| Setting               | Default      | Used by       | Purpose                                                                                |
+| --------------------- | ------------ | ------------- | -------------------------------------------------------------------------------------- |
+| `listen`              | `false`      | Broker        | Accept TCP connections; `true` uses port `24274`, or supply a port number.             |
+| `connect`             | Local socket | Clients       | Broker hostname, optionally followed by `:port`.                                       |
+| `localTools`          | `false`      | Agent plugins | Enable collaboration tools.                                                            |
+| `idleReminderMinutes` | `10`         | Agent plugins | Minutes to wait for the next remote action before showing a reminder; `0` disables it. |
 
 ### Multiple devices
 
