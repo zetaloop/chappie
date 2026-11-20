@@ -66,7 +66,7 @@ export interface Output {
 	readonly finished: Promise<void>;
 	readonly closed: boolean;
 	begin(): void;
-	text(text: string): void;
+	text(text: string, phase?: "commentary" | "final_answer"): void;
 	toolCalls(calls: ToolCall[]): void;
 	done(reason?: "stop" | "toolUse"): void;
 	fail(error: unknown, aborted?: boolean): void;

@@ -7,7 +7,13 @@ export interface StreamMessage extends AssistantMessage {
 
 export type StreamEvent<M> =
 	| { type: "start"; partial: M }
-	| { type: "text_start" | "toolcall_start"; contentIndex: number; partial: M }
+	| {
+			type: "text_start";
+			contentIndex: number;
+			partial: M;
+			phase?: "commentary" | "final_answer";
+	  }
+	| { type: "toolcall_start"; contentIndex: number; partial: M }
 	| {
 			type: "text_delta" | "toolcall_delta";
 			contentIndex: number;
@@ -86,7 +92,7 @@ export class ProviderOutput<M extends StreamMessage> {
 		this.stream.push({ type: "start", partial: this.message });
 	}
 
-	text(text: string): void {
+	text(text: string, phase?: "commentary" | "final_answer"): void {
 		if (this.#closed)
 			throw new Error("Chappie provider response is already complete");
 		this.begin();
@@ -95,6 +101,7 @@ export class ProviderOutput<M extends StreamMessage> {
 		this.message.content.push(block);
 		this.stream.push({
 			type: "text_start",
+			...(phase ? { phase } : {}),
 			contentIndex,
 			partial: this.message,
 		});

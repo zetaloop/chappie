@@ -24,6 +24,7 @@ import type {
 import type {
 	BrokerMessage,
 	ClientRequest,
+	MessageInput,
 	ModelRequest,
 	SessionDescription,
 	SessionInput,
@@ -37,7 +38,7 @@ import {
 } from "./resources.ts";
 import type { ToolInput } from "./tools.ts";
 
-type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "call" }>;
+type RemoteRequest = Extract<BrokerMessage, { type: "chat" | "exit" | "call" }>;
 
 interface ActiveRequest {
 	request: RemoteRequest;
@@ -184,24 +185,21 @@ export class Session {
 		return { sessionId, ...result };
 	}
 
-	async chat(
+	async message(
 		sessionId: string,
-		text: string,
-		replyTo?: string,
+		message: MessageInput,
 		signal?: AbortSignal,
 	) {
 		const self = this.#host.describe();
 		const result = await this.#request(
 			{
-				type: "chat",
+				...message,
 				sessionId,
-				text,
-				...(replyTo ? { replyTo } : {}),
 				...source(self.id, randomUUID(), self.name ?? self.agent),
 			},
 			signal,
 		);
-		if (!("message" in result) && !("cancelled" in result))
+		if (!("cwd" in result && "inputs" in result))
 			throw new Error("Session returned no assistant message");
 		return { sessionId, ...result };
 	}
@@ -247,7 +245,7 @@ export class Session {
 		}
 		this.#collectInputs();
 		await this.#completeActive();
-		this.#dispatch();
+		await this.#dispatch();
 	}
 
 	#notify(
@@ -277,7 +275,7 @@ export class Session {
 			await this.#completeActive();
 			if (output.closed) return;
 			output.begin();
-			this.#dispatch();
+			await this.#dispatch();
 			await output.finished;
 		} finally {
 			if (this.#output === output) this.#output = undefined;
@@ -306,7 +304,7 @@ export class Session {
 		} finally {
 			this.#generations.delete(id);
 			void this.#sync().catch(() => {});
-			this.#dispatch();
+			await this.#dispatch();
 		}
 	}
 
@@ -677,7 +675,7 @@ export class Session {
 				const name =
 					request.type === "call"
 						? [...new Set(request.calls.map((call) => call.name))].join(", ")
-						: "chat";
+						: request.type;
 				this.#notify(
 					`${name} cancelled for ${sourceLabel(request)}: ${message.reason}`,
 					"warning",
@@ -699,6 +697,7 @@ export class Session {
 				break;
 			}
 			case "chat":
+			case "exit":
 			case "call":
 				if (!this.#host.active() || message.sessionId !== this.#sessionId) {
 					await this.#sendError(
@@ -726,7 +725,6 @@ export class Session {
 						type: "result",
 						id: message.id,
 						cwd: this.#host.describe().cwd,
-						message: output.message,
 						inputs: this.#inputs(),
 					});
 					break;
@@ -736,7 +734,7 @@ export class Session {
 					break;
 				}
 				this.#queue.push(message);
-				this.#dispatch();
+				await this.#dispatch();
 				break;
 		}
 	}
@@ -749,7 +747,7 @@ export class Session {
 			cancelled:
 				request.type === "call"
 					? "The requested tools were not executed. A model request is awaiting a reply."
-					: "A model request is awaiting a reply. Set replyTo to its request ID.",
+					: "A model request is awaiting a reply. Answer it using its request ID.",
 			toolResults: [],
 			inputs: this.#inputs(),
 		});
@@ -825,36 +823,48 @@ export class Session {
 		this.#operations.clear();
 	}
 
-	#dispatch(): void {
-		if (this.#active || this.#generations.size) return;
-		const output = this.#output;
-		if (!output || output.closed) {
-			this.#wake();
-			return;
-		}
+	async #dispatch(): Promise<void> {
+		while (!this.#active && !this.#generations.size) {
+			const output = this.#output;
+			if (!output || output.closed) {
+				this.#wake();
+				return;
+			}
 
-		const request = this.#queue.shift();
-		if (!request) return;
-		output.message.chappie = source(
-			request.clientId,
-			request.requestId,
-			request.label,
-		);
-		this.#active = {
-			request,
-			session: this.#description(),
-			message: output.message,
-			completed: false,
-			cancelled: undefined,
-			toolResults: [],
-		};
-		void this.#sync().catch(() => {});
-		if (request.type === "chat") {
-			output.text(request.text);
-			output.done();
-		} else {
-			output.toolCalls(request.calls);
-			output.done("toolUse");
+			const request = this.#queue.shift();
+			if (!request) return;
+			output.message.chappie = source(
+				request.clientId,
+				request.requestId,
+				request.label,
+			);
+			if (request.type === "chat") {
+				output.text(request.text, "commentary");
+				await this.#connection?.send({
+					type: "result",
+					id: request.id,
+					cwd: this.#host.describe().cwd,
+					inputs: this.#inputs(),
+				});
+				continue;
+			}
+			this.#active = {
+				request,
+				session: this.#description(),
+				message: output.message,
+				completed: false,
+				cancelled: undefined,
+				toolResults: [],
+			};
+			void this.#sync().catch(() => {});
+			if (request.type === "exit") {
+				output.text(request.text, "final_answer");
+				output.done();
+			} else {
+				output.toolCalls(request.calls);
+				output.done("toolUse");
+			}
+			return;
 		}
 	}
 
@@ -955,7 +965,7 @@ export class Session {
 				inputs,
 				...(active.request.type === "call"
 					? { toolResults: active.toolResults }
-					: { message: active.message }),
+					: {}),
 			});
 		}
 		this.#active = undefined;

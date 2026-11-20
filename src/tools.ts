@@ -38,6 +38,13 @@ export const chatInput = z.object({
 	replyTo: z.string().optional().describe("Model request ID to answer"),
 });
 
+export const exitInput = z.object({
+	text: z
+		.string()
+		.regex(/\S/, "Provide a final message")
+		.describe("Final assistant message"),
+});
+
 export function parseCalls(input: z.infer<typeof callInput>): ToolInput[] {
 	if (input.calls) return input.calls;
 	const bytes = Buffer.from(atob(input.base64 ?? ""), "latin1");

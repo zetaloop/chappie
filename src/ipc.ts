@@ -15,7 +15,6 @@ import type { ConnectionStatus } from "./connection.ts";
 import type { DeliveryRecord } from "./delivery.ts";
 import type { TransferDetails } from "./files.ts";
 import type {
-	AssistantMessage,
 	SkillInfo,
 	ToolCall,
 	ToolInfo,
@@ -62,7 +61,7 @@ export type SessionResult = (
 			inputs: SessionInput[];
 			globalAgents?: { path: string };
 	  }
-	| { message: AssistantMessage; cwd: string; inputs: SessionInput[] }
+	| { cwd: string; inputs: SessionInput[] }
 	| {
 			cwd: string;
 			cancelled?: string;
@@ -77,6 +76,10 @@ export type SessionResult = (
 	| { transfer: TransferDetails }
 	| { error: string }
 ) & { deliveries?: DeliveryRecord[] };
+
+export type MessageInput =
+	| { type: "chat"; text: string; replyTo?: string }
+	| { type: "exit"; text: string };
 
 export type SessionRequest =
 	| {
@@ -96,12 +99,7 @@ export type SessionRequest =
 			paths: string[];
 			overwrite?: boolean;
 	  }
-	| ({
-			type: "chat";
-			sessionId: string;
-			text: string;
-			replyTo?: string;
-	  } & Source)
+	| (MessageInput & { sessionId: string } & Source)
 	| ({
 			type: "call";
 			sessionId: string;

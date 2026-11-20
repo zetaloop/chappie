@@ -10,7 +10,7 @@ ChatGPT uses the tools below. Agent sessions also provide [local tools](#local-t
 | `tools`    | Read the selected session's native tool definitions.                         |
 | `call`     | Execute a native tool batch.                                                 |
 | `chat`     | Send an assistant message or answer a model request.                         |
-| `exit`     | Send a final message and clear this conversation's default session.          |
+| `exit`     | Send a final message and end the remote turn.                                |
 | `history`  | Read a session's native records to identify its project and task.            |
 | `transfer` | Exchange files and images with ChatGPT or another session.                   |
 
@@ -67,15 +67,17 @@ ChatGPT removes the middle of tool responses exceeding 10,000 tokens. Limit nati
 
 ## Messages
 
-`chat` sends progress and completion messages to the selected session:
+`chat` shows progress in the selected session while the turn continues:
 
 ```json
-{ "text": "Updated the parser and its callers." }
+{
+	"text": "The parser accepts the input. I'm checking how its caller handles the result."
+}
 ```
 
 Messages and images entered in the agent arrive with later tool results. Results from interrupted calls may also arrive later; check them before repeating an operation.
 
-When finished with the default workspace, use `exit({ text: "Windows build passed. The artifacts are in dist/." })`. If the session is offline, `exit` clears the default and reports that the message was not delivered.
+Finish the turn with `exit({ text: "Windows build passed. The artifacts are in dist/." })`. `exit` clears the default when it points to the target session. If the target is offline, it reports that the message was not delivered.
 
 When the agent requests a summary or title, the result includes its instructions and original input. Reply with `chat`, using the returned `request` ID as `replyTo`:
 
@@ -157,16 +159,17 @@ Every agent session provides `transfer`. Enable `localTools` in Chappie's config
 | `remote_launch`   | Open a new agent session on a connected device.                             |
 | `remote_tools`    | Read the target session's native tool definitions.                          |
 | `remote_call`     | Execute a native tool batch in the target session.                          |
-| `remote_chat`     | Send an assistant message or answer a model request in the target session.  |
+| `remote_chat`     | Share progress or answer a model request in the target session.             |
+| `remote_exit`     | Send a final message and end the target session's current turn.             |
 | `transfer`        | Exchange files and attachments.                                             |
 
-Select Chappie's Remote model in each target session. `remote_tools`, `remote_call`, and `remote_chat` take an explicit `sessionId`.
+Select Chappie's Remote model in each target session. `remote_tools`, `remote_call`, `remote_chat`, and `remote_exit` take an explicit `sessionId`.
 
 Use `remote_launch` as described under [Starting a session](#starting-a-session).
 
 `transfer` uses local paths and exchanges files with targets through `from` and `to`. Supply `files` to import attachments.
 
-Use `remote_tools` to discover a target's definitions, then `remote_call` to execute them. When `globalAgents.path` is returned, read that file for the target's instructions. `remote_chat` sends an assistant message to the target:
+Use `remote_tools` to discover a target's definitions, then `remote_call` to execute them. When `globalAgents.path` is returned, read that file for the target's instructions. Use `remote_chat` for progress and `remote_exit` for the conclusion:
 
 ```json
 { "sessionId": "<target-session>", "text": "The build completed successfully." }

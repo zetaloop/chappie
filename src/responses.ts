@@ -175,6 +175,7 @@ export class ResponsesOutput extends ProviderOutput<StreamMessage> {
 						id: `msg_${randomUUID()}`,
 						type: "message",
 						role: "assistant",
+						...(part.phase ? { phase: part.phase } : {}),
 						status: "in_progress",
 						content: [],
 					};

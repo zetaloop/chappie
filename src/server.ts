@@ -10,6 +10,7 @@ import {
 	callInput,
 	callsInput,
 	chatInput,
+	exitInput,
 	inputContent,
 	parseCalls,
 	toolResult,
@@ -95,9 +96,9 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"chat",
 		{
-			title: "Reply in the session",
+			title: "Send a progress update",
 			description:
-				"Send an assistant message, or answer a model request using replyTo.",
+				"Explain progress in the session while work continues, or answer a model request using replyTo.",
 			outputSchema,
 			inputSchema: chatInput.extend({
 				sessionId: z
@@ -125,24 +126,27 @@ export function createServer(broker: Broker): McpServer {
 	server.registerTool(
 		"exit",
 		{
-			title: "Leave the default session",
+			title: "Finish the remote turn",
 			description:
-				"Send a final assistant message and clear this conversation's default session.",
+				"Send the final assistant message and finish the turn. Clears the default if it points to this session.",
 			outputSchema,
-			inputSchema: z.object({
-				text: z
+			inputSchema: exitInput.extend({
+				sessionId: z
 					.string()
-					.regex(/\S/, "Provide a final message")
-					.describe("Final assistant message"),
+					.optional()
+					.describe(
+						"Target session; defaults to the session selected with init",
+					),
 			}),
 			annotations: toolAnnotations,
 		},
-		handle(async ({ text }, context) => {
+		handle(async ({ text, sessionId }, context) => {
 			const result = await broker.exit(
 				context.chatId,
 				text,
 				context.mcpReq._meta?.["otunnel/requestId"],
 				context.mcpReq.signal,
+				sessionId,
 			);
 			return finishResult(
 				broker,

@@ -7,7 +7,13 @@ import type { SessionInput } from "./ipc.ts";
 import { launchDescription, launchInput } from "./launch.ts";
 import { resourceDescriptors } from "./resources.ts";
 import type { Session } from "./session.ts";
-import { callsInput, chatInput, inputContent, toolResult } from "./tools.ts";
+import {
+	callsInput,
+	chatInput,
+	exitInput,
+	inputContent,
+	toolResult,
+} from "./tools.ts";
 
 export interface NativeResult {
 	content: Content[];
@@ -68,12 +74,26 @@ export const definitions = [
 	),
 	tool(
 		"remote_chat",
-		"Send an assistant message to a Chappie session, or reply to its model request using replyTo.",
+		"Explain progress in the remote session while work continues, or answer a model request using replyTo.",
 		chatInput.extend({ sessionId: z.string().min(1) }),
 		async (session, { sessionId, text, replyTo }, signal) =>
 			remoteResult(
 				session,
-				await session.chat(sessionId, text, replyTo, signal),
+				await session.message(
+					sessionId,
+					{ type: "chat", text, ...(replyTo ? { replyTo } : {}) },
+					signal,
+				),
+			),
+	),
+	tool(
+		"remote_exit",
+		"Send your final assistant message and finish the remote turn.",
+		exitInput.extend({ sessionId: z.string().min(1) }),
+		async (session, { sessionId, text }, signal) =>
+			remoteResult(
+				session,
+				await session.message(sessionId, { type: "exit", text }, signal),
 			),
 	),
 	tool(

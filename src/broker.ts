@@ -11,6 +11,7 @@ import {
 	type ClientRequest,
 	IpcServer,
 	type JsonLinePeer,
+	type MessageInput,
 	type SessionDescription,
 	type SessionInput,
 	type SessionInspection,
@@ -230,19 +231,31 @@ export class Broker {
 			sessionId,
 			signal,
 		);
+		return this.#message(
+			target,
+			{ type: "chat", text, ...(replyTo ? { replyTo } : {}) },
+			source(chatId, requestId),
+			signal,
+		);
+	}
+
+	async #message(
+		target: string,
+		message: MessageInput,
+		origin: ReturnType<typeof source>,
+		signal: AbortSignal,
+	): Promise<ChatResult> {
 		const result = await this.#request(
 			target,
 			(id) => ({
-				type: "chat",
+				...message,
 				id,
-				...source(chatId, requestId),
+				...origin,
 				sessionId: target,
-				text,
-				...(replyTo ? { replyTo } : {}),
 			}),
 			signal,
 		);
-		if ("message" in result || "cancelled" in result) {
+		if ("cwd" in result && "inputs" in result) {
 			const inputs = result.inputs;
 			await this.#ackInputs(target, inputs, signal);
 			return {
@@ -260,12 +273,18 @@ export class Broker {
 		text: string,
 		requestId: unknown,
 		signal: AbortSignal,
+		target?: string,
 	) {
 		signal.throwIfAborted();
-		const sessionId = this.binding(chatId);
+		const sessionId = target ?? this.binding(chatId);
 		if (!sessionId) throw new Error("This conversation has no default session");
 		const result = this.#sessions.has(sessionId)
-			? await this.chat(chatId, sessionId, text, requestId, signal)
+			? await this.#message(
+					sessionId,
+					{ type: "exit", text },
+					source(chatId, requestId),
+					signal,
+				)
 			: {
 					sessionId,
 					notice: "Session is offline; the final message was not delivered.",
